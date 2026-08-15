@@ -1,5 +1,5 @@
 import { Component, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Canvas } from "@react-three/fiber";
+import { Canvas, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
@@ -51,7 +51,7 @@ function PartMesh({
   tint: string | null;
   /** World-space displacement (mm) — the exploded-view slide. */
   offset?: [number, number, number];
-  onCenter: (id: string, center: [number, number, number]) => void;
+  onCenter: (id: string, min: [number, number, number], max: [number, number, number]) => void;
 }) {
   const [object, setObject] = useState<THREE.Object3D | null>(null);
 
@@ -93,14 +93,14 @@ function PartMesh({
     return m;
   }, [matrix]);
 
-  // Report the part's placed center — the parent derives each part's
-  // exploded-view direction from these (away from the assembly centroid).
+  // Report the part's placed bounds — the parent frames the camera on the
+  // assembly and derives each part's exploded-view direction from the centers.
   useEffect(() => {
     if (!object) return;
     const box = new THREE.Box3().setFromObject(object);
     if (box.isEmpty()) return;
-    const c = box.getCenter(new THREE.Vector3()).applyMatrix4(m4);
-    onCenter(id, [c.x, c.y, c.z]);
+    box.applyMatrix4(m4);
+    onCenter(id, [box.min.x, box.min.y, box.min.z], [box.max.x, box.max.y, box.max.z]);
   }, [object, m4, id, onCenter]);
 
   const placed = useMemo(() => {
@@ -110,6 +110,32 @@ function PartMesh({
 
   if (!object) return null;
   return <primitive object={object} matrix={placed} matrixAutoUpdate={false} />;
+}
+
+/** Frames the camera on the assembly: imported models live wherever their
+ * mesh coordinates put them (often nowhere near the origin), so a fixed
+ * camera can open onto empty grid. Re-frames only when the part set changes,
+ * never while the user is orbiting. */
+function FitCamera({ box, partsKey }: { box: THREE.Box3 | null; partsKey: string }) {
+  const camera = useThree((s) => s.camera);
+  const controls = useThree((s) => s.controls) as { target: THREE.Vector3; update: () => void } | null;
+  useEffect(() => {
+    if (!box || box.isEmpty() || !controls) return;
+    const center = box.getCenter(new THREE.Vector3());
+    const radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 10);
+    // distance from the NARROWER field of view — the pane is a tall column,
+    // so the horizontal fov usually binds
+    const persp = camera as THREE.PerspectiveCamera;
+    const vHalf = (persp.fov * Math.PI) / 360;
+    const hHalf = Math.atan(Math.tan(vHalf) * persp.aspect);
+    const dist = (radius * 1.15) / Math.tan(Math.min(vHalf, hHalf));
+    const dir = new THREE.Vector3(0.55, -0.55, 0.5).normalize();
+    camera.position.copy(center.clone().add(dir.multiplyScalar(dist)));
+    controls.target.copy(center);
+    controls.update();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [partsKey, controls]);
+  return null;
 }
 
 /** WebGL isn't a given (hardware acceleration off, remote sessions) — a
@@ -152,13 +178,18 @@ function CadViewportInner() {
   const [data, setData] = useState<SceneData | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [explode, setExplode] = useState(0);
-  const [centers, setCenters] = useState<Record<string, [number, number, number]>>({});
+  const [bounds, setBounds] = useState<Record<string, { min: [number, number, number]; max: [number, number, number] }>>({});
 
-  const onCenter = useCallback((id: string, c: [number, number, number]) => {
-    setCenters((prev) => {
+  const onCenter = useCallback((id: string, min: [number, number, number], max: [number, number, number]) => {
+    setBounds((prev) => {
       const old = prev[id];
-      if (old && Math.hypot(old[0] - c[0], old[1] - c[1], old[2] - c[2]) < 1e-4) return prev;
-      return { ...prev, [id]: c };
+      if (
+        old &&
+        Math.hypot(old.min[0] - min[0], old.min[1] - min[1], old.min[2] - min[2]) < 1e-4 &&
+        Math.hypot(old.max[0] - max[0], old.max[1] - max[1], old.max[2] - max[2]) < 1e-4
+      )
+        return prev;
+      return { ...prev, [id]: { min, max } };
     });
   }, []);
 
@@ -192,6 +223,14 @@ function CadViewportInner() {
   // Exploded view: each part slides away from the assembly centroid along its
   // own center direction — mates and joints (pegs, sockets) become inspectable
   // without touching the graph. Purely visual, purely client-side.
+  const centers = useMemo(() => {
+    const out: Record<string, [number, number, number]> = {};
+    for (const [id, b] of Object.entries(bounds)) {
+      out[id] = [0, 1, 2].map((i) => (b.min[i]! + b.max[i]!) / 2) as [number, number, number];
+    }
+    return out;
+  }, [bounds]);
+
   const offsets = useMemo(() => {
     const ids = Object.keys(centers).filter((id) => data?.meshes[id]);
     if (ids.length < 2 || explode === 0) return {};
@@ -204,6 +243,21 @@ function CadViewportInner() {
     return out;
   }, [centers, explode, data]);
 
+  const liveIds = Object.keys(bounds)
+    .filter((id) => data?.meshes[id])
+    .sort();
+  const unionBox = useMemo(() => {
+    if (liveIds.length === 0) return null;
+    const box = new THREE.Box3();
+    for (const id of liveIds) {
+      const b = bounds[id]!;
+      box.expandByPoint(new THREE.Vector3(...b.min));
+      box.expandByPoint(new THREE.Vector3(...b.max));
+    }
+    return box;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bounds, liveIds.join("|")]);
+
   if (!graph) return null;
   const parts = Object.entries(data?.meshes ?? {});
 
@@ -214,6 +268,7 @@ function CadViewportInner() {
         <directionalLight position={[100, -60, 140]} intensity={1.4} />
         <directionalLight position={[-80, 90, 40]} intensity={0.4} />
         <primitive object={grid} />
+        <FitCamera box={unionBox} partsKey={liveIds.join("|")} />
         {parts.map(([id, mesh]) => (
           <PartMesh
             key={`${id}:${mesh.glb}`}

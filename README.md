@@ -5,6 +5,13 @@
 > notice, and fast-moving internals. See [Status & limitations](#status--limitations)
 > before trying it.
 
+![the patchcad studio: a prompt-planned fan bracket as a node graph with live params, assembled in the viewport](docs/studio.png)
+
+*"A bracket that mounts a 60mm cooling fan to 2020 extrusion" — the architect
+planned seven nodes with pinned contracts (three printed parts, four registry
+fasteners), every part generated and gate-verified, and the sliders are live:
+thread and length re-derive from the parts they fasten, with zero LLM calls.*
+
 Prompt-to-app on a TouchDesigner-style node canvas. Type a goal → an architect
 model plans a **graph of nodes with pinned interface contracts** → parallel
 generators write each node's code hermetically (they see neighbors'
