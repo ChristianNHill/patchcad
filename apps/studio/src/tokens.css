@@ -1,0 +1,75 @@
+/* Hallmark · genre: atmospheric · scope: app (three-pane instrument panel — canvas · preview · inspector)
+ * theme: custom · vibe: "late-night patchbay — wired, precise, instrument-grade"
+ * paper: oklch(15% 0.012 220) · accent: oklch(78% 0.13 215)
+ * display: Space Grotesk · body: Geist · outlier: JetBrains Mono (machine-text role only)
+ * axes: dark / grotesk-sans / cool · nav: app toolbar (marketing archetypes N/A) · footer: none (app)
+ * studied: no · context: inferred (brand derived from existing product identity) · design-system: design.md
+ * pre-emit critique: P4 H4 E4 S5 R4 V4
+ * contrast: pass (40–41) · tokens: pass (48) · honest: pass (46) · chrome: pass (47)
+ * icons: pass (30, hand-built SVG set) · responsive: pass (34, 49) · slop: pass (42–45)
+ */
+
+:root {
+  /* ---- colour · cyan-anchored dark, per design.md ---- */
+  --color-paper:      oklch(15% 0.012 220);  /* canvas ground            */
+  --minimap-mask:     oklch(15% 0.012 220 / 0.78); /* plain value: minimap SVG fill */
+  --color-paper-2:    oklch(19% 0.014 220);  /* panels: header, nodes    */
+  --color-paper-3:    oklch(23% 0.015 220);  /* elevated: modal, hover   */
+  --color-well:       oklch(12% 0.010 220);  /* recessed: inputs, code   */
+  --color-ink:        oklch(93% 0.010 220);  /* primary text             */
+  --color-ink-2:      oklch(75% 0.012 220);  /* secondary text           */
+  --color-muted:      oklch(58% 0.014 220);  /* tertiary text, ≥12px only */
+  --color-rule:       oklch(30% 0.014 220);  /* borders, dividers        */
+  --color-rule-2:     oklch(25% 0.012 220);  /* faint dividers           */
+  --color-accent:     oklch(78% 0.13 215);   /* wire cyan — the signal   */
+  --color-accent-ink: oklch(16% 0.020 220);  /* text on accent fill      */
+  --color-focus:      oklch(82% 0.17 215);   /* :focus-visible only      */
+
+  /* semantic status hues — data encoding, distinct from accent */
+  --color-ok:     oklch(76% 0.13 150);       /* ready                    */
+  --color-warn:   oklch(78% 0.13 75);        /* dirty · repairing        */
+  --color-danger: oklch(66% 0.17 25);        /* error states             */
+
+  /* ---- type · 2+1: display / body / machine-text outlier ---- */
+  --font-display: "Space Grotesk Variable", "Space Grotesk", ui-sans-serif, sans-serif;
+  --font-body:    "Geist Variable", "Geist", ui-sans-serif, sans-serif;
+  --font-mono:    "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace;
+
+  --text-2xs: 0.6875rem;  /* 11px — chips, LED labels        */
+  --text-xs:  0.75rem;    /* 12px — captions, mono labels    */
+  --text-sm:  0.8125rem;  /* 13px — controls, secondary UI   */
+  --text-md:  0.875rem;   /* 14px — UI base                  */
+  --text-lg:  1rem;       /* 16px — panel titles             */
+  --text-xl:  1.25rem;
+  --text-3xl:  2.25rem;   /* welcome hero ask */    /* 20px — modal headings           */
+
+  /* ---- space · 4-pt named scale ---- */
+  --space-3xs: 0.125rem;
+  --space-2xs: 0.25rem;
+  --space-xs:  0.5rem;
+  --space-sm:  0.75rem;
+  --space-md:  1rem;
+  --space-lg:  1.5rem;
+  --space-xl:  2.5rem;
+
+  /* ---- motion ---- */
+  --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in:     cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro:   120ms;
+  --dur-short:   220ms;
+  --dur-long:    320ms;
+
+  /* ---- geometry ---- */
+  --radius-node:  10px;
+  --radius-input: 8px;
+  --radius-pill:  999px;
+
+  /* ---- z · named layers ---- */
+  --z-base:    1;
+  --z-raised:  10;
+  --z-sticky:  200;
+  --z-modal:   400;
+  --z-toast:   500;
+  --z-tooltip: 600;
+}

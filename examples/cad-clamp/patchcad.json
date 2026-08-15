@@ -1,0 +1,545 @@
+{
+  "schemaVersion": 1,
+  "id": "cad-clamp",
+  "backend": "cad",
+  "brief": {
+    "goal": "clamp an L-bracket to a base plate with an M4 screw",
+    "constraints": [],
+    "clarifications": []
+  },
+  "nodes": {
+    "base-plate": {
+      "id": "base-plate",
+      "kind": "part",
+      "title": "Base plate",
+      "spec": "Rectangular mounting plate with four corner clearance holes.",
+      "contract": {
+        "name": "Base plate",
+        "summary": "60×40×5 plate, Ø4.5 corner holes inset 6 mm.",
+        "params": [
+          {
+            "type": "number",
+            "name": "width",
+            "description": "",
+            "default": 60,
+            "min": 30,
+            "max": 120
+          },
+          {
+            "type": "number",
+            "name": "depth",
+            "description": "",
+            "default": 40,
+            "min": 20,
+            "max": 80
+          },
+          {
+            "type": "number",
+            "name": "thickness",
+            "description": "",
+            "default": 5,
+            "min": 2.5,
+            "max": 10
+          },
+          {
+            "type": "number",
+            "name": "hole_diameter",
+            "description": "",
+            "default": 4.5,
+            "min": 2.25,
+            "max": 9
+          },
+          {
+            "type": "number",
+            "name": "hole_inset",
+            "description": "",
+            "default": 6,
+            "min": 3,
+            "max": 12
+          }
+        ],
+        "provides": [
+          {
+            "key": "front_left_hole",
+            "type": "CLEARANCE_HOLE",
+            "description": ""
+          },
+          {
+            "key": "back_right_hole",
+            "type": "CLEARANCE_HOLE",
+            "description": ""
+          }
+        ],
+        "requires": [],
+        "payload": {
+          "units": "mm",
+          "process": {
+            "kind": "FDM",
+            "minWall": 1.2,
+            "nozzle": 0.4
+          },
+          "paramBindings": {},
+          "ports": [
+            {
+              "name": "front_left_hole",
+              "type": "CLEARANCE_HOLE",
+              "pose": {
+                "origin": [
+                  "-(param(base-plate.width) / 2 - param(base-plate.hole_inset))",
+                  "-(param(base-plate.depth) / 2 - param(base-plate.hole_inset))",
+                  "param(base-plate.thickness) / 2"
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "diameter": "param(base-plate.hole_diameter)"
+              }
+            },
+            {
+              "name": "back_right_hole",
+              "type": "CLEARANCE_HOLE",
+              "pose": {
+                "origin": [
+                  "param(base-plate.width) / 2 - param(base-plate.hole_inset)",
+                  "param(base-plate.depth) / 2 - param(base-plate.hole_inset)",
+                  "param(base-plate.thickness) / 2"
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "diameter": "param(base-plate.hole_diameter)"
+              }
+            }
+          ],
+          "envelope": {
+            "volumes": [
+              {
+                "kind": "box",
+                "pose": {
+                  "origin": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "dims": [
+                  "param(base-plate.width)",
+                  "param(base-plate.depth)",
+                  "param(base-plate.thickness)"
+                ]
+              }
+            ],
+            "clearance": 0.4
+          }
+        },
+        "hash": "75dd4cab421be83f"
+      },
+      "pinned": true,
+      "params": {
+        "thickness": 5.5,
+        "depth": 60
+      },
+      "deps": [],
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "68e53345b640e18d"
+      },
+      "thread": [],
+      "status": "ready",
+      "version": 1,
+      "history": [
+        {
+          "version": 1,
+          "contractHash": "",
+          "artifactHash": "",
+          "cause": "handwritten",
+          "at": 1755200000000
+        }
+      ],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "l-bracket": {
+      "id": "l-bracket",
+      "kind": "part",
+      "title": "L-bracket",
+      "spec": "L-bracket bolted to the plate through its base leg.",
+      "contract": {
+        "name": "L-bracket",
+        "summary": "30 mm L-bracket; base hole tracks the plate's hole diameter (T1 binding).",
+        "params": [
+          {
+            "type": "number",
+            "name": "width",
+            "description": "",
+            "default": 30,
+            "min": 15,
+            "max": 60
+          },
+          {
+            "type": "number",
+            "name": "depth",
+            "description": "",
+            "default": 30,
+            "min": 15,
+            "max": 60
+          },
+          {
+            "type": "number",
+            "name": "thickness",
+            "description": "",
+            "default": 4,
+            "min": 2,
+            "max": 8
+          },
+          {
+            "type": "number",
+            "name": "height",
+            "description": "",
+            "default": 30,
+            "min": 15,
+            "max": 60
+          },
+          {
+            "type": "number",
+            "name": "hole_diameter",
+            "description": "",
+            "default": 4.5,
+            "min": 2.25,
+            "max": 9
+          },
+          {
+            "type": "number",
+            "name": "hole_inset",
+            "description": "",
+            "default": 8,
+            "min": 4,
+            "max": 16
+          }
+        ],
+        "provides": [],
+        "requires": [
+          {
+            "key": "base_hole",
+            "type": "CLEARANCE_HOLE",
+            "description": ""
+          }
+        ],
+        "payload": {
+          "units": "mm",
+          "process": {
+            "kind": "FDM",
+            "minWall": 1.2,
+            "nozzle": 0.4
+          },
+          "paramBindings": {
+            "hole_diameter": "param:base-plate.hole_diameter"
+          },
+          "ports": [
+            {
+              "name": "base_hole",
+              "type": "CLEARANCE_HOLE",
+              "pose": {
+                "origin": [
+                  0,
+                  "-(param(l-bracket.depth) / 2) + param(l-bracket.hole_inset)",
+                  0
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  -1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "diameter": "param(l-bracket.hole_diameter)"
+              }
+            }
+          ],
+          "envelope": {
+            "volumes": [
+              {
+                "kind": "box",
+                "pose": {
+                  "origin": [
+                    0,
+                    0,
+                    "param(l-bracket.thickness) / 2"
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "dims": [
+                  "param(l-bracket.width)",
+                  "param(l-bracket.depth)",
+                  "param(l-bracket.thickness)"
+                ]
+              },
+              {
+                "kind": "box",
+                "pose": {
+                  "origin": [
+                    0,
+                    "param(l-bracket.depth) / 2 - param(l-bracket.thickness) / 2",
+                    "param(l-bracket.height) / 2"
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "dims": [
+                  "param(l-bracket.width)",
+                  "param(l-bracket.thickness)",
+                  "param(l-bracket.height)"
+                ]
+              }
+            ],
+            "clearance": 0.4
+          }
+        },
+        "hash": "cdf1e5d39bca1a40"
+      },
+      "pinned": true,
+      "params": {
+        "hole_diameter": 4.5,
+        "thickness": 2
+      },
+      "deps": [
+        "base-plate"
+      ],
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "3e7e70445d359dee"
+      },
+      "thread": [],
+      "status": "ready",
+      "version": 1,
+      "history": [
+        {
+          "version": 1,
+          "contractHash": "",
+          "artifactHash": "",
+          "cause": "handwritten",
+          "at": 1755200000000
+        }
+      ],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "m4-screw": {
+      "id": "m4-screw",
+      "kind": "fastener",
+      "title": "M4×12 SHCS",
+      "spec": "M4 socket head cap screw from the fastener registry.",
+      "contract": {
+        "name": "M4×12 SHCS",
+        "summary": "Registry fastener — never generated. Its thread follows the plate's hole and its length follows the clamped stack (T1 bindings).",
+        "params": [
+          {
+            "type": "number",
+            "name": "length",
+            "description": "",
+            "default": 12,
+            "min": 6,
+            "max": 24
+          },
+          {
+            "type": "enum",
+            "name": "thread",
+            "description": "",
+            "default": "M4",
+            "options": [
+              "M3",
+              "M4",
+              "M5"
+            ]
+          }
+        ],
+        "provides": [],
+        "requires": [
+          {
+            "key": "head_seat",
+            "type": "CLEARANCE_HOLE",
+            "description": ""
+          }
+        ],
+        "payload": {
+          "units": "mm",
+          "process": {
+            "kind": "FDM",
+            "minWall": 1.2,
+            "nozzle": 0.4
+          },
+          "paramBindings": {
+            "thread": "threadForHole:param:base-plate.hole_diameter",
+            "length": "screwLength: param(base-plate.thickness) + param(l-bracket.thickness) + 4"
+          },
+          "ports": [
+            {
+              "name": "head_seat",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  0
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  -1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "ring_diameter": 5.5
+              }
+            }
+          ],
+          "envelope": {
+            "volumes": [
+              {
+                "kind": "cylinder",
+                "pose": {
+                  "origin": [
+                    0,
+                    0,
+                    "(5 - param(m4-screw.length)) / 2"
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "d": 9,
+                "h": "param(m4-screw.length) + 11"
+              }
+            ],
+            "clearance": 0.4
+          }
+        },
+        "hash": "d8ce3dbe3a3b6c3f"
+      },
+      "pinned": true,
+      "params": {
+        "thread": "M4",
+        "length": 12
+      },
+      "deps": [
+        "base-plate"
+      ],
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "0d7a65aaa17cbf6f"
+      },
+      "thread": [],
+      "status": "ready",
+      "version": 1,
+      "history": [
+        {
+          "version": 1,
+          "contractHash": "",
+          "artifactHash": "",
+          "cause": "handwritten",
+          "at": 1755200000000
+        }
+      ],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    }
+  },
+  "edges": [
+    {
+      "id": "e0",
+      "from": "base-plate",
+      "fromPort": "front_left_hole",
+      "to": "l-bracket",
+      "toPort": "base_hole"
+    },
+    {
+      "id": "e1",
+      "from": "base-plate",
+      "fromPort": "back_right_hole",
+      "to": "m4-screw",
+      "toPort": "head_seat"
+    }
+  ],
+  "assembly": {
+    "entryNodeId": "base-plate"
+  },
+  "layout": {},
+  "rev": 23
+}

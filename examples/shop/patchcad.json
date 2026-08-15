@@ -1,0 +1,480 @@
+{
+  "schemaVersion": 1,
+  "id": "shop",
+  "backend": "web-code",
+  "brief": {
+    "goal": "A small shop with a product grid, cart, and quick-add",
+    "constraints": [],
+    "clarifications": []
+  },
+  "nodes": {
+    "theme": {
+      "id": "theme",
+      "kind": "style",
+      "title": "theme",
+      "spec": "Design tokens: accent color, corner radius, surface colors. Single source of visual truth.",
+      "contract": {
+        "name": "theme",
+        "summary": "Design tokens hook: colors, radius, spacing.",
+        "params": [
+          {
+            "type": "color",
+            "name": "accent",
+            "description": "Brand accent color",
+            "default": "#0a7f9e"
+          },
+          {
+            "type": "number",
+            "name": "radius",
+            "description": "Corner radius (px)",
+            "default": 10,
+            "min": 0,
+            "max": 24,
+            "step": 1
+          }
+        ],
+        "provides": [
+          {
+            "key": "tokens",
+            "type": "tokens",
+            "description": "useTokens() hook"
+          }
+        ],
+        "requires": [],
+        "payload": {
+          "module": "@nodes/theme",
+          "exports": [
+            {
+              "name": "useTokens",
+              "exportKind": "hook",
+              "signature": "() => Tokens"
+            }
+          ],
+          "postconditions": [
+            "useTokens returns an object with accent, radius, surface, ink"
+          ]
+        },
+        "hash": "f5c62549d399bb14"
+      },
+      "pinned": false,
+      "params": {},
+      "deps": [],
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "91d48f1d4ac26b2c"
+      },
+      "thread": [],
+      "status": "ready",
+      "version": 0,
+      "history": [],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "cart-store": {
+      "id": "cart-store",
+      "kind": "state",
+      "title": "cart-store",
+      "spec": "Cart state: items with quantities, add/remove, count and total. External store so any component can subscribe.",
+      "contract": {
+        "name": "cart-store",
+        "summary": "useCart() hook: items, add(product), remove(id), count, total.",
+        "params": [],
+        "provides": [
+          {
+            "key": "cart",
+            "type": "store",
+            "description": "useCart() hook"
+          }
+        ],
+        "requires": [],
+        "payload": {
+          "module": "@nodes/cart-store",
+          "exports": [
+            {
+              "name": "useCart",
+              "exportKind": "hook",
+              "signature": "() => Cart"
+            }
+          ],
+          "postconditions": [
+            "add then count reflects the addition"
+          ]
+        },
+        "hash": "6d09f0648c563104"
+      },
+      "pinned": false,
+      "params": {},
+      "deps": [],
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "dfaa0fc9484f88cf"
+      },
+      "thread": [],
+      "status": "ready",
+      "version": 0,
+      "history": [],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "product-data": {
+      "id": "product-data",
+      "kind": "data",
+      "title": "product-data",
+      "spec": "Mock product catalog with names, prices, and emoji art.",
+      "contract": {
+        "name": "product-data",
+        "summary": "useProducts() returns the visible product list.",
+        "params": [
+          {
+            "type": "number",
+            "name": "productCount",
+            "description": "How many products to show",
+            "default": 8,
+            "min": 1,
+            "max": 12,
+            "step": 1
+          }
+        ],
+        "provides": [
+          {
+            "key": "products",
+            "type": "data",
+            "description": "useProducts() hook"
+          }
+        ],
+        "requires": [],
+        "payload": {
+          "module": "@nodes/product-data",
+          "exports": [
+            {
+              "name": "useProducts",
+              "exportKind": "hook",
+              "signature": "() => Product[]"
+            }
+          ],
+          "postconditions": [
+            "returns productCount products"
+          ]
+        },
+        "hash": "8400ceb0bb466dce"
+      },
+      "pinned": false,
+      "params": {},
+      "deps": [],
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "40d03e0ff29fa377"
+      },
+      "thread": [],
+      "status": "ready",
+      "version": 0,
+      "history": [],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "header": {
+      "id": "header",
+      "kind": "component",
+      "title": "Header",
+      "spec": "Top bar with shop title and a cart badge showing item count and total.",
+      "contract": {
+        "name": "Header",
+        "summary": "Shop header with live cart badge.",
+        "params": [
+          {
+            "type": "string",
+            "name": "title",
+            "description": "Shop title",
+            "default": "patchcad supply co."
+          }
+        ],
+        "provides": [
+          {
+            "key": "main",
+            "type": "component",
+            "description": "Header component"
+          }
+        ],
+        "requires": [
+          {
+            "key": "tokens",
+            "type": "tokens",
+            "description": "theme tokens"
+          },
+          {
+            "key": "cart",
+            "type": "store",
+            "description": "cart store"
+          }
+        ],
+        "payload": {
+          "module": "@nodes/header",
+          "exports": [
+            {
+              "name": "Header",
+              "exportKind": "component",
+              "signature": "() => JSX"
+            }
+          ],
+          "postconditions": [
+            "renders the title",
+            "badge shows cart count"
+          ]
+        },
+        "hash": "41d6c69b1248a1c5"
+      },
+      "pinned": false,
+      "params": {},
+      "deps": [
+        "theme",
+        "cart-store"
+      ],
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "3ff7be67b4fd6df1"
+      },
+      "thread": [],
+      "status": "ready",
+      "version": 0,
+      "history": [],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "product-grid": {
+      "id": "product-grid",
+      "kind": "component",
+      "title": "ProductGrid",
+      "spec": "Responsive grid of product cards with a quick-add button on each.",
+      "contract": {
+        "name": "ProductGrid",
+        "summary": "Product cards in a grid; quick-add wires into the cart.",
+        "params": [
+          {
+            "type": "number",
+            "name": "columns",
+            "description": "Grid columns",
+            "default": 3,
+            "min": 1,
+            "max": 4,
+            "step": 1
+          }
+        ],
+        "provides": [
+          {
+            "key": "main",
+            "type": "component",
+            "description": "ProductGrid component"
+          }
+        ],
+        "requires": [
+          {
+            "key": "tokens",
+            "type": "tokens",
+            "description": "theme tokens"
+          },
+          {
+            "key": "cart",
+            "type": "store",
+            "description": "cart store"
+          },
+          {
+            "key": "products",
+            "type": "data",
+            "description": "product list"
+          }
+        ],
+        "payload": {
+          "module": "@nodes/product-grid",
+          "exports": [
+            {
+              "name": "ProductGrid",
+              "exportKind": "component",
+              "signature": "() => JSX"
+            }
+          ],
+          "postconditions": [
+            "renders one card per product",
+            "quick-add adds to cart"
+          ]
+        },
+        "hash": "deccdaeaa41868e4"
+      },
+      "pinned": false,
+      "params": {},
+      "deps": [
+        "theme",
+        "cart-store",
+        "product-data"
+      ],
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "5045e9b7bc7d4234"
+      },
+      "thread": [],
+      "status": "ready",
+      "version": 0,
+      "history": [],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "shell": {
+      "id": "shell",
+      "kind": "shell",
+      "title": "App shell",
+      "spec": "Page layout: header on top, product grid below, centered column.",
+      "contract": {
+        "name": "App shell",
+        "summary": "Composition root arranging Header and ProductGrid.",
+        "params": [],
+        "provides": [
+          {
+            "key": "app",
+            "type": "component",
+            "description": "App root"
+          }
+        ],
+        "requires": [
+          {
+            "key": "tokens",
+            "type": "tokens",
+            "description": "theme tokens"
+          },
+          {
+            "key": "header",
+            "type": "component",
+            "description": "Header"
+          },
+          {
+            "key": "grid",
+            "type": "component",
+            "description": "ProductGrid"
+          }
+        ],
+        "payload": {
+          "module": "@nodes/shell",
+          "exports": [
+            {
+              "name": "App",
+              "exportKind": "component",
+              "signature": "() => JSX"
+            }
+          ],
+          "postconditions": [
+            "renders Header above ProductGrid"
+          ]
+        },
+        "hash": "688fd7cc931c7ee5"
+      },
+      "pinned": false,
+      "params": {},
+      "deps": [
+        "theme",
+        "header",
+        "product-grid"
+      ],
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "2f8fdfcce632772e"
+      },
+      "thread": [],
+      "status": "ready",
+      "version": 0,
+      "history": [],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    }
+  },
+  "edges": [
+    {
+      "id": "e-theme-header",
+      "from": "theme",
+      "fromPort": "tokens",
+      "to": "header",
+      "toPort": "tokens"
+    },
+    {
+      "id": "e-theme-grid",
+      "from": "theme",
+      "fromPort": "tokens",
+      "to": "product-grid",
+      "toPort": "tokens"
+    },
+    {
+      "id": "e-data-grid",
+      "from": "product-data",
+      "fromPort": "products",
+      "to": "product-grid",
+      "toPort": "products"
+    },
+    {
+      "id": "e-cart-header",
+      "from": "cart-store",
+      "fromPort": "cart",
+      "to": "header",
+      "toPort": "cart"
+    },
+    {
+      "id": "e-cart-grid",
+      "from": "cart-store",
+      "fromPort": "cart",
+      "to": "product-grid",
+      "toPort": "cart"
+    },
+    {
+      "id": "e-theme-shell",
+      "from": "theme",
+      "fromPort": "tokens",
+      "to": "shell",
+      "toPort": "tokens"
+    },
+    {
+      "id": "e-header-shell",
+      "from": "header",
+      "fromPort": "main",
+      "to": "shell",
+      "toPort": "header"
+    },
+    {
+      "id": "e-grid-shell",
+      "from": "product-grid",
+      "fromPort": "main",
+      "to": "shell",
+      "toPort": "grid"
+    }
+  ],
+  "assembly": {
+    "entryNodeId": "shell"
+  },
+  "layout": {},
+  "rev": 21
+}

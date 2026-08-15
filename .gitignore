@@ -1,0 +1,22 @@
+node_modules/
+dist/
+.preview/
+*.log
+.DS_Store
+.env
+.patchcad/
+__pycache__/
+.venv/
+
+# secrets — keys live in ~/.patchcad/config.json or env, never in the repo
+.env.*
+
+# how it was built, not what it is (session/process docs stay local)
+CLAUDE.md
+.hallmark/
+.claude/
+.agents
+skills-lock.json
+
+# runtime user data: imported meshes + generated projects
+projects/
