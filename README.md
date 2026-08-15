@@ -1,7 +1,9 @@
 # patchcad
 
-> **Very early version.** This is a working slice of a much larger vision —
-> expect rough edges, missing features, and fast-moving internals.
+> **⚠️ In development — very early version.** This is a working slice of a much
+> larger vision. Expect rough edges, missing features, breaking changes without
+> notice, and fast-moving internals. See [Status & limitations](#status--limitations)
+> before trying it.
 
 Prompt-to-app on a TouchDesigner-style node canvas. Type a goal → an architect
 model plans a **graph of nodes with pinned interface contracts** → parallel
@@ -9,6 +11,30 @@ generators write each node's code hermetically (they see neighbors'
 *contracts*, never their code) → the assembled app runs in a live preview.
 Break out any node and reprompt it individually; contract changes mark
 downstream nodes dirty for re-cook.
+
+## Status & limitations
+
+Actively in development; nothing here is stable. Current known limits:
+
+- **Planning is slow and silent** — the architect call takes ~1–2 minutes with
+  no progress feedback yet. It has not hung; give it the time.
+- **Bring your own models.** Generation quality depends on hosted frontier
+  models (Anthropic or OpenRouter key). Local models via Ollama work for the
+  plumbing, but small local models cannot reliably write valid build123d —
+  every failure is caught, attributed, and surfaced, not fixed for free.
+- **CAD planning only in the studio.** The web-app backend exists and runs
+  existing projects, but the product focus is printed parts.
+- **No export yet.** STEP/3MF/STL export, assembly clash checks (G5), and
+  screws seating into their holes are on the roadmap, not in the build.
+- **Smart segmentation is import-only.** Splitting a model into naturally
+  separating, peg-jointed pieces works for imported meshes; generated parts
+  can't split yet.
+- **Printability is advisory.** The DfAM score (min-wall + overhang) flags
+  risk; it never blocks a cook.
+- **Local, single-user tool.** The server binds localhost with no auth. The
+  undo stack lives in memory and clears on server restart.
+- **Setup has two runtimes.** Node (pnpm) for the studio/server, Python via
+  `uv` for the geometry kernel. Tested on macOS only.
 
 ## Run it
 
