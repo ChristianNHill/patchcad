@@ -7,11 +7,29 @@ import { z } from "zod";
 
 // ---------- Params (the T0 surface) ----------
 
+/** Presentation hints for the studio. Deliberately NOT part of the contract
+ *  hash (see engine graph/diff.ts contractHash): grouping a param or labelling
+ *  its unit changes nothing the generated code, the kernel, or a neighbor
+ *  depends on, so it must not dirty a graph — nor orphan the node library,
+ *  which is keyed by that same hash. */
+export const ParamUi = z.object({
+  /** Section this param is filed under in the inspector, e.g. "holes". */
+  group: z.string().optional(),
+  /** Suffix shown after the value: "mm", "°". Display only — never parsed. */
+  unit: z.string().optional(),
+});
+export type ParamUi = z.infer<typeof ParamUi>;
+
+const paramCommon = {
+  name: z.string(),
+  description: z.string().default(""),
+  ui: ParamUi.optional(),
+};
+
 export const ParamDecl = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("number"),
-    name: z.string(),
-    description: z.string().default(""),
+    ...paramCommon,
     default: z.number(),
     min: z.number().optional(),
     max: z.number().optional(),
@@ -19,27 +37,23 @@ export const ParamDecl = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("string"),
-    name: z.string(),
-    description: z.string().default(""),
+    ...paramCommon,
     default: z.string(),
   }),
   z.object({
     type: z.literal("boolean"),
-    name: z.string(),
-    description: z.string().default(""),
+    ...paramCommon,
     default: z.boolean(),
   }),
   z.object({
     type: z.literal("enum"),
-    name: z.string(),
-    description: z.string().default(""),
+    ...paramCommon,
     default: z.string(),
     options: z.array(z.string()).min(1),
   }),
   z.object({
     type: z.literal("color"),
-    name: z.string(),
-    description: z.string().default(""),
+    ...paramCommon,
     default: z.string(),
   }),
 ]);

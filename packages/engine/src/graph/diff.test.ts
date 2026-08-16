@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Contract, GraphDoc } from "@patchcad/shared";
-import { computeDirtySet, diffContract } from "./diff.js";
+import { computeDirtySet, contractHash, diffContract } from "./diff.js";
 
 function contract(overrides: Partial<Contract> = {}): Contract {
   return {
@@ -49,6 +49,37 @@ describe("diffContract", () => {
     const b = { ...a, payload: { exports: ["A", "B"] } };
     const d = diffContract(a, b);
     expect(d.shapeChangedProvides.sort()).toEqual(["p1", "p2"]);
+  });
+});
+
+describe("contractHash", () => {
+  const withUi = (ui?: { group?: string; unit?: string }) =>
+    contract({
+      params: [{ type: "number" as const, name: "thickness", description: "plate thickness", default: 5, ui }],
+    });
+
+  it("ignores param ui entirely", () => {
+    // This hash is the dirty-detection unit AND the node-library key, so a
+    // presentation-only edit moving it would dirty every graph and orphan
+    // every cached artifact. Byte-identical is the requirement, not "close".
+    const bare = contractHash(withUi());
+    expect(contractHash(withUi({ group: "holes" }))).toBe(bare);
+    expect(contractHash(withUi({ group: "plate", unit: "mm" }))).toBe(bare);
+  });
+
+  it("adding ui is not even a value change", () => {
+    const d = diffContract(withUi(), withUi({ group: "holes", unit: "mm" }));
+    expect(d.valueChanged).toBe(false);
+    expect(d.shapeChanged).toBe(false);
+    expect(d.changed).toBe(false);
+  });
+
+  it("still notices everything else about a param", () => {
+    const a = withUi({ group: "holes" });
+    const b = contract({
+      params: [{ type: "number" as const, name: "thickness", description: "plate thickness", default: 8 }],
+    });
+    expect(contractHash(a)).not.toBe(contractHash(b));
   });
 });
 

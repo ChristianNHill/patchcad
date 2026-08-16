@@ -1,6 +1,7 @@
 import { useState } from "react";
-import type { GraphDoc } from "@patchcad/shared";
+import type { GraphDoc, NodeRecord } from "@patchcad/shared";
 import { fmtTokens, useStudio } from "./store.js";
+import { groupParams, ParamRow } from "./params.js";
 
 export function Inspector({ graph }: { graph: GraphDoc }) {
   const selectedNodeId = useStudio((s) => s.selectedNodeId);
@@ -45,6 +46,8 @@ export function Inspector({ graph }: { graph: GraphDoc }) {
         <span className="section__label">Generator brief</span>
         <p>{node.spec}</p>
       </div>
+
+      <ParamsSection node={node} />
 
       <div className="section">
         <span className="section__label">Pinned interface</span>
@@ -123,6 +126,34 @@ export function Inspector({ graph }: { graph: GraphDoc }) {
         <pre className="code-view">{code || "not cooked yet — nothing generated for this node so far"}</pre>
       </div>
     </aside>
+  );
+}
+
+/** Every param, grouped — the node face only has room for the first three.
+ * T0: each edit is a postMessage plus a debounced persist, never an LLM call. */
+function ParamsSection({ node }: { node: NodeRecord }) {
+  const pushParam = useStudio((s) => s.pushParam);
+  const live = useStudio((s) => s.graph?.nodes[node.id]?.params ?? node.params);
+  if (node.contract.params.length === 0) return null;
+
+  return (
+    <div className="section">
+      <span className="section__label">Parameters</span>
+      {groupParams(node.contract.params).map(({ group, params }) => (
+        <div key={group || "_"} className="param-group">
+          {group && <span className="param-group__label">{group}</span>}
+          {params.map((p) => (
+            <ParamRow
+              key={p.name}
+              decl={p}
+              value={live[p.name] ?? p.default}
+              onChange={(v) => pushParam(node.id, p.name, v)}
+              describe
+            />
+          ))}
+        </div>
+      ))}
+    </div>
   );
 }
 

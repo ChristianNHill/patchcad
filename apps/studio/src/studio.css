@@ -326,6 +326,61 @@ body {
 .param select:focus-visible,
 .param input:focus-visible { outline-color: var(--color-focus); }
 
+/* The value column doubles as a number field: a slider cannot land on an exact
+   dimension, and CAD params are dimensions. Chrome only appears on hover/focus
+   so a row still reads as a readout at rest. */
+.param__readout {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3xs);
+  justify-self: end;
+}
+.param input[type="text"].param__value--edit {
+  width: 3.4rem;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--color-ink-2);
+  background: transparent;
+  border-color: transparent;
+  padding: var(--space-3xs) var(--space-2xs);
+  transition: background var(--dur-micro) var(--ease-out), border-color var(--dur-micro) var(--ease-out);
+}
+.param input[type="text"].param__value--edit:hover,
+.param input[type="text"].param__value--edit:focus {
+  background: var(--color-well);
+  border-color: var(--color-rule);
+  color: var(--color-ink);
+}
+.param__unit {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--color-muted);
+}
+.node__more {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--color-muted);
+}
+
+/* inspector: the full param list, grouped. Group labels borrow the section
+   label voice rather than introducing a second one. */
+.param-group { display: grid; gap: var(--space-2xs); }
+.param-group + .param-group { margin-top: var(--space-sm); }
+.param-group__label {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+.param__desc {
+  margin: 0 0 var(--space-2xs) calc(4.2rem + var(--space-xs));
+  font-size: var(--text-2xs);
+  color: var(--color-muted);
+}
+
 /* react-flow chrome, tokenised */
 .react-flow__handle.handle--requires { background: var(--color-muted); width: 8px; height: 8px; }
 .react-flow__handle.handle--provides { background: var(--color-accent); width: 8px; height: 8px; }

@@ -33,7 +33,13 @@ function shapeOf(c: Contract) {
 
 export function contractHash(c: Contract): string {
   const { hash: _ignored, ...rest } = c;
-  return hashValue(rest);
+  // Param `ui` is presentation only (grouping, unit labels). It is stripped
+  // because this hash is load-bearing twice over: it is the dirty-detection
+  // unit, and it is the node-library key. Letting a group label move it would
+  // dirty every node in every graph and orphan every cached artifact for a
+  // change no generated code can even observe.
+  const params = rest.params.map(({ ui: _ui, ...p }) => p);
+  return hashValue({ ...rest, params });
 }
 
 export function diffContract(before: Contract, after: Contract): ContractDiff {

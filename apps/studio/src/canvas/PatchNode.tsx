@@ -1,6 +1,7 @@
 import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
-import type { NodeRecord, ParamValue } from "@patchcad/shared";
+import type { NodeRecord } from "@patchcad/shared";
 import { fmtTokens, useStudio } from "../store.js";
+import { ParamRow } from "../params.js";
 import { KindGlyph } from "./KindGlyph.js";
 
 export type PatchNodeData = {
@@ -25,7 +26,10 @@ export function PatchNode({ data, selected }: NodeProps<PatchNodeType>) {
         ? "wave"
         : undefined;
 
+  // The face is the quick surface; the inspector lists every param, grouped.
+  // Keep NODE_PARAM_ROWS in sync with canvas/layout.ts nodeHeight().
   const visibleParams = record.contract.params.slice(0, 3);
+  const hiddenParams = record.contract.params.length - visibleParams.length;
 
   return (
     <div className={`node${selected ? " node--selected" : ""}`} data-proposal={proposalRole}>
@@ -74,90 +78,21 @@ export function PatchNode({ data, selected }: NodeProps<PatchNodeType>) {
       {visibleParams.length > 0 && (
         <div className="node__params">
           {visibleParams.map((p) => (
-            <ParamControl
+            <ParamRow
               key={p.name}
               decl={p}
               value={liveParams[p.name] ?? p.default}
               onChange={(v) => pushParam(record.id, p.name, v)}
             />
           ))}
+          {hiddenParams > 0 && (
+            <span className="node__more" title="select the node to edit every parameter">
+              +{hiddenParams} more in the inspector
+            </span>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function ParamControl({
-  decl,
-  value,
-  onChange,
-}: {
-  decl: NodeRecord["contract"]["params"][number];
-  value: ParamValue;
-  onChange: (v: ParamValue) => void;
-}) {
-  const row = (control: React.ReactNode, showValue = false) => (
-    <label className="param nodrag" title={decl.description || decl.name}>
-      <span className="param__name">{decl.name}</span>
-      {control}
-      {showValue && <span className="param__value">{String(value)}</span>}
-    </label>
-  );
-
-  switch (decl.type) {
-    case "number":
-      return row(
-        <input
-          type="range"
-          min={decl.min ?? 0}
-          max={decl.max ?? 100}
-          step={decl.step ?? 1}
-          value={Number(value)}
-          onChange={(e) => onChange(Number(e.target.value))}
-          aria-label={decl.name}
-        />,
-        true,
-      );
-    case "boolean":
-      return row(
-        <input
-          type="checkbox"
-          checked={Boolean(value)}
-          onChange={(e) => onChange(e.target.checked)}
-          aria-label={decl.name}
-        />,
-      );
-    case "enum":
-      return row(
-        <select
-          value={String(value)}
-          onChange={(e) => onChange(e.target.value)}
-          aria-label={decl.name}
-        >
-          {decl.options.map((o) => (
-            <option key={o} value={o}>
-              {o}
-            </option>
-          ))}
-        </select>,
-      );
-    case "color":
-      return row(
-        <input
-          type="color"
-          value={String(value)}
-          onChange={(e) => onChange(e.target.value)}
-          aria-label={decl.name}
-        />,
-      );
-    default:
-      return row(
-        <input
-          type="text"
-          value={String(value)}
-          onChange={(e) => onChange(e.target.value)}
-          aria-label={decl.name}
-        />,
-      );
-  }
-}

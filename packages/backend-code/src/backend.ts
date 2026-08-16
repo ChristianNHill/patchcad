@@ -199,6 +199,9 @@ export class CodeBackend implements DomainBackend<CodeContractPayload> {
       "state nodes owning stores, one style node owning tokens, presentational",
       "components, data nodes for fetch/mock, logic nodes for pure functions.",
       "Every contract's payload.module must be `@nodes/<node-id>`.",
+      "Params are the user's live control panel: give every one a plain-words",
+      "`description` and a real min/max, and use `ui` for presentation only —",
+      '{"group": "layout", "unit": "px"} — which stays outside the contract hash.',
     ].join(" "),
   };
 

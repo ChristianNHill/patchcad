@@ -11,8 +11,14 @@ export interface Positioned {
 
 const NODE_WIDTH = 240;
 
+/** Mirrors PatchNode's face: at most 3 param rows, plus an overflow line when
+ *  there are more. ELK overlaps nodes if this drifts from what renders. */
+const MAX_FACE_PARAMS = 3;
+
 function nodeHeight(paramCount: number): number {
-  return 88 + Math.min(paramCount, 3) * 34;
+  const rows = Math.min(paramCount, MAX_FACE_PARAMS);
+  const overflow = paramCount > MAX_FACE_PARAMS ? 16 : 0;
+  return 88 + rows * 34 + overflow;
 }
 
 /** ELK layered layout, left→right. Manual positions in graph.layout win. */
