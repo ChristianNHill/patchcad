@@ -263,6 +263,7 @@ export function architectOutputToGraph(
       artifact: null,
       thread: [],
       status: "planned",
+      measurements: null,
       version: 0,
       history: [],
       cost: { calls: 0, inputTokens: 0, outputTokens: 0, usd: 0 },

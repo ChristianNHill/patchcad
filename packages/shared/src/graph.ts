@@ -144,6 +144,23 @@ export const NodeVersionMeta = z.object({
 });
 export type NodeVersionMeta = z.infer<typeof NodeVersionMeta>;
 
+/** What verification actually measured, kept from the last PASSING verify.
+ *  Failures already survive as statusDetail; without this the passing numbers
+ *  were computed, cached kernel-side, returned to Node and then dropped, so
+ *  nothing ever showed the user that the gates agreed with the contract. */
+export const NodeMeasurements = z.object({
+  /** Node version these were probed at. */
+  version: z.number(),
+  /** Hash of the params they were probed with. A T0 edit re-executes a part
+   *  but does not re-probe it, so the studio compares this against the live
+   *  params and says the numbers are stale rather than implying they are current. */
+  paramsHash: z.string(),
+  /** Domain-shaped: CAD stores volume/area/bbox, per-port probe results,
+   *  envelope containment, and the advisory printability block. */
+  data: z.unknown(),
+});
+export type NodeMeasurements = z.infer<typeof NodeMeasurements>;
+
 export const NodeCost = z.object({
   calls: z.number().default(0),
   inputTokens: z.number().default(0),
@@ -170,6 +187,7 @@ export const NodeRecord = z.object({
   thread: z.array(ChatMessage).default([]),
   status: NodeStatus.default("planned"),
   statusDetail: CookFailure.optional(),
+  measurements: NodeMeasurements.nullable().default(null),
   version: z.number().default(0),
   history: z.array(NodeVersionMeta).default([]),
   cost: NodeCost.default({ calls: 0, inputTokens: 0, outputTokens: 0, usd: 0 }),

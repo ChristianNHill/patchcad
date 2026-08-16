@@ -80,6 +80,9 @@ export interface VerifyResult {
   ok: boolean;
   stage: string;
   report: string;
+  /** What the checks measured on a PASS, for the user rather than the model.
+   *  Domain-shaped, so the engine only persists it — see NodeMeasurements. */
+  measurements?: unknown;
 }
 
 export interface CheckResult {

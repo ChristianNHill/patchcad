@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { GraphDoc } from "@patchcad/shared";
+import { GraphDoc, hashValue } from "@patchcad/shared";
 import { cookOne, type CookDeps } from "./cook.js";
 import { EventBus } from "./events.js";
 import { GraphStore } from "./graph/store.js";
@@ -204,6 +204,54 @@ describe("cookOne repair budget", () => {
     expect(h.repairs[0]!.failure.report).toBe("boom 1");
     expect(h.repairs[2]!.priorFailures.map((f) => f.report)).toEqual(["boom 1", "boom 2"]);
     expect(h.repairs[2]!.failure.report).toBe("boom 3");
+  });
+});
+
+describe("cookOne measurement capture", () => {
+  const measuring = (measurements: unknown): DomainBackend<unknown> => ({
+    ...mockBackend,
+    verify: async () => ({ ok: true, stage: "verify", report: "", measurements }),
+  });
+
+  it("keeps what a passing verify measured, stamped with version and params", async () => {
+    const graph = makeGraph();
+    const deps = makeDeps(graph, stubProvider, new MemoryLibrary(), measuring({ volume_mm3: 42 }));
+    await cookOne(deps, "widget");
+
+    const node = deps.store.node("widget");
+    // Stamped AFTER commit, so it names the version it actually describes.
+    expect(node.measurements).toMatchObject({ version: 1, data: { volume_mm3: 42 } });
+    expect(node.version).toBe(1);
+    expect(node.measurements?.paramsHash).toBe(hashValue(node.params));
+  });
+
+  it("records nothing when the backend measures nothing", async () => {
+    const deps = makeDeps(makeGraph(), stubProvider, new MemoryLibrary(), measuring(undefined));
+    await cookOne(deps, "widget");
+    expect(deps.store.node("widget").measurements).toBeNull();
+  });
+
+  it("captures on the library fast path too, not only on a fresh generate", async () => {
+    const graph = makeGraph();
+    const library = new MemoryLibrary();
+    // trapProvider proves this path never reaches the generator.
+    const deps = makeDeps(graph, trapProvider, library, measuring({ volume_mm3: 7 }));
+    const hash = deps.store.node("widget").contract.hash;
+    library.entries.set(`mock/${hash}`, { code: "cached", testCode: "", kind: "component", title: "Widget" });
+
+    await cookOne(deps, "widget");
+    const node = deps.store.node("widget");
+    expect(node.history[0]?.cause).toBe("library");
+    expect(node.measurements).toMatchObject({ version: 1, data: { volume_mm3: 7 } });
+  });
+
+  it("leaves the contract hash alone", async () => {
+    // Measurements are advisory display data: if they moved the hash they
+    // would dirty the node they describe.
+    const deps = makeDeps(makeGraph(), stubProvider, new MemoryLibrary(), measuring({ volume_mm3: 1 }));
+    const before = deps.store.node("widget").contract.hash;
+    await cookOne(deps, "widget");
+    expect(deps.store.node("widget").contract.hash).toBe(before);
   });
 });
 

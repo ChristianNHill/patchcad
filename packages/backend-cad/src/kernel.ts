@@ -12,11 +12,46 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const KERNEL_DIR = path.resolve(here, "..", "kernel");
 
+/** One declared port, as actually probed in the solid. Which fields are
+ *  present depends on the port type (gates.py g3_ports). Note the list only
+ *  ever holds PASSES and may be partial: a failing probe raises and takes the
+ *  whole job with it, so probing stops at the first failure. */
+export interface PortMeasurement {
+  key: string;
+  type: string;
+  /** Hole-like ports (BORE, CLEARANCE_HOLE, SCREW_SEAT): measured bore. */
+  measured_diameter?: number;
+  /** FLAT_FACE: probed square, or 0 when the face is a sliver (center probe). */
+  probed_size?: number;
+  /** FLAT_FACE declared with ring_diameter: the annulus probed instead. */
+  ring_diameter?: number;
+  /** SCREW_BOSS: wall samples that hit material. */
+  ring_hits?: number;
+  /** SCREW_BOSS with a declared pilot. */
+  measured_pilot?: number;
+  /** Port type with no probe implemented yet. */
+  skipped?: string;
+}
+
+/** Advisory DfAM signal (CADClamp-derived). Never a gate; every key optional
+ *  because each sub-block is dropped silently if its measurement throws. */
+export interface Printability {
+  min_wall?: { thin_wall_p2_mm: number; index: number; recommended_mm: number };
+  overhang?: { warn_area_fraction: number; fail_area_fraction: number; index: number };
+  composite?: number;
+}
+
 export interface KernelMeasurements {
   volume_mm3: number;
   area_mm2: number;
   solids: number;
   bbox: { min: number[]; max: number[]; size: number[] };
+  /** Present only when the caller declared ports (the verify pass). */
+  ports?: PortMeasurement[];
+  /** Present only when the caller declared an envelope. Violations are always
+   *  0 here — a non-zero count raises instead of returning. */
+  envelope?: { vertices_checked: number; violations: number };
+  printability?: Printability;
 }
 
 export type KernelResult =
@@ -24,7 +59,7 @@ export type KernelResult =
       ok: true;
       hash: string;
       cached: boolean;
-      measurements: KernelMeasurements & { ports?: unknown[]; envelope?: unknown };
+      measurements: KernelMeasurements;
       glb: string;
       elapsed_ms?: number;
     }

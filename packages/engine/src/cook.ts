@@ -109,6 +109,20 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
     }
   };
 
+  /** Keep what a passing verify measured. Everything here is advisory display
+   *  data — it never feeds cooking, so it lives on the node, well clear of the
+   *  contract hash. Stamped with the params in force so a later slider drag
+   *  (which re-executes but does not re-probe) cannot pass stale numbers off
+   *  as current. */
+  const storeMeasurements = (measurements: unknown) => {
+    if (measurements === undefined || measurements === null) return;
+    const node = store.node(nodeIdValue);
+    const paramsHash = hashValue(node.params);
+    store.applyOp((g) => {
+      g.nodes[nodeIdValue]!.measurements = { version: node.version, paramsHash, data: measurements };
+    });
+  };
+
   const commit = (cause: string) => {
     const node = store.node(nodeIdValue);
     if (node.contract.hash !== baseContractHash || node.version !== baseVersion) {
@@ -155,6 +169,7 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
       if (verify.ok) {
         await storeInterface();
         commit(cause);
+        storeMeasurements(verify.measurements);
         await backend.previewAdapter.hotSwap(store.doc, workspace, [nodeIdValue]);
         log(`ready (v${store.node(nodeIdValue).version}, ${cause})`);
         return null;
@@ -304,6 +319,7 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
     // -- commit (guarded: superseded cooks are discarded) --
     await storeInterface();
     commit(attempt === 1 ? "generate" : `repair-${attempt}`);
+    storeMeasurements(verify.measurements);
     // Freshly verified, unspecialized code joins the library for future briefs.
     if (deps.library && unspecialized) {
       const n = store.node(nodeIdValue);

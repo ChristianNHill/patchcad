@@ -373,6 +373,9 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       ok: true,
       stage: "verify",
       report: JSON.stringify(result.measurements.ports ?? []),
+      // The probe results the gates just agreed with. They used to end here,
+      // stringified into a report nothing read on success.
+      measurements: result.measurements,
     };
   }
 

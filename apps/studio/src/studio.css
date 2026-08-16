@@ -381,6 +381,36 @@ body {
   color: var(--color-muted);
 }
 
+/* what the gates measured — machine text, so mono and tabular throughout */
+.measure { display: grid; gap: var(--space-3xs); }
+.measure__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-xs);
+  align-items: baseline;
+}
+.measure__key {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--color-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.measure__val {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink-2);
+  text-align: right;
+}
+.measure__note {
+  margin-top: var(--space-2xs);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--color-muted);
+}
+
 /* react-flow chrome, tokenised */
 .react-flow__handle.handle--requires { background: var(--color-muted); width: 8px; height: 8px; }
 .react-flow__handle.handle--provides { background: var(--color-accent); width: 8px; height: 8px; }
