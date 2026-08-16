@@ -13,6 +13,7 @@ import {
   computeDirtySet,
   contractHash,
   cookNodes,
+  critiqueAssembly,
   GraphStore,
   cookOne,
   diffContract,
@@ -397,6 +398,29 @@ async function main() {
       return reply.code(422).send({ error: result.error ?? "render failed", stage: result.stage });
     }
     return { url: `${cad.kernel.baseUrl}${result.sheet}`, ...result.render };
+  });
+
+  /**
+   * Look at the whole thing, once. Advisory by design: a model reading a
+   * picture is not an oracle, and gating a cook on one would let a confident
+   * hallucination block a correct assembly. Findings name a node and a fix so
+   * they become a contract edit or a reprompt — never a hand edit.
+   */
+  app.post("/api/project/critique", async (_req, reply) => {
+    if (active.backend.id !== "cad") return reply.code(409).send({ error: "active project is not a CAD graph" });
+    if (!resolved) return reply.code(503).send({ error: NO_PROVIDER_HELP });
+    const cad = active.backend as CadBackend;
+    const image = await cad.renderAssembly(active.store.doc, active.workspace);
+    if (!image) {
+      return reply.code(409).send({ error: "nothing to look at yet — needs at least two cooked parts" });
+    }
+    try {
+      const critique = await critiqueAssembly({ provider: resolved.provider, graph: active.store.doc, image });
+      console.log(`[patchcad] critique: ${critique.problems.length} problem(s) — ${critique.summary}`);
+      return critique;
+    } catch (err) {
+      return reply.code(502).send({ error: (err as Error).message });
+    }
   });
 
   app.get("/api/project/cad-scene", async (_req, reply) => {

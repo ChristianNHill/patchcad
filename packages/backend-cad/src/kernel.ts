@@ -158,6 +158,20 @@ export class KernelClient {
     return (await res.json()) as RenderResult;
   }
 
+  /** The posed assembly as one image — for judging parts in company, which
+   *  no per-part gate can do. */
+  async renderAssembly(
+    parts: { code: string; params: Record<string, unknown>; matrix: number[] }[],
+    opts: { importDir?: string; views?: number } = {},
+  ): Promise<RenderResult> {
+    const res = await fetch(`${this.baseUrl}/render-assembly`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ parts, import_dir: opts.importDir ?? "", views: opts.views ?? 4 }),
+    });
+    return (await res.json()) as RenderResult;
+  }
+
   /** Segment an uploaded STL/3MF/STEP into pieces + cut-plane interfaces. */
   async importFile(
     filename: string,

@@ -76,6 +76,26 @@ def worker_main(conn: Connection) -> None:
                 conn.send(run_import(job["import_job"] | {"out_dir": job["out_dir"]}))
                 continue
 
+            if "assembly" in job:
+                from .render import render_assembly
+
+                extra_ns_a: dict[str, object] = _registry_namespace()
+                if job.get("import_dir"):
+                    from .meshpart import load_import_part
+
+                    d = job["import_dir"]
+                    extra_ns_a["load_import"] = lambda name, scale=1.0: load_import_part(d, name, scale)
+                built = []
+                for part in job["assembly"]:
+                    tree_p = gates.g0_scan(part["code"])
+                    shape_p = gates.g1_execute(tree_p, part.get("params", {}), extra_ns_a)
+                    built.append((shape_p, part.get("matrix", [])))
+                os.makedirs(job["out_dir"], exist_ok=True)
+                info = render_assembly(built, os.path.join(job["out_dir"], "sheet.png"), job.get("render_views", 4))
+                conn.send({"ok": True, "render": info,
+                           "elapsed_ms": int((time.monotonic() - started) * 1000)})
+                continue
+
             extra_ns: dict[str, object] = _registry_namespace()
             if job.get("import_dir"):
                 from .meshpart import load_import_part

@@ -49,6 +49,19 @@ class RenderBody(BaseModel):
     views: int = 6
 
 
+class AssemblyPart(BaseModel):
+    code: str
+    params: dict[str, Any] = Field(default_factory=dict)
+    """Column-major 4x4 world matrix from the assembly solver."""
+    matrix: list[float] = Field(default_factory=list)
+
+
+class AssemblyRenderBody(BaseModel):
+    parts: list[AssemblyPart] = Field(default_factory=list)
+    import_dir: str = ""
+    views: int = 4
+
+
 class ImportBody(BaseModel):
     filename: str
     data_b64: str
@@ -148,6 +161,37 @@ async def render(body: RenderBody):
         "render_views": body.views,
     }
     result = await anyio.to_thread.run_sync(lambda: pool.execute(job, max(TIMEOUT_S, 60)))
+    if not result.get("ok"):
+        return JSONResponse(status_code=422, content={"ok": False, "hash": digest, **result})
+    return {
+        "ok": True,
+        "hash": digest,
+        "cached": False,
+        "sheet": f"/artifact/{digest}/sheet.png",
+        "render": result.get("render"),
+        "elapsed_ms": result["elapsed_ms"],
+    }
+
+
+@app.post("/render-assembly")
+async def render_assembly_endpoint(body: AssemblyRenderBody):
+    """The whole thing, posed. A part can satisfy every gate and still be wrong
+    in company — sunk into its neighbour, floating clear of it, or a quarter
+    turn out. Nothing per-part can see that, because nothing per-part ever
+    looks at two parts at once."""
+    digest = job_hash("assembly", [p.model_dump() for p in body.parts], body.import_dir, body.views)
+    out_dir = CACHE_ROOT / digest
+    sheet_file = out_dir / "sheet.png"
+    if sheet_file.exists():
+        return {"ok": True, "hash": digest, "cached": True, "sheet": f"/artifact/{digest}/sheet.png"}
+
+    job = {
+        "assembly": [p.model_dump() for p in body.parts],
+        "import_dir": body.import_dir,
+        "out_dir": str(out_dir),
+        "render_views": body.views,
+    }
+    result = await anyio.to_thread.run_sync(lambda: pool.execute(job, max(TIMEOUT_S, 90)))
     if not result.get("ok"):
         return JSONResponse(status_code=422, content={"ok": False, "hash": digest, **result})
     return {

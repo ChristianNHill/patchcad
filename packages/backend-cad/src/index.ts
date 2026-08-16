@@ -516,6 +516,22 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     };
   }
 
+  /** Every cooked part, placed by the assembly solver, in one image. */
+  async renderAssembly(graph: GraphDoc, ws: Workspace): Promise<LlmImage | null> {
+    const { world } = this.solveScene(graph);
+    const parts = Object.values(graph.nodes)
+      .filter((n) => n.artifact?.code && world[n.id])
+      .map((n) => ({ code: n.artifact!.code, params: mergedParams(n), matrix: world[n.id]! }));
+    if (parts.length < 2) return null; // one part is not an assembly
+
+    await this.ensureKernel();
+    const result = await this.kernel.renderAssembly(parts, { importDir: this.importDir(ws) });
+    if (!result.ok || !result.sheet) return null;
+    const res = await fetch(`${this.kernel.baseUrl}${result.sheet}`);
+    if (!res.ok) return null;
+    return { mediaType: "image/png", dataB64: Buffer.from(await res.arrayBuffer()).toString("base64") };
+  }
+
   buildGeneratePrompt(ctx: GenerateCtx<CadContractPayload>): PromptSpec {
     return generatePrompt(ctx);
   }

@@ -128,6 +128,21 @@ def main() -> None:
             "/render", json={"code": PLATE, "params": params, "views": 6}
         ).json().get("cached") is True)
 
+    # 4f. Posed assembly: two parts, one image. Catches what no per-part gate
+    # can — a part that is fine alone and wrong in company.
+    ident = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]
+    lifted = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,20,1]
+    r4f = client.post("/render-assembly", json={"parts": [
+        {"code": PLATE, "params": params, "matrix": ident},
+        {"code": PLATE, "params": params, "matrix": lifted},
+    ], "views": 4})
+    body4f = r4f.json()
+    check(
+        "assembly render composes both parts",
+        r4f.status_code == 200 and body4f.get("ok") and body4f.get("render", {}).get("parts") == 2,
+        f"{body4f.get('render', {}).get('triangles', '?')} tris in {body4f.get('elapsed_ms', '?')}ms",
+    )
+
     # 5. G2: zero-volume result caught with a hint.
     gone = PLATE.replace("return plate - hole", "return plate - Box(p.width*2, p.depth*2, p.thickness*2)")
     r5 = client.post("/execute", json={"code": gone, "params": params})

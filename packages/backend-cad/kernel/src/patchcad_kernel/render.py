@@ -174,11 +174,33 @@ def _downsample(img: np.ndarray, factor: int) -> np.ndarray:
     return img.reshape(h // factor, factor, w // factor, factor, 3).mean(axis=(1, 3)).astype(np.uint8)
 
 
-def render_sheet(shape: Any, path: str, views: int = 6) -> dict[str, Any]:
-    """Render `shape` from several angles into one PNG contact sheet."""
+def transform(v: np.ndarray, matrix: list[float]) -> np.ndarray:
+    """Apply a column-major 4x4 (translation at 12,13,14) — the layout the
+    assembly solver and three.js both use."""
+    m = np.asarray(matrix, dtype=np.float64)
+    if m.size != 16:
+        return v
+    rot = np.array([[m[0], m[4], m[8]], [m[1], m[5], m[9]], [m[2], m[6], m[10]]])
+    return v @ rot.T + np.array([m[12], m[13], m[14]])
+
+
+def combine(parts: list[tuple[np.ndarray, np.ndarray]]) -> tuple[np.ndarray, np.ndarray]:
+    """One mesh from many, triangle indices rebased as they are appended."""
+    verts: list[np.ndarray] = []
+    tris: list[np.ndarray] = []
+    offset = 0
+    for v, t in parts:
+        verts.append(v)
+        tris.append(t + offset)
+        offset += len(v)
+    if not verts:
+        return np.zeros((0, 3)), np.zeros((0, 3), dtype=np.int64)
+    return np.vstack(verts), np.vstack(tris)
+
+
+def _sheet_from_mesh(v: np.ndarray, t: np.ndarray, path: str, views: int) -> dict[str, Any]:
     from PIL import Image, ImageDraw
 
-    v, t = _decimate(*_mesh_arrays(shape))
     chosen = VIEWS[: max(1, min(views, len(VIEWS)))]
 
     # One magnification for the whole sheet. The bounding sphere is used rather
@@ -205,3 +227,27 @@ def render_sheet(shape: Any, path: str, views: int = 6) -> dict[str, Any]:
 
     sheet.save(path, "PNG", optimize=True)
     return {"views": [n for n, _ in tiles], "triangles": int(len(t)), "size": list(sheet.size)}
+
+
+def render_sheet(shape: Any, path: str, views: int = 6) -> dict[str, Any]:
+    """Render one part from several angles into a PNG contact sheet."""
+    v, t = _decimate(*_mesh_arrays(shape))
+    return _sheet_from_mesh(v, t, path, views)
+
+
+def render_assembly(parts: list[tuple[Any, list[float]]], path: str, views: int = 4) -> dict[str, Any]:
+    """The whole thing, posed.
+
+    A part can satisfy every gate and still be wrong in company — sunk into its
+    neighbour, floating clear of it, or rotated a quarter turn. Nothing in the
+    per-part pipeline can see that, because nothing in it ever looks at two
+    parts at once.
+    """
+    meshed = []
+    for shape, matrix in parts:
+        v, t = _mesh_arrays(shape)
+        meshed.append((transform(v, matrix), t))
+    v, t = _decimate(*combine(meshed))
+    info = _sheet_from_mesh(v, t, path, views)
+    info["parts"] = len(parts)
+    return info
