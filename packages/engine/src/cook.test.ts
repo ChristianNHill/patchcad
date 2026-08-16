@@ -5,7 +5,7 @@ import { cookOne, type CookDeps } from "./cook.js";
 import { EventBus } from "./events.js";
 import { GraphStore } from "./graph/store.js";
 import type { DomainBackend, RepairCtx } from "./backend.js";
-import type { LlmProvider } from "./llm.js";
+import type { LlmImage, LlmProvider } from "./llm.js";
 import type { LibraryEntry, LibraryListing, NodeLibrary } from "./library.js";
 
 /** The library fast path must never reach the generator; capture must run on
@@ -486,5 +486,51 @@ describe("cookOne near-match reuse", () => {
     expect(generated).toBe(true);
     expect(deps.store.node("widget").artifact?.code).toBe("fresh");
     expect(deps.store.node("widget").history[0]?.cause).toBe("generate");
+  });
+});
+
+describe("cookOne render-assisted repair", () => {
+  const img = { mediaType: "image/png" as const, dataB64: "iVBORw0KGgo=" };
+
+  function seeingBackend(opts: { render?: typeof img | null; throws?: boolean }) {
+    const seen: (LlmImage | undefined)[] = [];
+    const backend: DomainBackend<unknown> = {
+      ...mockBackend,
+      maxAttempts: 3,
+      renderArtifact: async () => {
+        if (opts.throws) throw new Error("kernel down");
+        return opts.render ?? null;
+      },
+      buildRepairPrompt: (ctx) => {
+        seen.push(ctx.render);
+        return { ...mockBackend.buildGeneratePrompt(ctx), role: "repair" };
+      },
+      execute: async () => ({ ok: false, stage: "G3", report: "wrong bore" }),
+    };
+    return { backend, seen };
+  }
+
+  it("shows the model what it built, on repairs only", async () => {
+    const h = seeingBackend({ render: img });
+    const deps = makeDeps(makeGraph(), stubProvider, new MemoryLibrary(), h.backend);
+    await expect(cookOne(deps, "widget")).rejects.toThrow();
+    // Attempt 1 is a fresh generate — there is nothing built yet to look at.
+    expect(h.seen).toEqual([img, img]);
+  });
+
+  it("repairs text-only when the artifact cannot be rendered", async () => {
+    // A part that failed to execute has no shape to show; the round must
+    // still happen.
+    const h = seeingBackend({ render: null });
+    const deps = makeDeps(makeGraph(), stubProvider, new MemoryLibrary(), h.backend);
+    await expect(cookOne(deps, "widget")).rejects.toThrow();
+    expect(h.seen).toEqual([undefined, undefined]);
+  });
+
+  it("never lets a render failure cost the repair round", async () => {
+    const h = seeingBackend({ throws: true });
+    const deps = makeDeps(makeGraph(), stubProvider, new MemoryLibrary(), h.backend);
+    await expect(cookOne(deps, "widget")).rejects.toThrow(/after 3 attempts/);
+    expect(h.seen).toHaveLength(2);
   });
 });

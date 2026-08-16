@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import type { LlmImage } from "./llm.js";
 import type {
   Contract,
   GraphDoc,
@@ -73,11 +74,18 @@ export interface RepairCtx<P = unknown> extends GenerateCtx<P> {
    *  repeated here). Without these the model re-tries approaches it already
    *  burned a round on; empty on the first repair. */
   priorFailures: { stage: string; report: string }[];
+  /**
+   * What the failed artifact actually looks like, when the backend could
+   * render it. Present only when the code built a shape — a part that failed
+   * to execute has nothing to show. This is the one input that can catch
+   * "compiles, measures fine, looks wrong", which no gate can see.
+   */
+  render?: LlmImage;
 }
 
 export interface PromptSpec {
   system: string;
-  messages: { role: "user" | "assistant"; content: string }[];
+  messages: { role: "user" | "assistant"; content: string; images?: LlmImage[] }[];
   /** Forced output schema; the LLM adapter enforces it. */
   schema: z.ZodType<GeneratedArtifact, z.ZodTypeDef, unknown>;
   role: "generator" | "repair";
@@ -160,6 +168,15 @@ export interface DomainBackend<P = unknown> {
    * parts): return code and the cook commits it — verified, zero LLM calls —
    * with cause "registry". Return null to fall through to library/generator. */
   deterministicArtifact?(node: NodeRecord): { code: string; testCode?: string } | null;
+
+  /**
+   * A picture of the node's current artifact, for a model to look at.
+   *
+   * Optional, and returning null is always fine: a domain with nothing visual
+   * to show, or code that did not build far enough to render, simply skips the
+   * image and the repair stays text-only.
+   */
+  renderArtifact?(node: NodeRecord, ws: Workspace): Promise<LlmImage | null>;
 
   /** Extract the node's REAL interface (a .d.ts for code nodes) after verify.
    * Stored on artifact.dts; neighbor verification then checks against actual

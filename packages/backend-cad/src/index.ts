@@ -8,6 +8,7 @@ export * from "./bindings.js";
 export { normalizeCadCode } from "./prompts.js";
 import type {
   CheckResult,
+  LlmImage,
   DomainBackend,
   ExecuteResult,
   FailureClass,
@@ -491,6 +492,28 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
   deterministicArtifact(node: NodeRecord): { code: string } | null {
     const code = resolveDeterministic(node);
     return code ? { code } : null;
+  }
+
+  /**
+   * Six views of whatever the node currently holds, for a model to look at.
+   * Returns null whenever the code cannot be built into a shape — there is
+   * nothing to show, and a repair for a syntax error would not benefit anyway.
+   */
+  async renderArtifact(node: NodeRecord, ws: Workspace): Promise<LlmImage | null> {
+    const code = node.artifact?.code;
+    if (!code) return null;
+    await this.ensureKernel();
+    const result = await this.kernel.render(code, mergedParams(node), {
+      importDir: this.importDir(ws),
+      views: 4, // iso/front/right/top: enough to judge shape, half the tokens of six
+    });
+    if (!result.ok || !result.sheet) return null;
+    const res = await fetch(`${this.kernel.baseUrl}${result.sheet}`);
+    if (!res.ok) return null;
+    return {
+      mediaType: "image/png",
+      dataB64: Buffer.from(await res.arrayBuffer()).toString("base64"),
+    };
   }
 
   buildGeneratePrompt(ctx: GenerateCtx<CadContractPayload>): PromptSpec {

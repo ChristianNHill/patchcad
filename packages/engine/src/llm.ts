@@ -9,9 +9,19 @@ import type { z } from "zod";
 
 export type LlmRole = "architect" | "generator" | "repair" | "classifier";
 
+/** A rendered image attached to a message. Base64 rather than a URL because
+ *  the kernel's artifact server is loopback-only — no provider can reach it. */
+export interface LlmImage {
+  mediaType: "image/png" | "image/jpeg";
+  dataB64: string;
+}
+
 export interface LlmMessage {
   role: "user" | "assistant";
   content: string;
+  /** Adapters that support vision send these alongside the text; the rest
+   *  ignore them, so a text-only provider degrades rather than breaking. */
+  images?: LlmImage[];
 }
 
 export interface LlmRequest<T> {

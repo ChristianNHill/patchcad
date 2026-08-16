@@ -5,7 +5,8 @@
   "brief": {
     "goal": "clamp an L-bracket to a base plate with an M4 screw",
     "constraints": [],
-    "clarifications": []
+    "clarifications": [],
+    "design": ""
   },
   "nodes": {
     "base-plate": {
@@ -544,5 +545,5 @@
     "entryNodeId": "base-plate"
   },
   "layout": {},
-  "rev": 24
+  "rev": 25
 }

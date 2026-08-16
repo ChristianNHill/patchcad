@@ -189,6 +189,14 @@ export function repairPrompt(ctx: RepairCtx<CadContractPayload>): PromptSpec {
       ? "\nThis is the FINAL attempt: prefer a simpler geometry that certainly passes over a clever one that might."
       : "";
 
+  // A gate report is a number; a picture is the shape. Attached to the same
+  // turn as the failure so the model reads them together — this is the only
+  // input that can catch geometry which measures correctly and still looks
+  // nothing like the part that was asked for.
+  const seeing = ctx.render
+    ? "\nThe image shows what your code actually built, from four angles. Check it against the part described above before you change anything: if the SHAPE is wrong, fixing the measurement alone will not help."
+    : "";
+
   return {
     ...base,
     role: "repair",
@@ -197,12 +205,13 @@ export function repairPrompt(ctx: RepairCtx<CadContractPayload>): PromptSpec {
       { role: "assistant", content: JSON.stringify({ code: ctx.failedCode }) },
       {
         role: "user",
+        ...(ctx.render ? { images: [ctx.render] } : {}),
         content: [
           `That code failed gate ${ctx.failure.stage} (attempt ${ctx.attempt} of ${ctx.maxAttempts}):`,
           ctx.failure.report,
           spent,
           "",
-          `Fix exactly this problem and emit the corrected complete module.${lastRound}`,
+          `Fix exactly this problem and emit the corrected complete module.${seeing}${lastRound}`,
         ]
           .filter(Boolean)
           .join("\n"),

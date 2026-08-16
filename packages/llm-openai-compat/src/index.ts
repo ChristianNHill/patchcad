@@ -40,9 +40,25 @@ export class OpenAiCompatProvider implements LlmProvider {
     const jsonSchema = zodToJsonSchema(req.schema, { $refStrategy: "none" });
 
     const attempt = async (extraUser?: string): Promise<{ raw: string; usage: ChatResponse["usage"] }> => {
+      // OpenAI's vision shape: a content array of {type:"text"} and
+      // {type:"image_url"} parts, the image inlined as a data: URI. Messages
+      // without images keep the plain-string form.
+      const toMessage = (m: (typeof req.messages)[number]) =>
+        m.images?.length
+          ? {
+              role: m.role,
+              content: [
+                ...m.images.map((img) => ({
+                  type: "image_url" as const,
+                  image_url: { url: `data:${img.mediaType};base64,${img.dataB64}` },
+                })),
+                { type: "text" as const, text: m.content },
+              ],
+            }
+          : m;
       const messages = [
         { role: "system", content: this.systemWithSchema(req.system, jsonSchema) },
-        ...req.messages,
+        ...req.messages.map(toMessage),
         ...(extraUser ? [{ role: "user" as const, content: extraUser }] : []),
       ];
       // Reasoning models spend output budget thinking BEFORE the JSON comes

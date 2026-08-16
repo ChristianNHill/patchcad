@@ -72,8 +72,20 @@ export class ClaudeProvider implements LlmProvider {
     const usage = { inputTokens: 0, outputTokens: 0, usd: 0 };
 
     const attempt = async (extra?: { assistant: string; user: string }): Promise<string> => {
+      // A message with images becomes a content array; without, it stays a
+      // plain string so every existing call is byte-identical on the wire.
+      const toContent = (m: (typeof req.messages)[number]) =>
+        m.images?.length
+          ? [
+              ...m.images.map((img) => ({
+                type: "image" as const,
+                source: { type: "base64" as const, media_type: img.mediaType, data: img.dataB64 },
+              })),
+              { type: "text" as const, text: m.content },
+            ]
+          : m.content;
       const messages = [
-        ...req.messages.map((m) => ({ role: m.role, content: m.content })),
+        ...req.messages.map((m) => ({ role: m.role, content: toContent(m) })),
         ...(extra
           ? [
               { role: "assistant" as const, content: extra.assistant },

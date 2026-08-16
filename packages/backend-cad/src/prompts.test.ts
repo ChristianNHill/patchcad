@@ -188,3 +188,29 @@ describe("shared design intent", () => {
     expect(repair.messages[0]!.content).toContain("Chamfered edges only.");
   });
 });
+
+describe("vision in the repair loop", () => {
+  const img = { mediaType: "image/png" as const, dataB64: "iVBORw0KGgo=" };
+
+  it("attaches the render to the same turn as the failure", () => {
+    // Read together or not at all: the number and the shape are one judgement.
+    const msgs = repairPrompt({ ...ctx(), render: img } as never).messages;
+    const last = msgs[msgs.length - 1]!;
+    expect(last.images).toEqual([img]);
+    expect(last.content).toMatch(/expected Ø4\.5, measured Ø6\.0?0?/);
+  });
+
+  it("tells the model what it is looking at, and what to do with it", () => {
+    const msgs = repairPrompt({ ...ctx(), render: img } as never).messages;
+    const text = msgs[msgs.length - 1]!.content;
+    expect(text).toContain("what your code actually built");
+    expect(text).toContain("if the SHAPE is wrong");
+  });
+
+  it("says nothing about an image when there is none", () => {
+    const msgs = repairPrompt(ctx()).messages;
+    const last = msgs[msgs.length - 1]!;
+    expect(last.images).toBeUndefined();
+    expect(last.content).not.toContain("The image shows");
+  });
+});

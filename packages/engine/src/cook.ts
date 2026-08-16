@@ -2,7 +2,7 @@ import { hashValue } from "@patchcad/shared";
 import type { DomainBackend, GenerateCtx, RepairCtx, Workspace } from "./backend.js";
 import { selectExemplars } from "./exemplars.js";
 import { findReusable } from "./similarity.js";
-import type { LlmProvider } from "./llm.js";
+import type { LlmImage, LlmProvider } from "./llm.js";
 import type { NodeLibrary } from "./library.js";
 import type { GraphStore } from "./graph/store.js";
 
@@ -280,6 +280,20 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
     // -- generate (or repair) --
     store.setStatus(nodeIdValue, attempt === 1 ? "generating" : "repairing");
     if (attempt > 1) store.setStatus(nodeIdValue, "generating");
+    // Show the model what it actually built. Only worth doing on a repair,
+    // and only when the artifact got far enough to have a shape — a part that
+    // failed to execute has nothing to look at. Best-effort throughout:
+    // a render failure must never cost the repair round itself.
+    let render: LlmImage | undefined;
+    if (attempt > 1 && backend.renderArtifact) {
+      try {
+        render = (await backend.renderArtifact(store.node(nodeIdValue), workspace)) ?? undefined;
+        if (render) log("attached a render of the failed part to the repair");
+      } catch {
+        /* advisory */
+      }
+    }
+
     const prompt =
       attempt === 1
         ? backend.buildGeneratePrompt(makeCtx())
@@ -292,6 +306,7 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
             priorFailures: failures.slice(0, -1),
             attempt,
             maxAttempts,
+            render,
           } as RepairCtx<unknown>);
 
     log(attempt === 1 ? "generating…" : `repair attempt ${attempt}…`);
