@@ -11,7 +11,13 @@ __pycache__/
 # secrets — keys live in ~/.patchcad/config.json or env, never in the repo
 .env.*
 
-# how it was built, not what it is (session/process docs stay local)
+# how it was built, not what it is (session/process docs stay local).
+# Markdown is excluded by DEFAULT and re-admitted one file at a time: only docs
+# needed to run or set up the project belong in a public repo, and the way that
+# rule gets broken is a new note landing in a `git add -A`.
+*.md
+!README.md
+!**/README.md
 CLAUDE.md
 .hallmark/
 .claude/
