@@ -11,13 +11,19 @@ import type { ContractView } from "../backend.js";
 
 export type PersistFn = (graph: GraphDoc) => Promise<void>;
 
+/** Every state can reach `queued`, including the in-flight ones. A cook always
+ * begins by queueing (cook.ts), so a state that cannot reach `queued` is a
+ * state no re-cook can rescue: a process death or a guard that returns without
+ * settling leaves the node in-flight forever, and each cook-dirty then fails it
+ * instantly on the illegal transition. Requeueing a genuinely live node is safe
+ * — the superseded-commit guard discards the loser's writes. */
 const STATUS_TRANSITIONS: Record<NodeStatus, NodeStatus[]> = {
   planned: ["queued", "cancelled"],
   queued: ["generating", "building", "cancelled"],
-  generating: ["building", "repairing", "error_code", "error_contract", "cancelled"],
-  building: ["verifying", "repairing", "error_code", "error_contract", "cancelled"],
-  verifying: ["ready", "repairing", "error_code", "error_contract", "cancelled"],
-  repairing: ["generating", "error_code", "error_contract", "cancelled"],
+  generating: ["queued", "building", "repairing", "error_code", "error_contract", "cancelled"],
+  building: ["queued", "verifying", "repairing", "error_code", "error_contract", "cancelled"],
+  verifying: ["queued", "ready", "repairing", "error_code", "error_contract", "cancelled"],
+  repairing: ["queued", "generating", "error_code", "error_contract", "cancelled"],
   ready: ["dirty", "queued", "cancelled"],
   dirty: ["queued", "cancelled"],
   error_code: ["queued", "cancelled"],

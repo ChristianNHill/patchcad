@@ -1,4 +1,4 @@
-import { Component, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
@@ -118,8 +118,16 @@ function PartMesh({
 function FitCamera({ box, partsKey }: { box: THREE.Box3 | null; partsKey: string }) {
   const camera = useThree((s) => s.camera);
   const controls = useThree((s) => s.controls) as { target: THREE.Vector3; update: () => void } | null;
+  // Framed part sets, not a one-shot effect: box, controls and partsKey settle
+  // in whatever order the GLB loads and OrbitControls mount happen to finish.
+  // Keying the effect on partsKey alone meant a box arriving last never framed
+  // anything — the camera stayed at its initial pose and the pane looked empty
+  // until something forced a remount.
+  const framed = useRef<string>("");
   useEffect(() => {
     if (!box || box.isEmpty() || !controls) return;
+    if (framed.current === partsKey) return; // already framed this set; don't fight an orbit
+    framed.current = partsKey;
     const center = box.getCenter(new THREE.Vector3());
     const radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 10);
     // distance from the NARROWER field of view — the pane is a tall column,
@@ -132,8 +140,7 @@ function FitCamera({ box, partsKey }: { box: THREE.Box3 | null; partsKey: string
     camera.position.copy(center.clone().add(dir.multiplyScalar(dist)));
     controls.target.copy(center);
     controls.update();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [partsKey, controls]);
+  }, [partsKey, controls, box]);
   return null;
 }
 
