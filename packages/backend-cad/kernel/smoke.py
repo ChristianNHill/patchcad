@@ -109,6 +109,25 @@ def main() -> None:
         body4d.get("error", ""),
     )
 
+    # 4e. Contact sheet: a real PNG, from a real part, through the endpoint.
+    r4e = client.post("/render", json={"code": PLATE, "params": params, "views": 6})
+    body4e = r4e.json()
+    check(
+        "render endpoint returns a sheet",
+        r4e.status_code == 200 and body4e.get("ok") and body4e.get("sheet"),
+        f"{body4e.get('render', {}).get('triangles', '?')} tris in {body4e.get('elapsed_ms', '?')}ms",
+    )
+    if body4e.get("sheet"):
+        png = client.get(body4e["sheet"])
+        check(
+            "sheet is a served PNG",
+            png.status_code == 200 and png.content[:8] == b"\x89PNG\r\n\x1a\n",
+            f"{len(png.content)} bytes",
+        )
+        check("second render is cached", client.post(
+            "/render", json={"code": PLATE, "params": params, "views": 6}
+        ).json().get("cached") is True)
+
     # 5. G2: zero-volume result caught with a hint.
     gone = PLATE.replace("return plate - hole", "return plate - Box(p.width*2, p.depth*2, p.thickness*2)")
     r5 = client.post("/execute", json={"code": gone, "params": params})

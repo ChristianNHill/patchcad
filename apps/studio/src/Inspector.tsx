@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { GraphDoc, NodeRecord } from "@patchcad/shared";
 import { fmtTokens, useStudio } from "./store.js";
 import { groupParams, ParamRow } from "./params.js";
-import { MeasurementsSection } from "./measurements.js";
+import { MeasurementsSection, RenderSheet } from "./measurements.js";
 
 export function Inspector({ graph }: { graph: GraphDoc }) {
   const selectedNodeId = useStudio((s) => s.selectedNodeId);
@@ -51,6 +51,10 @@ export function Inspector({ graph }: { graph: GraphDoc }) {
       <ParamsSection node={node} />
 
       <MeasurementsSection node={node} />
+
+      {graph.backend === "cad" && (
+        <RenderSheet nodeId={node.id} cooked={!!node.artifact} />
+      )}
 
       <div className="section">
         <span className="section__label">Pinned interface</span>

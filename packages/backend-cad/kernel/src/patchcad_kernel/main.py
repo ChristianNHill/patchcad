@@ -42,6 +42,13 @@ class ExecuteBody(BaseModel):
     import_dir: str = ""
 
 
+class RenderBody(BaseModel):
+    code: str
+    params: dict[str, Any] = Field(default_factory=dict)
+    import_dir: str = ""
+    views: int = 6
+
+
 class ImportBody(BaseModel):
     filename: str
     data_b64: str
@@ -116,6 +123,49 @@ async def execute(body: ExecuteBody):
         "elapsed_ms": result["elapsed_ms"],
         "glb": f"/artifact/{digest}/mesh.glb",
     }
+
+
+@app.post("/render")
+async def render(body: RenderBody):
+    """Multi-view contact sheet for one part.
+
+    Deliberately NOT part of /execute: rendering costs 100-300ms, and /execute
+    is the T0 slider path where a part re-runs on every drag. Asking for a
+    picture is a separate, rarer act, so it pays its own cost and gets its own
+    content-addressed cache entry.
+    """
+    digest = job_hash("render", body.code, body.params, body.import_dir, body.views)
+    out_dir = CACHE_ROOT / digest
+    sheet_file = out_dir / "sheet.png"
+    if sheet_file.exists():
+        return {"ok": True, "hash": digest, "cached": True, "sheet": f"/artifact/{digest}/sheet.png"}
+
+    job = {
+        "code": body.code,
+        "params": body.params,
+        "import_dir": body.import_dir,
+        "out_dir": str(out_dir),
+        "render_views": body.views,
+    }
+    result = await anyio.to_thread.run_sync(lambda: pool.execute(job, max(TIMEOUT_S, 60)))
+    if not result.get("ok"):
+        return JSONResponse(status_code=422, content={"ok": False, "hash": digest, **result})
+    return {
+        "ok": True,
+        "hash": digest,
+        "cached": False,
+        "sheet": f"/artifact/{digest}/sheet.png",
+        "render": result.get("render"),
+        "elapsed_ms": result["elapsed_ms"],
+    }
+
+
+@app.get("/artifact/{digest}/sheet.png")
+async def sheet(digest: str):
+    path = CACHE_ROOT / digest / "sheet.png"
+    if not path.exists():
+        return JSONResponse(status_code=404, content={"error": "no sheet for that hash"})
+    return FileResponse(path, media_type="image/png")
 
 
 @app.post("/import")

@@ -374,6 +374,31 @@ async function main() {
 
   // ---------- CAD scene (viewport data) ----------
 
+  /**
+   * A picture of one part, from six angles. The gates can prove a bore is
+   * Ø4.5 and the part fits its envelope; they cannot see that it looks wrong.
+   * For now a human closes that gap — this is what they look at.
+   */
+  app.get("/api/project/nodes/:nodeId/sheet", async (req, reply) => {
+    if (active.backend.id !== "cad") return reply.code(409).send({ error: "active project is not a CAD graph" });
+    const { nodeId: nid } = req.params as { nodeId: string };
+    const node = active.store.doc.nodes[nid];
+    if (!node?.artifact?.code) return reply.code(404).send({ error: "node has no cooked code" });
+
+    const cad = active.backend as CadBackend;
+    const params: Record<string, unknown> = {};
+    for (const p of node.contract.params) params[p.name] = p.default;
+    Object.assign(params, node.params);
+
+    const result = await cad.kernel.render(node.artifact.code, params, {
+      importDir: path.join(active.dir, "imports"),
+    });
+    if (!result.ok || !result.sheet) {
+      return reply.code(422).send({ error: result.error ?? "render failed", stage: result.stage });
+    }
+    return { url: `${cad.kernel.baseUrl}${result.sheet}`, ...result.render };
+  });
+
   app.get("/api/project/cad-scene", async (_req, reply) => {
     if (active.backend.id !== "cad") return reply.code(409).send({ error: "active project is not a CAD graph" });
     const cad = active.backend as CadBackend;

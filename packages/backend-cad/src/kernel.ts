@@ -65,6 +65,17 @@ export type KernelResult =
     }
   | { ok: false; hash?: string; stage: string; error: string; hint: string };
 
+export interface RenderResult {
+  ok: boolean;
+  hash: string;
+  cached?: boolean;
+  /** Kernel-relative path; use glbUrl-style joining for a fetchable URL. */
+  sheet?: string;
+  render?: { views: string[]; triangles: number; size: number[] };
+  stage?: string;
+  error?: string;
+}
+
 export class KernelClient {
   private child: ChildProcess | null = null;
   readonly baseUrl: string;
@@ -122,6 +133,29 @@ export class KernelClient {
       }),
     });
     return (await res.json()) as KernelResult;
+  }
+
+  /**
+   * Multi-view contact sheet for one part. Separate from execute on purpose:
+   * rendering costs 100-300ms and execute is the T0 slider path, so a picture
+   * pays its own way and caches under its own hash.
+   */
+  async render(
+    code: string,
+    params: Record<string, unknown>,
+    opts: { importDir?: string; views?: number } = {},
+  ): Promise<RenderResult> {
+    const res = await fetch(`${this.baseUrl}/render`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        code,
+        params,
+        import_dir: opts.importDir ?? "",
+        views: opts.views ?? 6,
+      }),
+    });
+    return (await res.json()) as RenderResult;
   }
 
   /** Segment an uploaded STL/3MF/STEP into pieces + cut-plane interfaces. */

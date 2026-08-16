@@ -100,6 +100,14 @@ def worker_main(conn: Connection) -> None:
                 pass
             out_dir = job["out_dir"]
             os.makedirs(out_dir, exist_ok=True)
+            # A render request wants the picture, not the gate report.
+            if job.get("render_views"):
+                from .render import render_sheet
+
+                render_info = render_sheet(shape, os.path.join(out_dir, "sheet.png"), job["render_views"])
+                conn.send({"ok": True, "render": render_info, "measurements": measurements,
+                           "elapsed_ms": int((time.monotonic() - started) * 1000)})
+                continue
             gates.export_glb(shape, os.path.join(out_dir, "mesh.glb"))
             with open(os.path.join(out_dir, "measurements.json"), "w", encoding="utf8") as f:
                 json.dump(measurements, f, indent=1)

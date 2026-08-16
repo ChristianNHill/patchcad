@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { hashValue, type NodeRecord } from "@patchcad/shared";
 
 /**
@@ -101,6 +102,46 @@ export function MeasurementsSection({ node }: { node: NodeRecord }) {
           ? `probed at v${m.version}; params have changed since — re-cook to re-measure`
           : `probed at v${m.version}`}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Six views of the part, rendered by the kernel. The gates prove dimensions;
+ * only a picture shows that a part is the wrong SHAPE — the failure class no
+ * probe can see. Loaded on demand, because rendering costs real time and most
+ * of the time you are looking at the code, not the object.
+ */
+export function RenderSheet({ nodeId, cooked }: { nodeId: string; cooked: boolean }) {
+  const [state, setState] = useState<{ url?: string; error?: string; loading?: boolean }>({});
+
+  // A new node, or a re-cook, invalidates whatever is on screen.
+  useEffect(() => setState({}), [nodeId, cooked]);
+
+  if (!cooked) return null;
+
+  const load = async () => {
+    setState({ loading: true });
+    try {
+      const res = await fetch(`/api/project/nodes/${nodeId}/sheet`);
+      const body = (await res.json()) as { url?: string; error?: string };
+      setState(res.ok && body.url ? { url: body.url } : { error: body.error ?? "render failed" });
+    } catch (err) {
+      setState({ error: (err as Error).message });
+    }
+  };
+
+  return (
+    <div className="section">
+      <span className="section__label">Views</span>
+      {state.url ? (
+        <img className="sheet" src={state.url} alt={`${nodeId} rendered from six angles`} />
+      ) : (
+        <button className="btn btn--quiet btn--tiny" onClick={() => void load()} disabled={state.loading}>
+          {state.loading ? "rendering…" : "render six views"}
+        </button>
+      )}
+      {state.error && <div className="measure__note">{state.error}</div>}
     </div>
   );
 }
