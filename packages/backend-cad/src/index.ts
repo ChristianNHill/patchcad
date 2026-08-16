@@ -95,7 +95,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { KernelClient, type KernelResult } from "./kernel.js";
 import { generatePrompt, repairPrompt } from "./prompts.js";
-import { resolveDeterministic } from "./registry.js";
+import { REGISTRY_HARDWARE, resolveDeterministic } from "./registry.js";
 import { solveAssembly, type AssemblyMate, type AssemblyNode } from "./assembly.js";
 import { resolveDim, resolvePose } from "./bindings.js";
 
@@ -115,7 +115,8 @@ export const cadPortConsistencyLint = {
       const payload = n.contract.payload as CadContractPayload;
       const names = new Set((payload.ports ?? []).map((p) => p.name));
       payloadNames.set(n.id, names);
-      if (n.kind === "fastener") continue;
+      // Hardware declares no geometric ports; probes do not apply to it.
+      if (REGISTRY_HARDWARE.has(n.kind)) continue;
       for (const port of [...n.contract.provides, ...n.contract.requires]) {
         if (!names.has(port.key)) {
           problems.push(
@@ -127,10 +128,10 @@ export const cadPortConsistencyLint = {
     for (const e of graph.edges) {
       const from = graph.nodes[e.from];
       const to = graph.nodes[e.to];
-      if (from && from.kind !== "fastener" && !payloadNames.get(e.from)?.has(e.fromPort)) {
+      if (from && !REGISTRY_HARDWARE.has(from.kind) && !payloadNames.get(e.from)?.has(e.fromPort)) {
         problems.push(`edge ${e.from}.${e.fromPort} → ${e.to}: "${e.fromPort}" is not a payload port name of ${e.from}`);
       }
-      if (to && to.kind !== "fastener" && !payloadNames.get(e.to)?.has(e.toPort)) {
+      if (to && !REGISTRY_HARDWARE.has(to.kind) && !payloadNames.get(e.to)?.has(e.toPort)) {
         problems.push(`edge ${e.from} → ${e.to}.${e.toPort}: "${e.toPort}" is not a payload port name of ${e.to}`);
       }
     }
@@ -142,12 +143,13 @@ export const cadPortConsistencyLint = {
 const FASTENED_PORT_TYPES = new Set(["CLEARANCE_HOLE", "SCREW_SEAT", "SCREW_BOSS", "BORE"]);
 
 /**
- * A fastener has to fasten something. The vocabulary handed to the architect is
- * screw-heavy by construction — `fastener` is half the node taxonomy and most
+ * Hardware has to fasten something. The vocabulary handed to the architect is
+ * screw-heavy by construction — hardware is most of the node taxonomy and most
  * of the paramBindings examples are threads and lengths — so weaker plans
  * sprout decorative screws that no part has a hole for. Runs at plan time, so
- * an unjustified fastener becomes an architect repair round rather than a node
- * the user has to notice and delete.
+ * unjustified hardware becomes an architect repair round rather than a node
+ * the user has to notice and delete. Nuts and inserts earn the same check: one
+ * wired to nothing is exactly as decorative as a floating screw.
  */
 export const cadFastenerJustifiedLint = {
   id: "cad-fastener-justified",
@@ -158,19 +160,19 @@ export const cadFastenerJustifiedLint = {
         FASTENED_PORT_TYPES.has(p.type),
       );
     for (const n of Object.values(graph.nodes)) {
-      if (n.kind !== "fastener") continue;
+      if (!REGISTRY_HARDWARE.has(n.kind)) continue;
       const neighbors = graph.edges
         .filter((e) => e.from === n.id || e.to === n.id)
         .map((e) => (e.from === n.id ? e.to : e.from));
       if (neighbors.length === 0) {
         problems.push(
-          `${n.id}: fastener is wired to nothing. Fasteners are optional — join the parts it belongs to through their hole ports, or drop the node (a one-piece, press-fit, or snap-fit design needs none).`,
+          `${n.id}: ${n.kind} is wired to nothing. Hardware is optional — join the parts it belongs to through their hole ports, or drop the node (a one-piece, press-fit, or snap-fit design needs none).`,
         );
         continue;
       }
       if (!neighbors.some((id) => holePorts(id).length > 0)) {
         problems.push(
-          `${n.id}: fastener connects only to ${neighbors.join(", ")}, none of which declare a CLEARANCE_HOLE / SCREW_SEAT / SCREW_BOSS / BORE port for it to fasten into. Add the hole ports to the parts being joined, or drop the fastener.`,
+          `${n.id}: ${n.kind} connects only to ${neighbors.join(", ")}, none of which declare a CLEARANCE_HOLE / SCREW_SEAT / SCREW_BOSS / BORE port for it to fasten into. Add the hole ports to the parts being joined, or drop the ${n.kind}.`,
         );
       }
     }
@@ -258,7 +260,9 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
   planning = {
     nodeKinds: [
       { kind: "part", description: "A single printed part.", guidance: "One build(p) function; ports declared in the contract, never in code." },
-      { kind: "fastener", description: "Registry fastener (never LLM-generated).", guidance: "One node per screw spec; resolved from the fastener registry." },
+      { kind: "fastener", description: "Registry socket-head cap screw (never LLM-generated).", guidance: "One node per screw spec; resolved from the fastener registry." },
+      { kind: "nut", description: "Registry hex nut (never LLM-generated).", guidance: "Use when a screw is captured by a nut rather than threading into a boss or insert. One param: thread." },
+      { kind: "insert", description: "Registry heat-set threaded insert (never LLM-generated).", guidance: "Use for screws threading into printed plastic — the durable choice over tapping the plastic directly. One param: thread." },
     ],
     payloadSchema: CadContractPayload as z.ZodType<CadContractPayload>,
     graphLints: [cadPortConsistencyLint, cadFastenerJustifiedLint],
@@ -279,13 +283,18 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       "press fit, a snap fit, or a printed-in-place hinge needs ZERO fastener",
       "nodes. Do not add a screw to satisfy the taxonomy; most designs need none.",
       "",
-      "FASTENER NODES are resolved from a registry (a single SHCS modeled with",
-      "the head base at the origin, shank hanging down -z). They take exactly two",
-      "params: thread (enum M3|M4|M5) and length (mm). Declare NO geometric ports",
-      "on fasteners (probes don't apply) and a small cylinder envelope around the",
-      "origin (e.g. Ø8 × length+6, centered below the origin). Emit one fastener",
-      "node per screw role, not per physical screw — hole COUNTS and patterns",
-      "belong to the consuming part's HOLE_PATTERN port params.",
+      "HARDWARE NODES (fastener | nut | insert) are resolved from a registry —",
+      "standards-exact, never generated. Declare NO geometric ports on them",
+      "(probes don't apply) and a small cylinder envelope around the origin.",
+      "Emit one node per hardware ROLE, not per physical piece — counts and",
+      "patterns belong to the consuming part's HOLE_PATTERN port params.",
+      "  fastener  SHCS, head base at origin, shank hanging -z.",
+      "            Params: thread (enum M3|M4|M5) AND length (mm).",
+      "  nut       hex nut, seating face on z=0, body +z. Param: thread only.",
+      "  insert    heat-set threaded insert, flange on z=0, body +z. Param: thread only.",
+      "Pick the mating half deliberately: a screw into printed plastic wants an",
+      "`insert` (tapped plastic strips); a screw through both parts wants a `nut`;",
+      "a screw into a SCREW_BOSS needs neither.",
       "",
       "Layout-first: choose each part's envelope primitives, then assign ports at",
       "the mating faces, and size hole/boss diameters from the fastener registry",
@@ -365,7 +374,7 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     const payload = node.contract.payload as CadContractPayload;
     const result = await this.kernel.execute(node.artifact?.code ?? "", mergedParams(node), {
       ports: kernelPorts(_graph, payload),
-      envelope: node.kind === "fastener" ? [] : kernelEnvelope(_graph, payload),
+      envelope: REGISTRY_HARDWARE.has(node.kind) ? [] : kernelEnvelope(_graph, payload),
       importDir: this.importDir(ws),
     });
     if (!result.ok) return { ok: false, stage: result.stage, report: failureReport(result) };

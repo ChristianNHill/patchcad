@@ -2,8 +2,10 @@ import type { NodeRecord } from "@patchcad/shared";
 
 /**
  * Deterministic part registry. Two roles:
- *  - Fasteners are REGISTRY-ONLY: exact interface dims from the metric table,
- *    codegen'd — an LLM never invents a screw.
+ *  - Hardware is REGISTRY-ONLY: exact interface dims from the metric table,
+ *    codegen'd — an LLM never invents a screw, a nut, or an insert. Every part
+ *    class moved in here is one that can no longer fail generation, costs no
+ *    tokens, and is standards-exact.
  *  - Parametric factories (plate, L-bracket) give the architect known-good
  *    exemplars and give tests deterministic geometry.
  * Registry output is ordinary node code (`def build(p)`), so it flows through
@@ -45,6 +47,42 @@ def build(p):
 `;
 }
 
+/**
+ * Hex nut, seating face on z = 0 and body running +z — the same datum the
+ * screw head uses, so a nut mates onto a surface the same way.
+ *
+ * RegularPolygon takes the circumradius, while nuts are specified across the
+ * flats, hence AF/√3. Verified against the kernel: an M4 nut measures 7.00
+ * across the flats and 8.08 across the corners.
+ */
+export function nutCode(thread: keyof typeof METRIC): string {
+  const t = METRIC[thread]!;
+  return `from build123d import *
+import math
+
+def build(p):
+    body = extrude(RegularPolygon(${t.nutAf} / math.sqrt(3), 6), ${t.nutH})
+    bore = Pos(0, 0, ${t.nutH} / 2) * Cylinder(${t.tap} / 2, ${t.nutH} * 2)
+    return body - bore
+`;
+}
+
+/**
+ * Heat-set insert, modelled as the volume it occupies once installed: the OD
+ * is the install-hole Ø from the table, so a part can subtract this shape to
+ * get a correct boss. Flange face on z = 0, body running +z into the material.
+ */
+export function insertCode(thread: keyof typeof METRIC): string {
+  const t = METRIC[thread]!;
+  return `from build123d import *
+
+def build(p):
+    body = Pos(0, 0, ${t.insertL} / 2) * Cylinder(${t.insertD} / 2, ${t.insertL})
+    bore = Pos(0, 0, ${t.insertL} / 2) * Cylinder(${t.tap} / 2, ${t.insertL} * 2)
+    return body - bore
+`;
+}
+
 /** Rectangular plate with a symmetric corner hole pattern, top face at z = t/2. */
 export function plateCode(): string {
   return `from build123d import *
@@ -78,29 +116,46 @@ def build(p):
 }
 
 /**
- * The cook-time hook: fastener nodes resolve here, deterministically, before
+ * Metric hardware: kind → codegen. Everything here is fully determined by its
+ * thread, is exact by construction, and declares no geometric ports — so these
+ * kinds skip G4 envelope grading and the port-consistency lint (see
+ * REGISTRY_HARDWARE below). Adding a class is a table entry plus a factory.
+ */
+const HARDWARE: Record<string, (thread: keyof typeof METRIC) => string> = {
+  fastener: shcsCode,
+  nut: nutCode,
+  insert: insertCode,
+};
+
+/** Kinds resolved from HARDWARE. Exported because the gates and lints need to
+ *  know which kinds are exact-by-construction rather than architect guesses. */
+export const REGISTRY_HARDWARE = new Set(Object.keys(HARDWARE));
+
+/**
+ * The cook-time hook: hardware nodes resolve here, deterministically, before
  * any library or LLM step. The thread spec comes from contract params
  * (`thread` enum) — never from generated code.
  */
-export function resolveFastener(node: NodeRecord): string | null {
-  if (node.kind !== "fastener") return null;
+export function resolveHardware(node: NodeRecord): string | null {
+  const factory = HARDWARE[node.kind];
+  if (!factory) return null;
   const thread = String(
     node.params.thread ??
       node.contract.params.find((p) => p.name === "thread")?.default ??
       "",
   ).toUpperCase();
   if (!(thread in METRIC)) return null;
-  return shcsCode(thread as keyof typeof METRIC);
+  return factory(thread as keyof typeof METRIC);
 }
 
 /** Imported pieces (STL/STEP/3MF segments) load their mesh deterministically —
  * UNLESS the user has reprompted them: a non-empty thread routes to the
  * generator, which starts from load_import() and edits the mesh with build123d
- * booleans. Fasteners stay registry-only always. Files: imports/<nodeId>.ply. */
+ * booleans. Hardware stays registry-only always. Files: imports/<nodeId>.ply. */
 export function resolveDeterministic(node: NodeRecord): string | null {
   if (node.kind === "imported") {
     if (node.thread.length > 0) return null;
     return `def build(p):\n    return load_import("${node.id}.ply", scale=p.scale)\n`;
   }
-  return resolveFastener(node);
+  return resolveHardware(node);
 }
