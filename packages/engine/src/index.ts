@@ -9,3 +9,4 @@ export * from "./tier.js";
 export * from "./renegotiate.js";
 export * from "./library.js";
 export * from "./exemplars.js";
+export * from "./similarity.js";

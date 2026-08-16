@@ -1,6 +1,7 @@
 import { hashValue } from "@patchcad/shared";
 import type { DomainBackend, GenerateCtx, RepairCtx, Workspace } from "./backend.js";
 import { selectExemplars } from "./exemplars.js";
+import { findReusable } from "./similarity.js";
 import type { LlmProvider } from "./llm.js";
 import type { NodeLibrary } from "./library.js";
 import type { GraphStore } from "./graph/store.js";
@@ -206,6 +207,26 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
       log("library hit — reusing verified code, no LLM call");
       if ((await tryPrebuilt(hit.code, hit.testCode, "library", hit.dts)) === null) return;
       log("library entry failed re-verification — regenerating");
+    }
+
+    // No exact hit: try the nearest stored contracts. An exact hash is a very
+    // narrow key — one renamed summary or one extra param and a perfectly good
+    // node is invisible — but a near match cannot be trusted on inspection, so
+    // it is not: each candidate runs the same execute + verify gauntlet a
+    // generated artifact faces, and a miss just falls through to the generator.
+    // The trade is one kernel round trip against one LLM call.
+    const tried = new Set<string>([baseContractHash]);
+    for (const cand of await findReusable({
+      library: deps.library,
+      backendId: backend.id,
+      contract: store.node(nodeIdValue).contract,
+      kind: store.node(nodeIdValue).kind,
+      exclude: tried,
+    })) {
+      log(`trying a near-match from the library: "${cand.entry.title}" — no LLM call`);
+      const failed = await tryPrebuilt(cand.entry.code, cand.entry.testCode, "library-near", cand.entry.dts);
+      if (failed === null) return;
+      log(`"${cand.entry.title}" did not satisfy this contract (${failed.slice(0, 120)})`);
     }
   }
 

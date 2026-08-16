@@ -420,3 +420,71 @@ describe("cookOne cancellation", () => {
     expect(() => deps.store.setStatus("widget", "queued")).not.toThrow();
   });
 });
+
+describe("cookOne near-match reuse", () => {
+  class ListLibrary extends MemoryLibrary {
+    listing: LibraryListing[] = [];
+    async list() {
+      return this.listing;
+    }
+  }
+
+  const near = (over: Partial<LibraryListing> = {}): LibraryListing => ({
+    contractHash: "somewhere-else",
+    code: "export const Widget = 1;",
+    testCode: "",
+    kind: "component",
+    title: "A Similar Widget",
+    // Same port type as the graph fixture's node, no params of its own.
+    contract: {
+      name: "W", summary: "", params: [], requires: [], payload: {}, hash: "somewhere-else",
+      provides: [{ key: "Anything", type: "component", description: "" }],
+    },
+    ...over,
+  });
+
+  it("commits a near match without calling the generator", async () => {
+    const library = new ListLibrary();
+    library.listing = [near()];
+    // trapProvider throws if the generator is reached at all.
+    const deps = makeDeps(makeGraph(), trapProvider, library);
+    await cookOne(deps, "widget");
+
+    const node = deps.store.node("widget");
+    expect(node.status).toBe("ready");
+    expect(node.history[0]?.cause).toBe("library-near");
+    expect(node.artifact?.code).toBe("export const Widget = 1;");
+    expect(node.cost.calls).toBe(0);
+  });
+
+  it("falls through to the generator when the near match fails its gates", async () => {
+    const library = new ListLibrary();
+    library.listing = [near()];
+    let generated = false;
+    const provider: LlmProvider = {
+      id: "stub",
+      complete: async () => {
+        generated = true;
+        return { data: { code: "fresh" }, usage: { inputTokens: 1, outputTokens: 1, usd: 0 }, model: "stub" } as never;
+      },
+    };
+    // A near match is a guess; the gates are what make guessing safe.
+    let firstVerify = true;
+    const picky: DomainBackend<unknown> = {
+      ...mockBackend,
+      verify: async () => {
+        if (firstVerify) {
+          firstVerify = false;
+          return { ok: false, stage: "G3", report: "not this contract" };
+        }
+        return { ok: true, stage: "verify", report: "" };
+      },
+    };
+    const deps = makeDeps(makeGraph(), provider, library, picky);
+    await cookOne(deps, "widget");
+
+    expect(generated).toBe(true);
+    expect(deps.store.node("widget").artifact?.code).toBe("fresh");
+    expect(deps.store.node("widget").history[0]?.cause).toBe("generate");
+  });
+});

@@ -1,6 +1,7 @@
 import type { Contract, GraphDoc, NodeRecord } from "@patchcad/shared";
 import type { Exemplar } from "./backend.js";
 import type { LibraryListing, NodeLibrary } from "./library.js";
+import { contractSimilarity } from "./similarity.js";
 
 /**
  * Few-shot exemplars mined from the node library. Every stored entry is
@@ -33,28 +34,11 @@ const MAX_EXEMPLAR_CHARS = 4000;
  */
 const MIN_EXEMPLAR_CHARS = 200;
 
-function portTypes(c: Contract): string[] {
-  return [...c.provides, ...c.requires].map((p) => p.type).sort();
-}
-
-/** How much two contracts have in common: shared port types dominate, param
- *  count breaks ties, brevity breaks the rest. Higher is better. */
+/** Contract closeness, plus a brevity nudge: a short worked example costs
+ *  fewer tokens and is easier to pattern-match than a long one. The closeness
+ *  half is shared with reuse — see similarity.ts. */
 export function exemplarScore(target: Contract, candidate: Contract, codeLength: number): number {
-  const want = portTypes(target);
-  const have = portTypes(candidate);
-  const pool = [...have];
-  let shared = 0;
-  for (const t of want) {
-    const i = pool.indexOf(t);
-    if (i >= 0) {
-      pool.splice(i, 1);
-      shared += 1;
-    }
-  }
-  const paramGap = Math.abs(target.params.length - candidate.params.length);
-  // Brevity is worth a little: a short worked example costs fewer tokens and
-  // is easier to pattern-match than a long one.
-  return shared * 10 - paramGap - codeLength / 2000;
+  return contractSimilarity(target, candidate) - codeLength / 2000;
 }
 
 export async function selectExemplars(opts: {
