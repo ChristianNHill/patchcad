@@ -10,7 +10,8 @@ import { OpenAiCompatProvider } from "@patchcad/llm-openai-compat";
 /**
  * Provider resolution, in order:
  *  1. ANTHROPIC_API_KEY env (or `ant auth` ambient credentials) → Claude.
- *  2. ~/.patchcad/config.json → a `routing` map composes per-role providers
+ *  2. OPENROUTER_API_KEY env → OpenRouter on the default model set.
+ *  3. ~/.patchcad/config.json → a `routing` map composes per-role providers
  *     (the hosted-architect + local-generators hybrid); otherwise the first
  *     configured entry wins: claude | openrouter | local.
  * Returns null when nothing is configured; planning endpoints then explain
@@ -109,6 +110,18 @@ export async function resolveProvider(
     return { provider: new ClaudeProvider(), source: "env:ANTHROPIC_API_KEY" };
   }
 
+  // The same escape hatch for OpenRouter, so a first run needs no config file
+  // at all — creating ~/.patchcad/config.json by hand is the step people get
+  // wrong (wrong directory, Notepad saving .txt, a UTF-8 BOM breaking parse).
+  // Env beats the file, matching ANTHROPIC_API_KEY above; the startup log
+  // prints this source, so a key shadowing a tuned config is visible.
+  if (process.env.OPENROUTER_API_KEY) {
+    return {
+      provider: buildEntry("openrouter", { openrouter: { apiKey: process.env.OPENROUTER_API_KEY } }),
+      source: "env:OPENROUTER_API_KEY",
+    };
+  }
+
   if (existsSync(configPath)) {
     try {
       const config = ConfigSchema.parse(JSON.parse(await readFile(configPath, "utf8")));
@@ -160,5 +173,5 @@ export async function resolveProvider(
 }
 
 export const NO_PROVIDER_HELP =
-  "No LLM provider configured. Either export ANTHROPIC_API_KEY, or create ~/.patchcad/config.json with " +
+  "No LLM provider configured. Either export ANTHROPIC_API_KEY or OPENROUTER_API_KEY, or create ~/.patchcad/config.json with " +
   '{"claude":{"apiKey":"sk-ant-..."}} or {"openrouter":{"apiKey":"sk-or-..."}} or {"local":{"baseUrl":"http://localhost:11434/v1","model":"qwen3-coder"}}.';
