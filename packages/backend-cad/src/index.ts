@@ -236,10 +236,16 @@ function failureReport(result: Extract<KernelResult, { ok: false }>): string {
 export class CadBackend implements DomainBackend<CadContractPayload> {
   id = "cad";
   readonly kernel: KernelClient;
+  /** Higher than the engine default: a CAD gate failure hands the model a
+   *  measured number to correct against ("expected Ø4.5, measured Ø6.00"),
+   *  which converts to a fix far more often than a bare compiler error, so
+   *  extra rounds are worth buying here. */
+  readonly maxAttempts: number;
   private kernelStarted = false;
 
-  constructor(opts: { kernel?: KernelClient } = {}) {
+  constructor(opts: { kernel?: KernelClient; maxAttempts?: number } = {}) {
     this.kernel = opts.kernel ?? new KernelClient();
+    this.maxAttempts = opts.maxAttempts ?? 5;
   }
 
   private async ensureKernel(): Promise<void> {
@@ -364,17 +370,27 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     failures: { stage: string; report: string }[];
     attempts: number;
   }): FailureClass {
+    // "Persistent" has to mean a clear majority of the rounds actually spent,
+    // not a fixed 2. At a 3-round budget 2 failures is a majority; at 5 it is
+    // a minority, and treating it as persistent would send a part the model
+    // was still converging on to the architect as unbuildable.
+    const persistent = Math.max(2, Math.ceil((evidence.attempts * 2) / 3));
     const stages = evidence.failures.map((f) => f.stage);
     // A persistent envelope escape means the box the architect drew is too
     // small for the features it demanded — only the architect can fix that.
-    if (stages.filter((s) => s === "G4").length >= 2) return "contract-infeasible";
+    if (stages.filter((s) => s === "G4").length >= persistent) return "contract-infeasible";
     // The same port failing G3 across materially different attempts points at
-    // the declared pose/dims, not the code (design doc heuristic).
+    // the declared pose/dims, not the code (design doc heuristic). Judged on
+    // the worst single port, not on every G3 failure agreeing: over more
+    // rounds one unrelated port miss would otherwise clear the real culprit.
     const g3 = evidence.failures.filter((f) => f.stage === "G3");
-    if (g3.length >= 2) {
-      const port = (r: string) => /port "([^"]+)"/.exec(r)?.[1];
-      const first = port(g3[0]!.report);
-      if (first && g3.every((f) => port(f.report) === first)) return "contract-infeasible";
+    if (g3.length >= persistent) {
+      const counts = new Map<string, number>();
+      for (const f of g3) {
+        const port = /port "([^"]+)"/.exec(f.report)?.[1];
+        if (port) counts.set(port, (counts.get(port) ?? 0) + 1);
+      }
+      for (const n of counts.values()) if (n >= persistent) return "contract-infeasible";
     }
     return "code-invalid";
   }

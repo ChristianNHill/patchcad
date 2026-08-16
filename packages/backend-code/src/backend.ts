@@ -202,6 +202,10 @@ export class CodeBackend implements DomainBackend<CodeContractPayload> {
     ].join(" "),
   };
 
+  /** The engine default, stated explicitly so classifyFailure can compare
+   *  against it instead of a bare literal. */
+  readonly maxAttempts = 3;
+
   constructor(previewOpts: VitePreviewOptions) {
     this.previewAdapter = new VitePreviewAdapter(previewOpts);
   }
@@ -271,9 +275,12 @@ export class CodeBackend implements DomainBackend<CodeContractPayload> {
   }): FailureClass {
     const last = evidence.failures.at(-1);
     if (!last) return "unknown";
-    // Neighbor-contract-rooted type errors are the contract's fault.
+    // Neighbor-contract-rooted type errors are the contract's fault, but only
+    // once a full budget failed to shake them out. Compared against this
+    // backend's own budget rather than a literal, so raising the budget
+    // cannot silently turn this into an always-true test.
     if (/@nodes\/[\w-]+.*(has no exported member|not assignable)/s.test(last.report)) {
-      return evidence.attempts >= 3 ? "contract-infeasible" : "code-invalid";
+      return evidence.attempts >= this.maxAttempts ? "contract-infeasible" : "code-invalid";
     }
     return "code-invalid";
   }

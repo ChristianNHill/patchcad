@@ -9,12 +9,14 @@ import type { GraphStore } from "./graph/store.js";
  * generator sees only contracts (known up front), never neighbor code, so
  * there is no topological wait — topology matters only at assembly.
  *
- * Per-node loop: generate → execute → verify → (repair ≤ MAX_ATTEMPTS) →
- * commit. Failures are attributed code-invalid (retry generator) vs
+ * Per-node loop: generate → execute → verify → (repair to the backend's
+ * budget) → commit. Failures are attributed code-invalid (retry generator) vs
  * contract-infeasible (architect must re-plan) by the backend.
  */
 
-const MAX_ATTEMPTS = 3;
+/** Generation rounds when a backend states no preference: 1 generate + 2
+ *  repairs. Backends override via `DomainBackend.maxAttempts`. */
+const DEFAULT_MAX_ATTEMPTS = 3;
 
 export interface CookDeps {
   store: GraphStore;
@@ -216,7 +218,9 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
   let code = "";
   let testCode = "";
 
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  const maxAttempts = backend.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (deps.signal?.aborted) throw new Error("cancelled");
 
     // -- generate (or repair) --
@@ -229,7 +233,11 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
             ...makeCtx(),
             failedCode: code,
             failure: failures.at(-1)!,
+            // Everything before the latest, so the model can see which
+            // approaches are already spent rather than rediscovering them.
+            priorFailures: failures.slice(0, -1),
             attempt,
+            maxAttempts,
           } as RepairCtx<unknown>);
 
     log(attempt === 1 ? "generating…" : `repair attempt ${attempt}…`);
@@ -318,7 +326,7 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
   const attribution = backend.classifyFailure({
     node: store.node(nodeIdValue),
     failures,
-    attempts: MAX_ATTEMPTS,
+    attempts: maxAttempts,
   });
   const last = failures.at(-1)!;
   const detail = {
@@ -331,5 +339,5 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
     attribution === "contract-infeasible" ? "error_contract" : "error_code",
     detail,
   );
-  throw new Error(`${nodeIdValue}: ${attribution} after ${MAX_ATTEMPTS} attempts (${last.stage})`);
+  throw new Error(`${nodeIdValue}: ${attribution} after ${maxAttempts} attempts (${last.stage})`);
 }

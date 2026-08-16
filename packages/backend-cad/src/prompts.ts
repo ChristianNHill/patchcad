@@ -132,6 +132,23 @@ export function generatePrompt(ctx: GenerateCtx<CadContractPayload>): PromptSpec
 
 export function repairPrompt(ctx: RepairCtx<CadContractPayload>): PromptSpec {
   const base = generatePrompt(ctx);
+  // Only the newest failure comes with its code, so the earlier ones are
+  // listed as a "already tried, still wrong" ledger: without it the model
+  // re-proposes a fix it has already spent a round on.
+  const spent =
+    ctx.priorFailures.length > 0
+      ? [
+          "",
+          "Earlier attempts in this cook already failed like this — do not repeat them:",
+          ...ctx.priorFailures.map((f) => `  - ${f.stage}: ${f.report.split("\n")[0]}`),
+        ].join("\n")
+      : "";
+
+  const lastRound =
+    ctx.attempt >= ctx.maxAttempts
+      ? "\nThis is the FINAL attempt: prefer a simpler geometry that certainly passes over a clever one that might."
+      : "";
+
   return {
     ...base,
     role: "repair",
@@ -141,11 +158,14 @@ export function repairPrompt(ctx: RepairCtx<CadContractPayload>): PromptSpec {
       {
         role: "user",
         content: [
-          `That code failed gate ${ctx.failure.stage}:`,
+          `That code failed gate ${ctx.failure.stage} (attempt ${ctx.attempt} of ${ctx.maxAttempts}):`,
           ctx.failure.report,
+          spent,
           "",
-          "Fix exactly this problem and emit the corrected complete module.",
-        ].join("\n"),
+          `Fix exactly this problem and emit the corrected complete module.${lastRound}`,
+        ]
+          .filter(Boolean)
+          .join("\n"),
       },
     ],
   };

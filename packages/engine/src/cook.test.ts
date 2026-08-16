@@ -4,7 +4,7 @@ import { GraphDoc } from "@patchcad/shared";
 import { cookOne, type CookDeps } from "./cook.js";
 import { EventBus } from "./events.js";
 import { GraphStore } from "./graph/store.js";
-import type { DomainBackend } from "./backend.js";
+import type { DomainBackend, RepairCtx } from "./backend.js";
 import type { LlmProvider } from "./llm.js";
 import type { LibraryEntry, NodeLibrary } from "./library.js";
 
@@ -99,10 +99,113 @@ const trapProvider: LlmProvider = {
   },
 };
 
-function makeDeps(graph: GraphDoc, provider: LlmProvider, library: NodeLibrary): CookDeps {
+function makeDeps(
+  graph: GraphDoc,
+  provider: LlmProvider,
+  library: NodeLibrary,
+  backend: DomainBackend<unknown> = mockBackend,
+): CookDeps {
   const store = new GraphStore(graph, new EventBus(), async () => {});
-  return { store, backend: mockBackend, provider, workspace: { root: "/tmp/x" }, library };
+  return { store, backend, provider, workspace: { root: "/tmp/x" }, library };
 }
+
+/** A backend whose execute fails `failTimes` times before passing, recording
+ *  every repair context and the evidence it is finally judged on. */
+function makeRepairBackend(opts: { failTimes: number; maxAttempts?: number }) {
+  const repairs: RepairCtx<unknown>[] = [];
+  let evidence: { failures: { stage: string; report: string }[]; attempts: number } | null = null;
+  let executes = 0;
+  const backend: DomainBackend<unknown> = {
+    ...mockBackend,
+    maxAttempts: opts.maxAttempts,
+    buildRepairPrompt: (ctx) => {
+      repairs.push(ctx);
+      return { ...mockBackend.buildGeneratePrompt(ctx), role: "repair" };
+    },
+    execute: async () => {
+      executes += 1;
+      return executes <= opts.failTimes
+        ? { ok: false, stage: "G2", report: `boom ${executes}` }
+        : { ok: true, stage: "execute", report: "" };
+    },
+    classifyFailure: (e) => {
+      evidence = { failures: e.failures, attempts: e.attempts };
+      return "code-invalid";
+    },
+  };
+  return {
+    backend,
+    repairs,
+    get evidence() {
+      return evidence;
+    },
+    get executes() {
+      return executes;
+    },
+  };
+}
+
+const stubProvider: LlmProvider = {
+  id: "stub",
+  complete: async () =>
+    ({ data: { code: "x" }, usage: { inputTokens: 1, outputTokens: 1, usd: 0 }, model: "stub" }) as never,
+};
+
+describe("cookOne repair budget", () => {
+  it("takes the engine default of 3 rounds when the backend states none", async () => {
+    const h = makeRepairBackend({ failTimes: 99 });
+    const deps = makeDeps(makeGraph(), stubProvider, new MemoryLibrary(), h.backend);
+
+    await expect(cookOne(deps, "widget")).rejects.toThrow(/after 3 attempts/);
+    expect(h.executes).toBe(3);
+    // 3 generation rounds is 1 generate + 2 repairs, not 3 repairs.
+    expect(h.repairs).toHaveLength(2);
+  });
+
+  it("honours a backend that asks for more rounds", async () => {
+    const h = makeRepairBackend({ failTimes: 99, maxAttempts: 5 });
+    const deps = makeDeps(makeGraph(), stubProvider, new MemoryLibrary(), h.backend);
+
+    await expect(cookOne(deps, "widget")).rejects.toThrow(/after 5 attempts/);
+    expect(h.executes).toBe(5);
+    expect(h.repairs).toHaveLength(4);
+  });
+
+  it("recovers within the widened budget where the default would have failed", async () => {
+    // 4 failures then success: unreachable at 3 rounds, fine at 5.
+    const h = makeRepairBackend({ failTimes: 4, maxAttempts: 5 });
+    const deps = makeDeps(makeGraph(), stubProvider, new MemoryLibrary(), h.backend);
+
+    await cookOne(deps, "widget");
+    const node = deps.store.node("widget");
+    expect(node.status).toBe("ready");
+    expect(node.history[0]?.cause).toBe("repair-5");
+  });
+
+  it("tells classifyFailure the resolved budget, not the engine constant", async () => {
+    const h = makeRepairBackend({ failTimes: 99, maxAttempts: 5 });
+    const deps = makeDeps(makeGraph(), stubProvider, new MemoryLibrary(), h.backend);
+
+    await expect(cookOne(deps, "widget")).rejects.toThrow();
+    expect(h.evidence?.attempts).toBe(5);
+    expect(h.evidence?.failures).toHaveLength(5);
+  });
+
+  it("gives each repair its attempt number, budget, and every earlier failure", async () => {
+    const h = makeRepairBackend({ failTimes: 99, maxAttempts: 4 });
+    const deps = makeDeps(makeGraph(), stubProvider, new MemoryLibrary(), h.backend);
+
+    await expect(cookOne(deps, "widget")).rejects.toThrow();
+    expect(h.repairs.map((r) => r.attempt)).toEqual([2, 3, 4]);
+    expect(h.repairs.every((r) => r.maxAttempts === 4)).toBe(true);
+    // The latest failure rides `failure`; `priorFailures` holds the rest, so
+    // the two together are every failure so far with none duplicated.
+    expect(h.repairs[0]!.priorFailures).toEqual([]);
+    expect(h.repairs[0]!.failure.report).toBe("boom 1");
+    expect(h.repairs[2]!.priorFailures.map((f) => f.report)).toEqual(["boom 1", "boom 2"]);
+    expect(h.repairs[2]!.failure.report).toBe("boom 3");
+  });
+});
 
 describe("cookOne library integration", () => {
   it("commits a library hit without any LLM call", async () => {

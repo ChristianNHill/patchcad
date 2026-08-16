@@ -47,6 +47,13 @@ export interface RepairCtx<P = unknown> extends GenerateCtx<P> {
   failedCode: string;
   failure: { stage: string; report: string };
   attempt: number;
+  /** Total generation rounds this cook is allowed, so a prompt can say
+   *  "attempt 3 of 5" — a last round reads differently from a first. */
+  maxAttempts: number;
+  /** Every EARLIER failure, oldest first (`failure` is the latest, and is not
+   *  repeated here). Without these the model re-tries approaches it already
+   *  burned a round on; empty on the first repair. */
+  priorFailures: { stage: string; report: string }[];
 }
 
 export interface PromptSpec {
@@ -112,6 +119,12 @@ export type FailureClass = "code-invalid" | "contract-infeasible" | "unknown";
 export interface DomainBackend<P = unknown> {
   id: string;
 
+  /** Generation rounds this domain gets per node: 1 generate + (N-1) repairs.
+   *  Domains differ in how much a repair round is worth — a CAD gate failure
+   *  carries a measured number to correct, so extra rounds convert to fixes
+   *  more often than a type error does. Omit to take the engine default. */
+  maxAttempts?: number;
+
   planning: {
     nodeKinds: NodeKindSpec[];
     /** Validates Contract.payload for this domain. */
@@ -139,6 +152,10 @@ export interface DomainBackend<P = unknown> {
   /** Check the contract's postconditions against the executed artifact. */
   verify(node: NodeRecord, graph: GraphDoc, ws: Workspace): Promise<VerifyResult>;
 
+  /** Called only once the budget is spent, so `attempts` IS the resolved
+   *  budget (not a running count). Heuristics counting repeated failures must
+   *  therefore scale with it: "2 failures" is a majority of 3 rounds but a
+   *  minority of 5, and misreading that files a fixable bug as unfixable. */
   classifyFailure(evidence: {
     node: NodeRecord;
     failures: { stage: string; report: string }[];
