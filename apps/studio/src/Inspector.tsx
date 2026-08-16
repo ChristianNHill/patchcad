@@ -43,18 +43,13 @@ export function Inspector({ graph }: { graph: GraphDoc }) {
         )}
       </div>
 
+      <div className="inspector__body">
       <div className="section">
         <span className="section__label">Generator brief</span>
         <p>{node.spec}</p>
       </div>
 
       <ParamsSection node={node} />
-
-      <MeasurementsSection node={node} />
-
-      {graph.backend === "cad" && (
-        <RenderSheet nodeId={node.id} cooked={!!node.artifact} />
-      )}
 
       <div className="section">
         <span className="section__label">Pinned interface</span>
@@ -103,6 +98,12 @@ export function Inspector({ graph }: { graph: GraphDoc }) {
         )}
       </div>
 
+      <MeasurementsSection node={node} />
+
+      {graph.backend === "cad" && (
+        <RenderSheet nodeId={node.id} cooked={!!node.artifact} />
+      )}
+
       {node.history.length > 0 && (
         <div className="section">
           <span className="section__label">Versions</span>
@@ -131,6 +132,7 @@ export function Inspector({ graph }: { graph: GraphDoc }) {
       <div className="section section--grow">
         <span className="section__label">{graph.backend === "cad" ? "build(p) — runs in the kernel" : "module source"}</span>
         <pre className="code-view">{code || "not cooked yet — nothing generated for this node so far"}</pre>
+      </div>
       </div>
     </aside>
   );

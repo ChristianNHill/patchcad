@@ -455,8 +455,15 @@ body {
 .inspector__hint { color: var(--color-muted); padding: var(--space-md); font-size: var(--text-sm); line-height: 1.6; }
 .inspector__hint code { font-family: var(--font-mono); color: var(--color-ink-2); font-size: var(--text-xs); }
 
+/* Everything below the head scrolls. The panel used to rely on exactly one
+   section (the code view) grabbing the leftover height, so adding any section
+   pushed the ones below it past an overflow:hidden edge — clipped, and
+   unreachable rather than merely low. */
+.inspector__body { flex: 1; min-height: 0; overflow-y: auto; }
 .section { padding: var(--space-sm) var(--space-md); border-bottom: 1px solid var(--color-rule-2); }
-.section--grow { overflow: auto; flex: 1; min-height: 0; border-bottom: none; }
+.section--grow { border-bottom: none; }
+/* Capped so a long module cannot make the panel itself unnavigable. */
+.code-view { max-height: 26rem; overflow: auto; }
 .section__label {
   display: block;
   font-family: var(--font-mono);
