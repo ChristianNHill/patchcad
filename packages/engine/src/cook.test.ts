@@ -534,3 +534,81 @@ describe("cookOne render-assisted repair", () => {
     expect(h.seen).toHaveLength(2);
   });
 });
+
+describe("cookOne inspect step (write → render → inspect → rewrite)", () => {
+  const img = { mediaType: "image/png" as const, dataB64: "iVBORw0KGgo=" };
+
+  /** Passes every gate; a vision call decides whether it LOOKS right. */
+  function inspecting(verdicts: unknown[]) {
+    let generated = 0;
+    const provider: LlmProvider = {
+      id: "stub",
+      complete: async (req) => {
+        const zero = { inputTokens: 1, outputTokens: 1, usd: 0 };
+        if (req.label.startsWith("inspect:")) {
+          const verdict = verdicts.shift() ?? { looksRight: true, severity: "none", issue: "", fix: "" };
+          return { data: (req.schema as { parse: (v: unknown) => unknown }).parse(verdict), usage: zero, model: "stub" } as never;
+        }
+        generated += 1;
+        return { data: { code: `code-${generated}` }, usage: zero, model: "stub" } as never;
+      },
+    };
+    const backend: DomainBackend<unknown> = {
+      ...mockBackend,
+      maxAttempts: 3,
+      renderArtifact: async () => img,
+      buildRepairPrompt: (ctx) => ({ ...mockBackend.buildGeneratePrompt(ctx), role: "repair" }),
+    };
+    return { provider, backend, generations: () => generated };
+  }
+
+  it("commits straight away when the part looks right", async () => {
+    const h = inspecting([{ looksRight: true, severity: "none", issue: "", fix: "" }]);
+    const deps = { ...makeDeps(makeGraph(), h.provider, new MemoryLibrary(), h.backend), inspect: true };
+    await cookOne(deps, "widget");
+    expect(deps.store.node("widget").history[0]?.cause).toBe("generate");
+    expect(h.generations()).toBe(1);
+  });
+
+  it("buys one rewrite when the part is plainly the wrong object", async () => {
+    const h = inspecting([
+      { looksRight: false, severity: "blocking", issue: "no upright leg", fix: "add the wall" },
+      { looksRight: true, severity: "none", issue: "", fix: "" },
+    ]);
+    const deps = { ...makeDeps(makeGraph(), h.provider, new MemoryLibrary(), h.backend), inspect: true };
+    await cookOne(deps, "widget");
+    const node = deps.store.node("widget");
+    expect(node.status).toBe("ready");
+    expect(node.history[0]?.cause).toBe("repair-2");
+    expect(node.artifact?.code).toBe("code-2");
+  });
+
+  it("takes the gate-passing code when the rewrite also looks wrong", async () => {
+    // Appearance NEVER fails a node. One opinion, one round, then ship what
+    // passes the gates.
+    const h = inspecting([
+      { looksRight: false, severity: "blocking", issue: "wrong", fix: "x" },
+      { looksRight: false, severity: "blocking", issue: "still wrong", fix: "y" },
+    ]);
+    const deps = { ...makeDeps(makeGraph(), h.provider, new MemoryLibrary(), h.backend), inspect: true };
+    await cookOne(deps, "widget");
+    expect(deps.store.node("widget").status).toBe("ready");
+    expect(deps.store.node("widget").history[0]?.cause).toBe("repair-2");
+  });
+
+  it("ignores anything softer than blocking", async () => {
+    const h = inspecting([{ looksRight: false, severity: "minor", issue: "I'd chamfer it", fix: "chamfer" }]);
+    const deps = { ...makeDeps(makeGraph(), h.provider, new MemoryLibrary(), h.backend), inspect: true };
+    await cookOne(deps, "widget");
+    expect(h.generations()).toBe(1);
+  });
+
+  it("does nothing at all unless asked", async () => {
+    const h = inspecting([{ looksRight: false, severity: "blocking", issue: "wrong", fix: "x" }]);
+    // No `inspect: true` — the default cook must be byte-identical to before.
+    const deps = makeDeps(makeGraph(), h.provider, new MemoryLibrary(), h.backend);
+    await cookOne(deps, "widget");
+    expect(h.generations()).toBe(1);
+    expect(deps.store.node("widget").history[0]?.cause).toBe("generate");
+  });
+});

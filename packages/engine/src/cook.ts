@@ -2,6 +2,7 @@ import { hashValue } from "@patchcad/shared";
 import type { DomainBackend, GenerateCtx, RepairCtx, Workspace } from "./backend.js";
 import { selectExemplars } from "./exemplars.js";
 import { findReusable } from "./similarity.js";
+import { inspectNode } from "./inspect.js";
 import type { LlmImage, LlmProvider } from "./llm.js";
 import type { NodeLibrary } from "./library.js";
 import type { GraphStore } from "./graph/store.js";
@@ -29,6 +30,12 @@ export interface CookDeps {
   library?: NodeLibrary;
   concurrency?: number;
   signal?: AbortSignal;
+  /**
+   * Look at each node after it passes its gates, and allow ONE rewrite if it
+   * is plainly the wrong object. Off by default: it costs a render plus a
+   * vision call per node, and the gates already catch everything measurable.
+   */
+  inspect?: boolean;
 }
 
 export interface CookSummary {
@@ -271,6 +278,30 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
   const failures: { stage: string; report: string }[] = [];
   let code = "";
   let testCode = "";
+  /** Appearance buys ONE rewrite, never more: a model judging a picture is not
+   *  an oracle, and the code in hand already passes every gate. */
+  let inspectRetries = 0;
+
+  /** Blocking verdict, or null for anything else — including every failure
+   *  mode of looking itself, since a render or vision hiccup must not cost a
+   *  part that already verified. */
+  const inspectArtifact = async () => {
+    try {
+      const image = await backend.renderArtifact!(store.node(nodeIdValue), workspace);
+      if (!image) return null;
+      const node = store.node(nodeIdValue);
+      const verdict = await inspectNode({
+        provider,
+        node: { title: node.title, spec: node.spec, kind: node.kind },
+        contractSummary: node.contract.summary,
+        image,
+        signal: deps.signal,
+      });
+      return !verdict.looksRight && verdict.severity === "blocking" ? verdict : null;
+    } catch {
+      return null;
+    }
+  };
 
   const maxAttempts = backend.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
 
@@ -368,6 +399,25 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
       failures.push({ stage: verify.stage, report: verify.report });
       log(`verify failed: ${verify.report.slice(0, 200)}`);
       continue;
+    }
+
+    // -- inspect: does it LOOK like the part that was asked for? --
+    // Gates prove measurements; only a picture catches "measurably correct and
+    // completely the wrong object". Worth at most one rewrite, and never on the
+    // last attempt — committing something that passes beats committing nothing.
+    if (
+      deps.inspect &&
+      backend.renderArtifact &&
+      inspectRetries < 1 &&
+      attempt < maxAttempts
+    ) {
+      const verdict = await inspectArtifact();
+      if (verdict) {
+        inspectRetries += 1;
+        failures.push({ stage: "LOOKS", report: `${verdict.issue}\nsuggested fix: ${verdict.fix}` });
+        log(`looks wrong: ${verdict.issue}`);
+        continue; // spend one round on it; the gates still guard the result
+      }
     }
 
     // -- commit (guarded: superseded cooks are discarded) --

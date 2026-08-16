@@ -100,7 +100,7 @@ async function main() {
   /** The one place cook dependencies are assembled. Six call sites used to
    *  spell this out identically, which is how `signal` came to be supported by
    *  the engine and passed by nobody. */
-  function cookDeps(provider: LlmProvider): CookDeps {
+  function cookDeps(provider: LlmProvider, opts: { inspect?: boolean } = {}): CookDeps {
     if (cookAbort.signal.aborted) cookAbort = new AbortController();
     return {
       store: active.store,
@@ -109,6 +109,7 @@ async function main() {
       workspace: active.workspace,
       library,
       signal: cookAbort.signal,
+      inspect: opts.inspect,
     };
   }
 
@@ -1112,14 +1113,18 @@ async function main() {
     return { ok: true, restored: top.label, depth: active.undo.length };
   });
 
-  app.post("/api/project/cook-dirty", async (_req, reply) => {
+  const CookDirtyBody = z.object({ inspect: z.boolean().default(false) });
+  app.post("/api/project/cook-dirty", async (req, reply) => {
     if (!resolved) return reply.code(503).send({ error: NO_PROVIDER_HELP });
+    // Opt-in: looking at each part costs a render plus a vision call, and the
+    // gates already catch everything measurable.
+    const inspect = CookDirtyBody.safeParse(req.body ?? {}).data?.inspect ?? false;
     const stale = Object.values(active.store.doc.nodes)
       .filter((n) => ["planned", "dirty", "error_code", "error_contract", "cancelled"].includes(n.status))
       .map((n) => n.id);
     if (stale.length === 0) return { ok: true, cooking: [] };
     void trackCook(active.dir, cookNodes(
-      cookDeps(resolved.provider),
+      cookDeps(resolved.provider, { inspect }),
       stale,
     )).then((summary) => {
       console.log(
