@@ -94,6 +94,21 @@ def main() -> None:
         body4c.get("error", ""),
     )
 
+    # 4d. A flat face with no declared size must SAY so. It used to default to
+    # 4.0 mm silently, grading a part against a number no contract stated.
+    face_port = {
+        "key": "seat", "type": "FLAT_FACE",
+        "pose": {"origin": [0, 0, 1.5], "zAxis": [0, 0, 1], "xAxis": [1, 0, 0]},
+        "params": {"seatDiameter": 5.3},
+    }
+    r4d = client.post("/execute", json={"code": PLATE, "params": params, "ports": [face_port]})
+    body4d = r4d.json()
+    check(
+        "G3 names a missing face size instead of guessing 4mm",
+        r4d.status_code == 422 and body4d.get("stage") == "G3" and "no numeric face size" in body4d.get("error", ""),
+        body4d.get("error", ""),
+    )
+
     # 5. G2: zero-volume result caught with a hint.
     gone = PLATE.replace("return plate - hole", "return plate - Box(p.width*2, p.depth*2, p.thickness*2)")
     r5 = client.post("/execute", json={"code": gone, "params": params})

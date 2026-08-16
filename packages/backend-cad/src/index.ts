@@ -180,6 +180,146 @@ export const cadFastenerJustifiedLint = {
   },
 };
 
+/**
+ * The envelope is the only thing standing between the architect's imagination
+ * and a part the generator cannot possibly build, and G4 grades the part
+ * against it on every single attempt. Two ways it goes wrong, both of which
+ * cost a whole repair budget and neither of which the generator can see:
+ *
+ *  - Drawn in disconnected pieces. A union with a gap asks for a part that
+ *    spans empty space. Seen live: cylinders over z [-8, 0] and [3.25, 4.75].
+ *  - Drawn somewhere the part's own ports aren't, which is self-contradictory.
+ *
+ * Runs at plan time, so either becomes an architect repair round instead of
+ * five generator rounds that cannot succeed.
+ */
+const ENVELOPE_LINT_MARGIN = 0.5;
+
+interface Aabb {
+  min: [number, number, number];
+  max: [number, number, number];
+}
+
+function envelopeAabb(graph: GraphDoc, vol: z.infer<typeof EnvelopePrimitive>): Aabb {
+  const o = resolvePose(graph, vol.pose).origin;
+  const half: [number, number, number] =
+    vol.kind === "box"
+      ? [resolveDim(graph, vol.dims[0]) / 2, resolveDim(graph, vol.dims[1]) / 2, resolveDim(graph, vol.dims[2]) / 2]
+      : [resolveDim(graph, vol.d) / 2, resolveDim(graph, vol.d) / 2, resolveDim(graph, vol.h) / 2];
+  return {
+    min: [o[0] - half[0], o[1] - half[1], o[2] - half[2]],
+    max: [o[0] + half[0], o[1] + half[1], o[2] + half[2]],
+  };
+}
+
+const overlaps = (a: Aabb, b: Aabb, slack: number) =>
+  [0, 1, 2].every((i) => a.min[i]! - slack <= b.max[i]! && b.min[i]! - slack <= a.max[i]!);
+
+export const cadEnvelopeCoherentLint = {
+  id: "cad-envelope-coherent",
+  run(graph: GraphDoc): string[] {
+    const problems: string[] = [];
+    for (const n of Object.values(graph.nodes)) {
+      // Registry hardware skips G4 entirely, so its envelope grades nothing.
+      if (REGISTRY_HARDWARE.has(n.kind)) continue;
+      const volumes = (n.contract.payload as CadContractPayload | undefined)?.envelope?.volumes ?? [];
+      if (volumes.length === 0) continue;
+
+      let boxes: Aabb[];
+      try {
+        boxes = volumes.map((v) => envelopeAabb(graph, v));
+      } catch {
+        continue; // unresolvable expression — not this lint's business
+      }
+
+      // Every declared port is a feature ON this part, so it cannot sit
+      // outside the volume the part is promised to fit in. (Note there is
+      // deliberately NO "envelope must contain the origin" check: parts are
+      // legitimately modelled base-at-origin, and imported pieces keep their
+      // source model's frame, so origin placement carries no signal.)
+      for (const port of (n.contract.payload as CadContractPayload).ports ?? []) {
+        let o: [number, number, number];
+        try {
+          o = resolvePose(graph, port.pose).origin;
+        } catch {
+          continue;
+        }
+        const inside = boxes.some((b) =>
+          [0, 1, 2].every(
+            (i) => o[i]! >= b.min[i]! - ENVELOPE_LINT_MARGIN && o[i]! <= b.max[i]! + ENVELOPE_LINT_MARGIN,
+          ),
+        );
+        if (!inside) {
+          problems.push(
+            `${n.id}: port "${port.name}" sits at [${o.map((v) => v.toFixed(1)).join(", ")}], outside this node's own envelope. A port is a feature of the part, so either the pose or the envelope is wrong.`,
+          );
+        }
+      }
+
+      // Union must be one connected region: a gap asks for a part spanning air.
+      if (boxes.length > 1) {
+        const seen = new Set<number>([0]);
+        const queue = [0];
+        while (queue.length) {
+          const i = queue.pop()!;
+          boxes.forEach((b, j) => {
+            if (!seen.has(j) && overlaps(boxes[i]!, b, ENVELOPE_LINT_MARGIN)) {
+              seen.add(j);
+              queue.push(j);
+            }
+          });
+        }
+        if (seen.size < boxes.length) {
+          problems.push(
+            `${n.id}: envelope volumes are disjoint — ${boxes
+              .map((b) => `z [${b.min[2]!.toFixed(1)}, ${b.max[2]!.toFixed(1)}]`)
+              .join(" and ")} do not meet. A part cannot span the gap between them; overlap the volumes or use one that covers the whole part.`,
+          );
+        }
+      }
+    }
+    return problems;
+  },
+};
+
+/**
+ * Every probed port type needs the one param its probe measures against.
+ * A hole without a diameter and a flat face without a size are the same
+ * mistake, and both are silent until a cook is already burning rounds: the
+ * gate can only say the declaration is unusable, never what the part should
+ * have been. Catching it at plan time turns it into an architect repair.
+ */
+const HOLE_PORT_TYPES = new Set(["CLEARANCE_HOLE", "SCREW_SEAT", "BORE", "HOLE_PATTERN"]);
+const DIAMETER_KEYS = ["diameter", "dia", "holeDia", "hole_diameter", "d", "boreDia"];
+const FACE_SIZE_KEYS = ["size", "faceSize", "face_size", "width", "flatWidth", "flat_width"];
+
+export const cadFlatFaceSizeLint = {
+  id: "cad-port-params",
+  run(graph: GraphDoc): string[] {
+    const problems: string[] = [];
+    for (const n of Object.values(graph.nodes)) {
+      if (REGISTRY_HARDWARE.has(n.kind)) continue;
+      for (const p of (n.contract.payload as CadContractPayload | undefined)?.ports ?? []) {
+        const keys = Object.keys(p.params ?? {});
+        if (p.type === "FLAT_FACE") {
+          if (!keys.some((k) => FACE_SIZE_KEYS.includes(k)) && !keys.includes("ring_diameter")) {
+            problems.push(
+              `${n.id}: FLAT_FACE port "${p.name}" declares no face size (params: ${JSON.stringify(keys)}). Add params.size — the width in mm of the flat the mating part sits on — or params.ring_diameter for an annular seat.`,
+            );
+          }
+        } else if (HOLE_PORT_TYPES.has(p.type)) {
+          if (!keys.some((k) => DIAMETER_KEYS.includes(k))) {
+            problems.push(
+              `${n.id}: ${p.type} port "${p.name}" declares no diameter (params: ${JSON.stringify(keys)}). Add params.diameter in mm — probes measure the hole against it.`,
+            );
+          }
+        }
+      }
+    }
+    return problems;
+  },
+};
+
 /** Port params may hold expressions too (a hole Ø bound to the param that
  * drills it); non-arithmetic strings (thread names) pass through untouched. */
 function resolvePortParams(graph: GraphDoc, params: Record<string, number | string>) {
@@ -267,7 +407,7 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       { kind: "gear", description: "Registry involute spur gear (never LLM-generated).", guidance: "Params: module, teeth, pressure_angle, thickness, bore. Mesh distance between two gears is module * (teeth_a + teeth_b) / 2." },
     ],
     payloadSchema: CadContractPayload as z.ZodType<CadContractPayload>,
-    graphLints: [cadPortConsistencyLint, cadFastenerJustifiedLint],
+    graphLints: [cadPortConsistencyLint, cadFastenerJustifiedLint, cadEnvelopeCoherentLint, cadFlatFaceSizeLint],
     architectGuidance: [
       "FRAME CONVENTION (critical): every part is modeled in its OWN LOCAL frame,",
       "roughly centered on the origin — the assembly places parts later via port",

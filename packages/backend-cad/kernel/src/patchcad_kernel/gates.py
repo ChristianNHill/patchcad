@@ -291,6 +291,30 @@ def _probe_hole(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     return {"key": port["key"], "type": port["type"], "measured_diameter": round(measured, 3)}
 
 
+def _port_face_size(port: dict[str, Any]) -> float:
+    """Same treatment hole diameters already get: accept the aliases models
+    reach for, and report a miss instead of guessing.
+
+    This used to default to 4.0 mm, which invented a requirement the contract
+    never stated — a Ø5 ball declaring a 1.5 mm flat was silently graded
+    against a 4 mm one and could never pass, with a report that named neither
+    number. Failing here costs one repair round and says exactly what is missing.
+    """
+    params = port.get("params", {})
+    for key in ("size", "faceSize", "face_size", "width", "flatWidth", "flat_width"):
+        if key in params:
+            try:
+                return float(params[key])
+            except (TypeError, ValueError):
+                break
+    raise GateError(
+        "G3",
+        f'port "{port.get("key", "?")}" (FLAT_FACE) declares no numeric face size (params: {sorted(params)})',
+        "flat-face ports must carry params.size in mm — the width of the flat the mating part sits on "
+        "(or params.ring_diameter for an annular seat)",
+    )
+
+
 def _probe_flat_face(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     """Square-grid probe by default; `ring_diameter` switches to an annular
     probe for faces with a void center (a screw head's seat, a boss rim)."""
@@ -304,7 +328,7 @@ def _probe_flat_face(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
                    for k in range(PROBE_DIRECTIONS)]
         probed = {"ring_diameter": float(ring_d)}
     else:
-        size = float(params.get("size", 4.0))
+        size = _port_face_size(port)
         if size < 1.0:  # sliver face: a grid would poke into air — center only
             samples = [(0.0, 0.0)]
             probed = {"probed_size": 0.0}
@@ -392,6 +416,31 @@ def _inside_primitive(p: Any, prim: dict[str, Any], margin: float) -> bool:
     return False
 
 
+def _escape_distance(p: Any, prim: dict[str, Any], margin: float) -> float:
+    """How far outside the margin-inflated primitive `p` lies, 0.0 when inside.
+
+    This is reported to the model as the amount to shrink by, so it has to be
+    the real overshoot. The previous version measured every axis against
+    `radius`, including z — so a vertex escaping axially from a wide, flat
+    cylinder was compared against the RADIUS and came back negative, printing
+    "worst ≈0.0 mm beyond" for a genuine miss and telling the model its part
+    was already the right size.
+    """
+    c = prim["center"]
+    dz = abs(float(p[2]) - float(c[2]))
+    if prim["kind"] == "box":
+        s = prim["size"]
+        return max(
+            abs(float(p[i]) - float(c[i])) - (float(s[i]) / 2 + margin) for i in range(3)
+        )
+    if prim["kind"] == "cylinder":
+        dx, dy = float(p[0]) - float(c[0]), float(p[1]) - float(c[1])
+        radial = math.hypot(dx, dy) - (float(prim["radius"]) + margin)
+        axial = dz - (float(prim["height"]) / 2 + margin)
+        return max(radial, axial)
+    return 0.0
+
+
 def g4_envelope(shape: Any, envelope: list[dict[str, Any]]) -> dict[str, Any]:
     vertices, _tris = shape.tessellate(TESSELLATION_TOL)
     worst: tuple[float, Any] | None = None
@@ -400,14 +449,12 @@ def g4_envelope(shape: Any, envelope: list[dict[str, Any]]) -> dict[str, Any]:
         p = (float(vec.X), float(vec.Y), float(vec.Z))
         if not any(_inside_primitive(p, prim, ENVELOPE_MARGIN_MM) for prim in envelope):
             violations += 1
-            # crude severity: distance beyond the nearest primitive center box
-            excess = min(
-                max(
-                    (abs(p[i] - float(prim["center"][i])) - (float(prim["size"][i]) / 2 if prim["kind"] == "box" else float(prim.get("radius", 0))))
-                    for i in range(3)
-                )
-                for prim in envelope
-            ) if envelope else 0.0
+            # Nearest primitive wins: the union is what must contain the part.
+            excess = (
+                min(_escape_distance(p, prim, ENVELOPE_MARGIN_MM) for prim in envelope)
+                if envelope
+                else 0.0
+            )
             if worst is None or excess > worst[0]:
                 worst = (excess, p)
     if violations:
@@ -415,7 +462,8 @@ def g4_envelope(shape: Any, envelope: list[dict[str, Any]]) -> dict[str, Any]:
         raise GateError(
             "G4",
             f"{violations} mesh vertices escape the declared envelope "
-            f"(worst ≈{max(excess, 0):.1f} mm beyond, near [{p[0]:.1f}, {p[1]:.1f}, {p[2]:.1f}])",
+            f"(worst {max(excess, 0):.2f} mm past the {ENVELOPE_MARGIN_MM} mm tolerance, "
+            f"near [{p[0]:.1f}, {p[1]:.1f}, {p[2]:.1f}])",
             "shrink the offending feature to fit the envelope, or request an envelope expansion from the architect",
         )
     return {"vertices_checked": len(vertices), "violations": 0}

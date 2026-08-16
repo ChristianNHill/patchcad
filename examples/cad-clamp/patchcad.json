@@ -175,6 +175,7 @@
       },
       "thread": [],
       "status": "ready",
+      "measurements": null,
       "version": 1,
       "history": [
         {
@@ -367,6 +368,7 @@
       },
       "thread": [],
       "status": "ready",
+      "measurements": null,
       "version": 1,
       "history": [
         {
@@ -503,6 +505,7 @@
       },
       "thread": [],
       "status": "ready",
+      "measurements": null,
       "version": 1,
       "history": [
         {
@@ -541,5 +544,5 @@
     "entryNodeId": "base-plate"
   },
   "layout": {},
-  "rev": 23
+  "rev": 24
 }

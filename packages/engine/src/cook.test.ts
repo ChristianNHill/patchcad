@@ -380,3 +380,43 @@ describe("cookOne library integration", () => {
     expect((await library.lookup("mock", hash))?.code).toBe("cached");
   });
 });
+
+describe("cookOne cancellation", () => {
+  /** Stopping a doomed cook used to mean killing the server process. The
+   *  signal existed on CookDeps and nothing passed it. */
+  it("stops before spending another generation round", async () => {
+    const controller = new AbortController();
+    let calls = 0;
+    const counting: LlmProvider = {
+      id: "counting",
+      complete: async () => {
+        calls += 1;
+        controller.abort(); // caller cancels while the first call is in flight
+        return { data: { code: "x" }, usage: { inputTokens: 1, outputTokens: 1, usd: 0 }, model: "stub" } as never;
+      },
+    };
+    const failing: DomainBackend<unknown> = {
+      ...mockBackend,
+      maxAttempts: 5,
+      buildRepairPrompt: (ctx) => ({ ...mockBackend.buildGeneratePrompt(ctx), role: "repair" }),
+      execute: async () => ({ ok: false, stage: "G2", report: "boom" }),
+    };
+    const deps = { ...makeDeps(makeGraph(), counting, new MemoryLibrary(), failing), signal: controller.signal };
+
+    await expect(cookOne(deps, "widget")).rejects.toThrow(/cancelled/);
+    // Without the signal this backend would have burned all 5 rounds.
+    expect(calls).toBe(1);
+  });
+
+  it("leaves a cancelled node in a state the machine can resume from", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const deps = { ...makeDeps(makeGraph(), stubProvider, new MemoryLibrary()), signal: controller.signal };
+
+    await expect(cookOne(deps, "widget")).rejects.toThrow(/cancelled/);
+    // `cancelled` is legal from every in-flight status and leads back to
+    // `queued`, which is what makes cook-dirty able to pick the node up again.
+    expect(() => deps.store.setStatus("widget", "cancelled")).not.toThrow();
+    expect(() => deps.store.setStatus("widget", "queued")).not.toThrow();
+  });
+});

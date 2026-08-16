@@ -19,7 +19,9 @@ import {
   EventBus,
   planGraph,
   renegotiateContract,
+  type CookDeps,
   type DomainBackend,
+  type LlmProvider,
   type Workspace,
 } from "@patchcad/engine";
 import { CodeBackend, writeNodeModule } from "@patchcad/backend-code";
@@ -85,6 +87,28 @@ async function main() {
       if (n <= 0) liveCooks.delete(dir);
       else liveCooks.set(dir, n);
     });
+  }
+
+  /**
+   * One abort signal per cook wave, where a wave is everything in flight for
+   * the active project — cancelling stops the lot. An aborted signal stays
+   * aborted, so a new cook request mints a fresh controller.
+   */
+  let cookAbort = new AbortController();
+
+  /** The one place cook dependencies are assembled. Six call sites used to
+   *  spell this out identically, which is how `signal` came to be supported by
+   *  the engine and passed by nobody. */
+  function cookDeps(provider: LlmProvider): CookDeps {
+    if (cookAbort.signal.aborted) cookAbort = new AbortController();
+    return {
+      store: active.store,
+      backend: active.backend,
+      provider,
+      workspace: active.workspace,
+      library,
+      signal: cookAbort.signal,
+    };
   }
 
   /** T3 proposals awaiting user approval, keyed by nodeId. Ephemeral —
@@ -423,7 +447,7 @@ async function main() {
     active = await activateProject(dir);
 
     void trackCook(dir, cookNodes(
-      { store: active.store, backend: active.backend, provider: resolved.provider, workspace: active.workspace, library },
+      cookDeps(resolved.provider),
       Object.keys(active.store.doc.nodes),
     )).then((summary) => {
       console.log(
@@ -609,7 +633,7 @@ async function main() {
 
     // Pieces cook deterministically (mesh loader code, full gates, zero LLM).
     void trackCook(dir, cookNodes(
-      { store: active.store, backend: active.backend, provider: resolved?.provider ?? nullProvider, workspace: active.workspace, library },
+      cookDeps(resolved?.provider ?? nullProvider),
       Object.keys(active.store.doc.nodes),
     )).then((summary) => {
       console.log(`[patchcad] import cook: ${summary.succeeded.length} ok, ${summary.failed.length} failed`);
@@ -772,7 +796,7 @@ async function main() {
       .map(([id]) => id);
     bus.emit({ type: "graph:replaced", projectId: active.store.doc.id, graph: active.store.doc });
     void trackCook(active.dir, cookNodes(
-      { store: active.store, backend: active.backend, provider: resolved?.provider ?? nullProvider, workspace: active.workspace, library },
+      cookDeps(resolved?.provider ?? nullProvider),
       [...newIds, ...rippled],
     )).then((summary) => {
       console.log(`[patchcad] split cook: ${summary.succeeded.length} ok, ${summary.failed.length} failed`);
@@ -941,7 +965,7 @@ async function main() {
       g.nodes[nid]!.thread.push({ role: "user", content: body.data.message, at: Date.now() });
     });
     void trackCook(active.dir, cookOne(
-      { store: active.store, backend: active.backend, provider: resolved.provider, workspace: active.workspace, library },
+      cookDeps(resolved.provider),
       nid,
     ))
       .catch((err) => console.warn(`[patchcad] reprompt ${nid} failed: ${(err as Error).message}`))
@@ -971,7 +995,7 @@ async function main() {
     const applied = applyContract(nid, proposal.contract, "T3 renegotiation accepted");
     const cooking = [nid, ...applied.dirtied];
     void trackCook(active.dir, cookNodes(
-      { store: active.store, backend: active.backend, provider: resolved.provider, workspace: active.workspace, library },
+      cookDeps(resolved.provider),
       cooking,
     ))
       .then((summary) => {
@@ -1042,11 +1066,11 @@ async function main() {
   app.post("/api/project/cook-dirty", async (_req, reply) => {
     if (!resolved) return reply.code(503).send({ error: NO_PROVIDER_HELP });
     const stale = Object.values(active.store.doc.nodes)
-      .filter((n) => ["planned", "dirty", "error_code", "error_contract"].includes(n.status))
+      .filter((n) => ["planned", "dirty", "error_code", "error_contract", "cancelled"].includes(n.status))
       .map((n) => n.id);
     if (stale.length === 0) return { ok: true, cooking: [] };
     void trackCook(active.dir, cookNodes(
-      { store: active.store, backend: active.backend, provider: resolved.provider, workspace: active.workspace, library },
+      cookDeps(resolved.provider),
       stale,
     )).then((summary) => {
       console.log(
@@ -1054,6 +1078,38 @@ async function main() {
       );
     });
     return { ok: true, cooking: stale };
+  });
+
+  /**
+   * Stop everything cooking on this project. Until now the only way to halt a
+   * cook that could not possibly succeed — a contract the generator cannot
+   * satisfy, say — was to kill the server process, which also took the preview
+   * and the studio's connection with it.
+   *
+   * Aborting alone would strand nodes mid-status, so in-flight nodes are
+   * settled to `cancelled`, which the status machine allows from every
+   * in-flight state and which cook-dirty now picks up as resumable work.
+   */
+  app.post("/api/project/cook/cancel", async (_req, reply) => {
+    const inFlight = Object.values(active.store.doc.nodes).filter((n) =>
+      COOKING_STATUSES.includes(n.status),
+    );
+    if (inFlight.length === 0 && liveCooks.size === 0) {
+      return reply.code(409).send({ error: "nothing is cooking" });
+    }
+    cookAbort.abort();
+    const cancelled: string[] = [];
+    for (const n of inFlight) {
+      try {
+        active.store.setStatus(n.id, "cancelled");
+        cancelled.push(n.id);
+      } catch {
+        // Raced with the cook's own write; the next status it sets is
+        // illegal from `cancelled`, which ends that cookOne anyway.
+      }
+    }
+    console.log(`[patchcad] cook cancelled: ${cancelled.join(", ") || "(none in flight)"}`);
+    return { ok: true, cancelled };
   });
 
   const RevertBody = z.object({ version: z.number().int().min(0) });
