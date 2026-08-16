@@ -138,6 +138,46 @@ export const cadPortConsistencyLint = {
   },
 };
 
+/** The hole-like ports a screw actually fastens into. */
+const FASTENED_PORT_TYPES = new Set(["CLEARANCE_HOLE", "SCREW_SEAT", "SCREW_BOSS", "BORE"]);
+
+/**
+ * A fastener has to fasten something. The vocabulary handed to the architect is
+ * screw-heavy by construction — `fastener` is half the node taxonomy and most
+ * of the paramBindings examples are threads and lengths — so weaker plans
+ * sprout decorative screws that no part has a hole for. Runs at plan time, so
+ * an unjustified fastener becomes an architect repair round rather than a node
+ * the user has to notice and delete.
+ */
+export const cadFastenerJustifiedLint = {
+  id: "cad-fastener-justified",
+  run(graph: GraphDoc): string[] {
+    const problems: string[] = [];
+    const holePorts = (id: string) =>
+      ((graph.nodes[id]?.contract.payload as CadContractPayload | undefined)?.ports ?? []).filter((p) =>
+        FASTENED_PORT_TYPES.has(p.type),
+      );
+    for (const n of Object.values(graph.nodes)) {
+      if (n.kind !== "fastener") continue;
+      const neighbors = graph.edges
+        .filter((e) => e.from === n.id || e.to === n.id)
+        .map((e) => (e.from === n.id ? e.to : e.from));
+      if (neighbors.length === 0) {
+        problems.push(
+          `${n.id}: fastener is wired to nothing. Fasteners are optional — join the parts it belongs to through their hole ports, or drop the node (a one-piece, press-fit, or snap-fit design needs none).`,
+        );
+        continue;
+      }
+      if (!neighbors.some((id) => holePorts(id).length > 0)) {
+        problems.push(
+          `${n.id}: fastener connects only to ${neighbors.join(", ")}, none of which declare a CLEARANCE_HOLE / SCREW_SEAT / SCREW_BOSS / BORE port for it to fasten into. Add the hole ports to the parts being joined, or drop the fastener.`,
+        );
+      }
+    }
+    return problems;
+  },
+};
+
 /** Port params may hold expressions too (a hole Ø bound to the param that
  * drills it); non-arithmetic strings (thread names) pass through untouched. */
 function resolvePortParams(graph: GraphDoc, params: Record<string, number | string>) {
@@ -215,7 +255,7 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       { kind: "fastener", description: "Registry fastener (never LLM-generated).", guidance: "One node per screw spec; resolved from the fastener registry." },
     ],
     payloadSchema: CadContractPayload as z.ZodType<CadContractPayload>,
-    graphLints: [cadPortConsistencyLint],
+    graphLints: [cadPortConsistencyLint, cadFastenerJustifiedLint],
     architectGuidance: [
       "FRAME CONVENTION (critical): every part is modeled in its OWN LOCAL frame,",
       "roughly centered on the origin — the assembly places parts later via port",
@@ -225,6 +265,13 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       '  params: {"diameter": <mm>} — that exact key; probes measure against it.',
       "Prefer axis-aligned frames (zAxis one of ±x/±y/±z) and simple orientations:",
       "plates flat in XY, height along Z.",
+      "",
+      "FASTENERS ARE OPTIONAL, and never decorative. Emit one only when separate",
+      "parts are genuinely bolted together, and only alongside the hole ports on",
+      "the parts it joins — every fastener must be wired to a CLEARANCE_HOLE,",
+      "SCREW_SEAT, SCREW_BOSS or BORE port that it seats into. A one-piece part, a",
+      "press fit, a snap fit, or a printed-in-place hinge needs ZERO fastener",
+      "nodes. Do not add a screw to satisfy the taxonomy; most designs need none.",
       "",
       "FASTENER NODES are resolved from a registry (a single SHCS modeled with",
       "the head base at the origin, shank hanging down -z). They take exactly two",

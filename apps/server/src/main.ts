@@ -32,6 +32,11 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..", "..");
 
 const API_PORT = Number(process.env.PATCHCAD_PORT ?? 4100);
+/** Fastify binds every address `localhost` resolves to — both 127.0.0.1 and
+ * ::1. Binding v4-only strands Windows, where localhost usually resolves to
+ * ::1 first: the server looks healthy in the log and every browser fetch dies
+ * as a bare "Failed to fetch". */
+const API_HOST = process.env.PATCHCAD_HOST ?? "localhost";
 const PREVIEW_PORT = Number(process.env.PATCHCAD_PREVIEW_PORT ?? 5174);
 /** Only an explicit env override boots into a project; the default is none —
  * the studio shows the welcome screen until a plan or import creates one. */
@@ -1108,8 +1113,8 @@ async function main() {
     );
   });
 
-  await app.listen({ port: API_PORT, host: "127.0.0.1" });
-  console.log(`[patchcad] api: http://localhost:${API_PORT}`);
+  await app.listen({ port: API_PORT, host: API_HOST });
+  console.log(`[patchcad] api: http://127.0.0.1:${API_PORT} (host ${API_HOST})`);
 }
 
 function slugify(goal: string): string {

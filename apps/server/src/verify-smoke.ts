@@ -6,8 +6,10 @@ import { typecheckNode } from "@patchcad/backend-code";
 import { loadProject } from "./project.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(here, "..", "..", "..");
-const projectDir = path.join(repoRoot, "examples", "shop");
+// A fixture rather than an examples/ project on purpose: the welcome screen
+// lists everything under examples/, and this web-code graph is a verifier
+// control, not something a user of the CAD studio should be offered.
+const projectDir = path.resolve(here, "..", "fixtures", "shop");
 
 const { store } = await loadProject(projectDir, new EventBus());
 const ws = { root: path.join(projectDir, ".preview") };

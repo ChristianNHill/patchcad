@@ -19,6 +19,18 @@ import { OpenAiCompatProvider } from "@patchcad/llm-openai-compat";
 
 const ProviderName = z.enum(["claude", "openrouter", "local"]);
 
+/** Per-role model overrides. Every role is optional; an omitted role falls back
+ * to the provider's own default (see buildEntry), so a config can pin just the
+ * generator and leave architect/repair/classifier alone. */
+const RoleModels = z
+  .object({
+    architect: z.string(),
+    generator: z.string(),
+    repair: z.string(),
+    classifier: z.string(),
+  })
+  .partial();
+
 const ConfigSchema = z.object({
   /** Per-role provider routing, e.g. {"architect":"claude","generator":"local"}.
    * repair defaults to the architect's provider (escalation), classifier to
@@ -31,24 +43,14 @@ const ConfigSchema = z.object({
       classifier: ProviderName.optional(),
     })
     .optional(),
-  claude: z.object({ apiKey: z.string() }).partial().optional(),
-  openrouter: z
-    .object({
-      apiKey: z.string(),
-      models: z
-        .object({
-          architect: z.string().optional(),
-          generator: z.string(),
-          repair: z.string().optional(),
-          classifier: z.string().optional(),
-        })
-        .optional(),
-    })
-    .optional(),
+  claude: z.object({ apiKey: z.string().optional(), models: RoleModels.optional() }).optional(),
+  openrouter: z.object({ apiKey: z.string(), models: RoleModels.optional() }).optional(),
   local: z
     .object({
       baseUrl: z.string(),
+      /** Default model for every role; `models` overrides individual roles. */
       model: z.string(),
+      models: RoleModels.optional(),
       /** Ollama ≥0.5 enforces json_schema via grammar-constrained decoding. */
       nativeJsonSchema: z.boolean().default(true),
     })
@@ -71,7 +73,8 @@ class CompositeProvider implements LlmProvider {
 function buildEntry(name: z.infer<typeof ProviderName>, config: Config): LlmProvider {
   if (name === "claude") {
     if (!config.claude?.apiKey) throw new Error(`routing references "claude" but no claude.apiKey is set`);
-    return new ClaudeProvider({ apiKey: config.claude.apiKey });
+    // ClaudeProvider fills any role omitted here from its own defaults.
+    return new ClaudeProvider({ apiKey: config.claude.apiKey, models: config.claude.models });
   }
   if (name === "openrouter") {
     if (!config.openrouter) throw new Error(`routing references "openrouter" but it is not configured`);
@@ -92,7 +95,9 @@ function buildEntry(name: z.infer<typeof ProviderName>, config: Config): LlmProv
   return new OpenAiCompatProvider("local", {
     baseUrl: config.local.baseUrl,
     nativeJsonSchema: config.local.nativeJsonSchema,
-    models: { generator: config.local.model },
+    // Unset roles fall through to `generator` inside the adapter, so `model`
+    // stays the single-model shorthand it has always been.
+    models: { ...config.local.models, generator: config.local.models?.generator ?? config.local.model },
     price: { in: 0, out: 0 },
   });
 }
@@ -131,36 +136,12 @@ export async function resolveProvider(
           source: `${configPath} (routing)`,
         };
       }
-      if (config.claude?.apiKey) {
-        return { provider: new ClaudeProvider({ apiKey: config.claude.apiKey }), source: configPath };
-      }
-      if (config.openrouter) {
-        const m = config.openrouter.models;
-        return {
-          provider: new OpenAiCompatProvider("openrouter", {
-            baseUrl: "https://openrouter.ai/api/v1",
-            apiKey: config.openrouter.apiKey,
-            nativeJsonSchema: true,
-            models: {
-              architect: m?.architect ?? "anthropic/claude-opus-5",
-              generator: m?.generator ?? "anthropic/claude-sonnet-5",
-              repair: m?.repair ?? m?.generator ?? "anthropic/claude-sonnet-5",
-              classifier: m?.classifier ?? "anthropic/claude-haiku-4.5",
-            },
-          }),
-          source: configPath,
-        };
-      }
-      if (config.local) {
-        return {
-          provider: new OpenAiCompatProvider("local", {
-            baseUrl: config.local.baseUrl,
-            nativeJsonSchema: config.local.nativeJsonSchema,
-            models: { generator: config.local.model },
-            price: { in: 0, out: 0 },
-          }),
-          source: configPath,
-        };
+      // No routing map: the first configured provider wins. buildEntry is the
+      // only construction path, so a routed and an unrouted config of the same
+      // provider can never drift apart (model overrides included).
+      for (const name of ProviderName.options) {
+        const configured = name === "claude" ? !!config.claude?.apiKey : !!config[name];
+        if (configured) return { provider: buildEntry(name, config), source: configPath };
       }
     } catch (err) {
       console.warn(`[patchcad] ignoring invalid ${configPath}: ${(err as Error).message}`);

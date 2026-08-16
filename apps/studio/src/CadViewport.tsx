@@ -5,8 +5,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { NodeStatus } from "@patchcad/shared";
 import { useStudio } from "./store.js";
-
-const API = "http://localhost:4100";
+import { API } from "./api";
 
 /**
  * The CAD preview pane: per-node GLB meshes (straight from the kernel's

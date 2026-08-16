@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import type { Contract, EngineEvent, GraphDoc, NodeStatus, ParamValue } from "@patchcad/shared";
-
-const API = "http://localhost:4100";
+import { API, WS_API } from "./api";
 
 export type PlanState =
   | { status: "idle" }
@@ -112,7 +111,7 @@ export const useStudio = create<StudioState>((set, get) => ({
     for (const n of Object.values(graph.nodes)) statuses[n.id] = n.status;
     set({ graph, previewUrl, statuses, projectDir: dir, undo: undo ?? { depth: 0, label: "" } });
 
-    const ws = new WebSocket(`${API.replace("http", "ws")}/ws`);
+    const ws = new WebSocket(`${WS_API}/ws`);
     ws.onmessage = (msg) => {
       const event = JSON.parse(msg.data as string) as EngineEvent;
       if (event.type === "graph:replaced") {
