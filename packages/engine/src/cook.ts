@@ -1,5 +1,6 @@
 import { hashValue } from "@patchcad/shared";
 import type { DomainBackend, GenerateCtx, RepairCtx, Workspace } from "./backend.js";
+import { selectExemplars } from "./exemplars.js";
 import type { LlmProvider } from "./llm.js";
 import type { NodeLibrary } from "./library.js";
 import type { GraphStore } from "./graph/store.js";
@@ -208,10 +209,27 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
     }
   }
 
+  // Mined once per cook, not per attempt: the graph and the node's contract
+  // cannot move mid-cook (the commit guard enforces that), so re-querying on
+  // every repair round would return the same entries.
+  const exemplars =
+    deps.library && unspecialized
+      ? await selectExemplars({
+          library: deps.library,
+          backendId: backend.id,
+          node: store.node(nodeIdValue),
+          graph: store.doc,
+        })
+      : [];
+  if (exemplars.length > 0) {
+    log(`${exemplars.length} library exemplar(s): ${exemplars.map((e) => e.title).join(", ")}`);
+  }
+
   const makeCtx = (): GenerateCtx<unknown> => {
     const node = store.node(nodeIdValue);
     const views = store.contractViews(nodeIdValue);
     return {
+      exemplars,
       brief: graph.brief,
       node: {
         id: node.id,
@@ -330,6 +348,9 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
           kind: n.kind,
           title: n.title,
           dts: n.artifact?.dts,
+          // Stored so this entry can later serve as a worked example — the
+          // hash is one-way, so code without its contract teaches only style.
+          contract: n.contract,
         })
         .catch(() => {});
     }

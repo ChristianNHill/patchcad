@@ -37,6 +37,10 @@ async function main() {
       testCode: node.artifact?.testCode ?? "",
       kind: node.kind,
       title: node.title,
+      // Carrying the contract is what makes an entry usable as a worked
+      // example. Re-running this over existing projects backfills entries
+      // captured before the field existed, which are otherwise fast-path only.
+      contract: { ...node.contract, hash },
     });
     captured += 1;
     console.log(`captured ${node.id} (${hash})`);

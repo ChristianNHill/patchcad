@@ -10,8 +10,15 @@ import type {
 /**
  * The contract between the domain-agnostic engine and a domain backend
  * (web-code, cad, ...). Hermeticity is enforced by construction: the
- * generation context exposes neighbor CONTRACTS only — there is no field
- * through which a backend could leak neighbor code into a prompt.
+ * generation context exposes neighbor CONTRACTS only — `ContractView` has no
+ * code field, so a neighbor's implementation cannot reach a prompt.
+ *
+ * `exemplars` is the one place code from elsewhere enters a prompt, and it is
+ * deliberately not an exception: entries come from OTHER graphs, and
+ * selectExemplars (exemplars.ts) drops any whose contract hash appears in the
+ * requesting graph — because a node captured into the library can later be a
+ * neighbor of the node being generated. That filter is the invariant; it has a
+ * test, not just this comment.
  */
 
 /** What a generator is allowed to know about a neighbor. No code field. */
@@ -41,6 +48,18 @@ export interface GenerateCtx<P = unknown> {
   };
   upstream: ContractView[];
   downstream: ContractView[];
+  /** Verified worked examples mined from the node library — never from this
+   *  graph. Empty when no library is configured or nothing suitable is stored. */
+  exemplars?: Exemplar[];
+}
+
+/** A library entry rendered as a worked example: the interface that was asked
+ *  for, and the code that satisfied it and passed every gate. */
+export interface Exemplar {
+  title: string;
+  kind: string;
+  contract: Contract;
+  code: string;
 }
 
 export interface RepairCtx<P = unknown> extends GenerateCtx<P> {

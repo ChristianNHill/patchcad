@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RepairCtx } from "@patchcad/engine";
-import { repairPrompt } from "./prompts.js";
+import { generatePrompt, repairPrompt } from "./prompts.js";
 import type { CadContractPayload } from "./index.js";
 
 /**
@@ -51,6 +51,61 @@ const lastUser = (ctxIn: RepairCtx<CadContractPayload>) => {
   const msgs = repairPrompt(ctxIn).messages;
   return msgs[msgs.length - 1]!.content;
 };
+
+describe("generatePrompt exemplars", () => {
+  const exemplar = {
+    title: "Fan Mount Plate",
+    kind: "part",
+    code: "def build(p):\n    return Box(60, 60, 5)",
+    contract: {
+      name: "Fan Mount Plate",
+      summary: "",
+      hash: "elsewhere",
+      provides: [],
+      requires: [],
+      params: [{ type: "number" as const, name: "width", description: "plate width", default: 60 }],
+      payload: {
+        units: "mm",
+        process: { kind: "FDM", minWall: 1.2, nozzle: 0.4 },
+        ports: [{ name: "seat", type: "FLAT_FACE", pose, params: { size: 8 } }],
+        envelope: { volumes: [{ kind: "box", pose, dims: [60, 60, 5] }], clearance: 0.4 },
+      },
+    },
+  };
+
+  const withExemplars = (exemplars: unknown[]) =>
+    generatePrompt({ ...ctx(), exemplars } as unknown as Parameters<typeof generatePrompt>[0]);
+
+  it("adds nothing at all when there are none", () => {
+    const bare = generatePrompt(ctx());
+    expect(bare.messages[0]!.content).not.toContain("VERIFIED EXAMPLES");
+    expect(withExemplars([]).messages[0]!.content).not.toContain("VERIFIED EXAMPLES");
+  });
+
+  it("shows the contract that was asked for and the code that satisfied it", () => {
+    const user = withExemplars([exemplar]).messages[0]!.content;
+    expect(user).toContain("VERIFIED EXAMPLES");
+    expect(user).toContain("Fan Mount Plate");
+    expect(user).toContain("p.width");
+    expect(user).toContain("seat (FLAT_FACE)");
+    expect(user).toContain("return Box(60, 60, 5)");
+  });
+
+  it("warns against copying dimensions, which is the obvious failure mode", () => {
+    expect(withExemplars([exemplar]).messages[0]!.content).toContain("never the dimensions");
+  });
+
+  it("keeps the system block identical, so it stays prefix-cacheable", () => {
+    // Exemplars are per-node; putting them in `system` would give every node
+    // in a parallel wave a different prefix.
+    expect(withExemplars([exemplar]).system).toBe(generatePrompt(ctx()).system);
+  });
+
+  it("carries them into repair rounds too", () => {
+    const repair = repairPrompt({ ...ctx(), exemplars: [exemplar] } as never);
+    expect(repair.messages[0]!.content).toContain("VERIFIED EXAMPLES");
+  });
+});
 
 describe("repairPrompt", () => {
   it("carries the gate measurement through verbatim", () => {

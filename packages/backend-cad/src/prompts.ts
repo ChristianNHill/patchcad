@@ -71,11 +71,47 @@ function envelopeLines(payload: CadContractPayload): string {
     .join("\n");
 }
 
-export function generatePrompt(ctx: GenerateCtx<CadContractPayload>): PromptSpec {
-  const payload = ctx.node.contract.payload;
-  const params = ctx.node.contract.params
+function paramLines(contract: { params: { name: string; type: string; default: unknown; description: string }[] }): string {
+  return contract.params
     .map((p) => `  - p.${p.name} (${p.type}, default ${JSON.stringify(p.default)}): ${p.description}`)
     .join("\n");
+}
+
+/**
+ * Worked examples mined from the node library — verified code paired with the
+ * contract it was written against. The cheat sheet can only list call shapes;
+ * these show the shapes composed into a whole part that passed every gate, in
+ * this project's own style. They ride the USER turn rather than the system
+ * turn deliberately: the system block stays byte-identical across every node
+ * in a parallel cook wave, so it remains prefix-cacheable.
+ */
+function exemplarBlock(ctx: GenerateCtx<CadContractPayload>): string {
+  if (!ctx.exemplars || ctx.exemplars.length === 0) return "";
+  const blocks = ctx.exemplars.map((ex, i) => {
+    const p = ex.contract.payload as CadContractPayload | undefined;
+    return [
+      `--- worked example ${i + 1}: ${ex.title} ---`,
+      "Its contract asked for:",
+      paramLines(ex.contract) || "  (no params)",
+      p?.ports?.length ? `Ports:\n${portLines(p)}` : "  (no ports)",
+      "Code that satisfied it and passed every gate:",
+      "```python",
+      ex.code.trim(),
+      "```",
+    ].join("\n");
+  });
+  return [
+    "",
+    "VERIFIED EXAMPLES from this workshop — match their style and structure.",
+    "They are DIFFERENT parts: copy the approach, never the dimensions.",
+    ...blocks,
+    "",
+  ].join("\n");
+}
+
+export function generatePrompt(ctx: GenerateCtx<CadContractPayload>): PromptSpec {
+  const payload = ctx.node.contract.payload;
+  const params = paramLines(ctx.node.contract);
 
   const importedGuidance =
     ctx.node.kind === "imported"
@@ -116,6 +152,7 @@ export function generatePrompt(ctx: GenerateCtx<CadContractPayload>): PromptSpec
     ctx.node.thread.length > 0
       ? `User refinements:\n${ctx.node.thread.map((m) => `  ${m.role}: ${m.content}`).join("\n")}`
       : "",
+    exemplarBlock(ctx),
     "",
     "Emit the complete module.",
   ]

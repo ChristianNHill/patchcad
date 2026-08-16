@@ -6,7 +6,7 @@ import { EventBus } from "./events.js";
 import { GraphStore } from "./graph/store.js";
 import type { DomainBackend, RepairCtx } from "./backend.js";
 import type { LlmProvider } from "./llm.js";
-import type { LibraryEntry, NodeLibrary } from "./library.js";
+import type { LibraryEntry, LibraryListing, NodeLibrary } from "./library.js";
 
 /** The library fast path must never reach the generator; capture must run on
  * a fresh generate; specialized nodes (non-empty thread) opt out of both. */
@@ -204,6 +204,70 @@ describe("cookOne repair budget", () => {
     expect(h.repairs[0]!.failure.report).toBe("boom 1");
     expect(h.repairs[2]!.priorFailures.map((f) => f.report)).toEqual(["boom 1", "boom 2"]);
     expect(h.repairs[2]!.failure.report).toBe("boom 3");
+  });
+});
+
+describe("cookOne exemplar mining", () => {
+  class ListLibrary extends MemoryLibrary {
+    listing: LibraryListing[] = [];
+    async list() {
+      return this.listing;
+    }
+  }
+
+  const seenExemplars: string[][] = [];
+  const recordingBackend: DomainBackend<unknown> = {
+    ...mockBackend,
+    buildGeneratePrompt: (ctx) => {
+      seenExemplars.push((ctx.exemplars ?? []).map((e) => e.title));
+      return mockBackend.buildGeneratePrompt(ctx);
+    },
+  };
+
+  it("hands verified library entries to the generator", async () => {
+    seenExemplars.length = 0;
+    const library = new ListLibrary();
+    library.listing = [
+      {
+        contractHash: "elsewhere",
+        code: "export const A = 1;",
+        testCode: "",
+        kind: "component",
+        title: "Widget From Elsewhere",
+        contract: { name: "W", summary: "", params: [], provides: [], requires: [], payload: {}, hash: "elsewhere" },
+      },
+    ];
+    const deps = makeDeps(makeGraph(), stubProvider, library, recordingBackend);
+    await cookOne(deps, "widget");
+    expect(seenExemplars[0]).toEqual(["Widget From Elsewhere"]);
+  });
+
+  it("captures the contract alongside the code, so the entry can be an example later", async () => {
+    const library = new MemoryLibrary();
+    const deps = makeDeps(makeGraph(), stubProvider, library);
+    await cookOne(deps, "widget");
+    await new Promise((r) => setTimeout(r, 0));
+
+    const stored = await library.lookup("mock", deps.store.node("widget").contract.hash);
+    expect(stored?.contract).toMatchObject({ name: "Widget" });
+  });
+
+  it("mines nothing for a specialized node — it neither reuses nor captures", async () => {
+    seenExemplars.length = 0;
+    const library = new ListLibrary();
+    library.listing = [
+      {
+        contractHash: "elsewhere",
+        code: "export const A = 1;",
+        testCode: "",
+        kind: "component",
+        title: "Should not appear",
+        contract: { name: "W", summary: "", params: [], provides: [], requires: [], payload: {}, hash: "elsewhere" },
+      },
+    ];
+    const graph = makeGraph([{ role: "user", content: "make it teal", at: 1 }]);
+    await cookOne(makeDeps(graph, stubProvider, library, recordingBackend), "widget");
+    expect(seenExemplars[0]).toEqual([]);
   });
 });
 
