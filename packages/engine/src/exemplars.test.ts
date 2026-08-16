@@ -46,7 +46,8 @@ class StubLibrary implements NodeLibrary {
 
 const entry = (over: Partial<LibraryListing> = {}): LibraryListing => ({
   contractHash: "lib-1",
-  code: "def build(p): return Box(1,1,1)",
+  // Long enough to clear MIN_EXEMPLAR_CHARS — a real worked example, not a stub.
+  code: "def build(p):\n" + "    body = Box(20, 20, 5)\n".repeat(12) + "    return body\n",
   testCode: "",
   kind: "part",
   title: "Some Plate",
@@ -111,6 +112,21 @@ describe("selectExemplars — selection", () => {
     const library = new StubLibrary([entry({ contractHash: "old", contract: undefined })]);
     const got = await selectExemplars({ library, backendId: "cad", node: node("t"), graph: graphOf([]) });
     expect(got).toEqual([]);
+  });
+
+  it("skips deterministic one-line stubs, which the brevity tiebreak would favour", async () => {
+    // An imported CAD piece is stored as `return load_import(...)`: it scores
+    // well on shared port types AND on brevity, and teaches nothing.
+    const library = new StubLibrary([
+      entry({
+        contractHash: "stub",
+        title: "Object.stl piece 3",
+        code: 'def build(p):\n    return load_import("piece-3.ply", scale=p.scale)\n',
+      }),
+      entry({ contractHash: "real", title: "Real Part" }),
+    ]);
+    const got = await selectExemplars({ library, backendId: "cad", node: node("t"), graph: graphOf([]) });
+    expect(got.map((e) => e.title)).toEqual(["Real Part"]);
   });
 
   it("skips entries too long to be worth their tokens", async () => {

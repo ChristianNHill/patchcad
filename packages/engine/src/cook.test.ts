@@ -230,7 +230,8 @@ describe("cookOne exemplar mining", () => {
     library.listing = [
       {
         contractHash: "elsewhere",
-        code: "export const A = 1;",
+        // Over MIN_EXEMPLAR_CHARS: a one-liner is a deterministic stub, not an example.
+        code: "export function Widget() {\n  return null;\n}\n".repeat(6),
         testCode: "",
         kind: "component",
         title: "Widget From Elsewhere",
@@ -258,7 +259,8 @@ describe("cookOne exemplar mining", () => {
     library.listing = [
       {
         contractHash: "elsewhere",
-        code: "export const A = 1;",
+        // Over MIN_EXEMPLAR_CHARS: a one-liner is a deterministic stub, not an example.
+        code: "export function Widget() {\n  return null;\n}\n".repeat(6),
         testCode: "",
         kind: "component",
         title: "Should not appear",

@@ -24,6 +24,15 @@ const DEFAULT_LIMIT = 2;
  *  hand the model half a function and teach it that is acceptable. */
 const MAX_EXEMPLAR_CHARS = 4000;
 
+/**
+ * ...and skip entries too SHORT to be worth reading. Deterministically resolved
+ * nodes land in the library as one-line stubs — an imported CAD piece is just
+ * `return load_import(...)` — which demonstrate nothing about writing a part
+ * while scoring well on the brevity tiebreak below. A floor keeps them out
+ * without the engine having to know which kinds a backend resolves itself.
+ */
+const MIN_EXEMPLAR_CHARS = 200;
+
 function portTypes(c: Contract): string[] {
   return [...c.provides, ...c.requires].map((p) => p.type).sort();
 }
@@ -66,7 +75,7 @@ export async function selectExemplars(opts: {
     listing.filter(
       (e) =>
         e.contract !== undefined &&
-        e.code.length > 0 &&
+        e.code.length >= MIN_EXEMPLAR_CHARS &&
         e.code.length <= MAX_EXEMPLAR_CHARS &&
         !ownHashes.has(e.contractHash),
     );
