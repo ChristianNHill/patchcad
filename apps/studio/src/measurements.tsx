@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { hashValue, type NodeRecord } from "@patchcad/shared";
+import { API } from "./api.js";
 
 /**
  * What the gates measured on the last passing verify. The failing numbers have
@@ -123,7 +124,9 @@ export function RenderSheet({ nodeId, cooked }: { nodeId: string; cooked: boolea
   const load = async () => {
     setState({ loading: true });
     try {
-      const res = await fetch(`/api/project/nodes/${nodeId}/sheet`);
+      // Absolute: the studio is served by Vite on another port, so a relative
+      // path fetches Vite's index.html and dies parsing "<!doctype" as JSON.
+      const res = await fetch(`${API}/api/project/nodes/${nodeId}/sheet`);
       const body = (await res.json()) as { url?: string; error?: string };
       setState(res.ok && body.url ? { url: body.url } : { error: body.error ?? "render failed" });
     } catch (err) {

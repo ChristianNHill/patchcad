@@ -42,7 +42,12 @@ export function paramStep(decl: Extract<ParamDecl, { type: "number" }>): number 
  *  4.55, not 4.550000000000001. */
 export function formatNumber(value: number, step: number): string {
   if (!Number.isFinite(value)) return "";
-  const decimals = Math.min(6, Math.max(0, Math.ceil(-Math.log10(step))));
+  let decimals = Math.min(6, Math.max(0, Math.ceil(-Math.log10(step))));
+  // The step sets the FLOOR on precision, never the ceiling. A typed 7.35
+  // against a 0.1 step is stored as 7.35 and drives the kernel as 7.35, so
+  // rendering it "7.3" makes the UI lie about its own state — and reads as
+  // the entry having been rejected when it was accepted exactly.
+  while (decimals < 6 && Number(value.toFixed(decimals)) !== value) decimals += 1;
   const s = value.toFixed(decimals);
   // Trim only a fractional tail — a blanket /0+$/ would turn 100 into 1.
   return s.includes(".") ? s.replace(/0+$/, "").replace(/\.$/, "") : s;

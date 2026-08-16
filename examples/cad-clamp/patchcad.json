@@ -165,7 +165,7 @@
       },
       "pinned": true,
       "params": {
-        "thickness": 10,
+        "thickness": 7.35,
         "depth": 60
       },
       "deps": [],
@@ -545,5 +545,5 @@
     "entryNodeId": "base-plate"
   },
   "layout": {},
-  "rev": 35
+  "rev": 49
 }

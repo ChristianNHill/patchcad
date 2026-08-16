@@ -11,7 +11,12 @@
  *
  * Set VITE_PATCHCAD_API to point the studio at a server elsewhere. */
 export const API =
-  import.meta.env.VITE_PATCHCAD_API ?? `${location.protocol}//${location.hostname}:4100`;
+  import.meta.env.VITE_PATCHCAD_API ??
+  // Guarded so this module is importable outside a browser: a unit test that
+  // pulls in any component transitively importing it must not die on `location`.
+  (typeof location === "undefined"
+    ? "http://localhost:4100"
+    : `${location.protocol}//${location.hostname}:4100`);
 
 /** Same origin, ws:// scheme — for the /ws event stream. */
 export const WS_API = API.replace(/^http/, "ws");

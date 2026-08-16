@@ -79,6 +79,15 @@ describe("formatNumber", () => {
     expect(formatNumber(0, 1)).toBe("0");
   });
 
+  it("never hides precision the value actually has", () => {
+    // Typed 7.35 against a 0.1 step: stored as 7.35, so it must READ as 7.35.
+    // Showing 7.3 makes the field look like it rejected the entry.
+    expect(formatNumber(7.35, 0.1)).toBe("7.35");
+    expect(formatNumber(2.125, 0.5)).toBe("2.125");
+    // ...while a value that fits the step keeps the step's tidy form.
+    expect(formatNumber(7.3, 0.1)).toBe("7.3");
+  });
+
   it("survives a non-finite value", () => {
     expect(formatNumber(Number.NaN, 1)).toBe("");
   });
