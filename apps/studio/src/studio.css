@@ -815,3 +815,11 @@ body {
   border: 1px solid var(--color-rule-2);
   display: block;
 }
+
+/* export control in the viewport bar — a format and a verb, nothing more */
+.cad-viewport__export { display: inline-flex; align-items: center; gap: var(--space-2xs); }
+.cad-viewport__export .input {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  padding: var(--space-3xs) var(--space-2xs);
+}

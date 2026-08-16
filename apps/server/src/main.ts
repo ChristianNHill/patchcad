@@ -424,6 +424,34 @@ async function main() {
     }
   });
 
+  /**
+   * Geometry out. `node` exports that part in its own frame — what you slice,
+   * since parts print flat and separately. Omit it for the posed assembly.
+   */
+  const ExportQuery = z.object({
+    format: z.enum(["stl", "3mf", "obj", "step"]).default("stl"),
+    node: z.string().optional(),
+  });
+  app.get("/api/project/export", async (req, reply) => {
+    if (active.backend.id !== "cad") return reply.code(409).send({ error: "active project is not a CAD graph" });
+    const q = ExportQuery.safeParse(req.query);
+    if (!q.success) return reply.code(400).send({ error: q.error.message });
+    const cad = active.backend as CadBackend;
+    const result = await cad.exportGeometry(active.store.doc, active.workspace, {
+      nodeId: q.data.node,
+      format: q.data.format,
+    });
+    if (!result.ok || !result.file) {
+      return reply.code(422).send({ error: result.error ?? "export failed", hint: result.hint });
+    }
+    const name = q.data.node ?? active.dir.split("/").pop() ?? "patchcad";
+    return {
+      url: `${cad.kernel.baseUrl}${result.file}`,
+      filename: `${name}.${q.data.format}`,
+      ...result.export,
+    };
+  });
+
   app.get("/api/project/cad-scene", async (_req, reply) => {
     if (active.backend.id !== "cad") return reply.code(409).send({ error: "active project is not a CAD graph" });
     const cad = active.backend as CadBackend;

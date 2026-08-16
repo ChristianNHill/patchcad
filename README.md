@@ -8,10 +8,19 @@
 ![the patchcad studio: a prompt-planned pen cup holder as a node graph with live params, assembled in the viewport](docs/studio.png)
 
 *"A pen cup holder with hexagonal cutouts that is 75mm wide, to be 3D printed" —
-the architect planned four printed parts with pinned contracts, each generated
-hermetically and gate-verified against its own geometry. The inspector shows the
-divider's parameters as the architect grouped and described them; every slider
-re-executes through the geometry kernel with zero LLM calls.*
+the architect planned four printed parts with pinned contracts. This is the brief
+it wrote for one of them, verbatim:*
+
+> A removable radial divider that slides down the inner bore of the tube and rests
+> on the floor, splitting the cup into wedge compartments: thin vertical blades
+> meeting at a central hub, with short standoff tabs at the blade tips so it
+> centres itself in the bore without needing force. Blades stop short of the rim
+> so the divider can be lifted out by hand; printed blades-vertical, no supports.
+
+*Each part was then generated hermetically — seeing its neighbours' contracts,
+never their code — and gate-verified against its own geometry. The sliders on
+the right are that part's parameters, grouped and described by the architect;
+every one re-executes through the geometry kernel with zero LLM calls.*
 
 Prompt-to-app on a TouchDesigner-style node canvas. Type a goal → an architect
 model plans a **graph of nodes with pinned interface contracts** → parallel
@@ -250,5 +259,3 @@ examples/cad-clamp         hand-authored 3-node CAD reference (plate + L-bracket
 <project>/.preview/                   regenerable Vite workspace (gitignored)
 ```
 
-Full design doc: `~/.claude/plans/happy-beaming-tulip.md` (architecture,
-tier routing T0–T3, CAD track, milestones).

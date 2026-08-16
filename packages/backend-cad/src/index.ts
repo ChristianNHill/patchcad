@@ -94,7 +94,7 @@ export type CadContractPayload = z.infer<typeof CadContractPayload>;
 
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { KernelClient, type KernelResult } from "./kernel.js";
+import { KernelClient, type ExportResult, type KernelResult } from "./kernel.js";
 import { generatePrompt, repairPrompt } from "./prompts.js";
 import { FASTENING_HARDWARE, REGISTRY_HARDWARE, resolveDeterministic } from "./registry.js";
 import { solveAssembly, type AssemblyMate, type AssemblyNode } from "./assembly.js";
@@ -544,6 +544,31 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     const res = await fetch(`${this.kernel.baseUrl}${result.sheet}`);
     if (!res.ok) return null;
     return { mediaType: "image/png", dataB64: Buffer.from(await res.arrayBuffer()).toString("base64") };
+  }
+
+  /**
+   * Write geometry to a file the user can open.
+   *
+   * One node exports in its OWN frame, which is what a slicer wants — you
+   * print parts flat and separately, not posed. The whole graph exports posed,
+   * for anyone who wants the assembled object as one mesh.
+   */
+  async exportGeometry(
+    graph: GraphDoc,
+    ws: Workspace,
+    opts: { nodeId?: string; format: string },
+  ): Promise<ExportResult> {
+    const { world } = this.solveScene(graph);
+    const nodes = Object.values(graph.nodes).filter(
+      (n) => n.artifact?.code && (!opts.nodeId || n.id === opts.nodeId),
+    );
+    const parts = nodes.map((n) => ({
+      code: n.artifact!.code,
+      params: mergedParams(n),
+      matrix: opts.nodeId ? [] : (world[n.id] ?? []),
+    }));
+    await this.ensureKernel();
+    return this.kernel.export(parts, opts.format, { importDir: this.importDir(ws) });
   }
 
   buildGeneratePrompt(ctx: GenerateCtx<CadContractPayload>): PromptSpec {

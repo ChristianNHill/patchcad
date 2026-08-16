@@ -76,6 +76,22 @@ export interface RenderResult {
   error?: string;
 }
 
+/** Formats the kernel will write. STEP is per-part: a posed assembly has no
+ *  B-rep answer worth opening, and mesh is what a slicer wants anyway. */
+export const EXPORT_FORMATS = ["stl", "3mf", "obj", "step"] as const;
+export type ExportFormat = (typeof EXPORT_FORMATS)[number];
+
+export interface ExportResult {
+  ok: boolean;
+  hash: string;
+  cached?: boolean;
+  file?: string;
+  export?: { format: string; parts: number; units: string; triangles?: number; watertight?: boolean };
+  stage?: string;
+  error?: string;
+  hint?: string;
+}
+
 export class KernelClient {
   private child: ChildProcess | null = null;
   readonly baseUrl: string;
@@ -170,6 +186,20 @@ export class KernelClient {
       body: JSON.stringify({ parts, import_dir: opts.importDir ?? "", views: opts.views ?? 4 }),
     });
     return (await res.json()) as RenderResult;
+  }
+
+  /** Geometry out: a mesh a slicer can open, or STEP for another CAD tool. */
+  async export(
+    parts: { code: string; params: Record<string, unknown>; matrix: number[] }[],
+    format: string,
+    opts: { importDir?: string } = {},
+  ): Promise<ExportResult> {
+    const res = await fetch(`${this.baseUrl}/export`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ parts, format, import_dir: opts.importDir ?? "" }),
+    });
+    return (await res.json()) as ExportResult;
   }
 
   /** Segment an uploaded STL/3MF/STEP into pieces + cut-plane interfaces. */

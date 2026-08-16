@@ -56,6 +56,12 @@ class AssemblyPart(BaseModel):
     matrix: list[float] = Field(default_factory=list)
 
 
+class ExportBody(BaseModel):
+    parts: list[AssemblyPart] = Field(default_factory=list)
+    format: str = "stl"
+    import_dir: str = ""
+
+
 class AssemblyRenderBody(BaseModel):
     parts: list[AssemblyPart] = Field(default_factory=list)
     import_dir: str = ""
@@ -171,6 +177,47 @@ async def render(body: RenderBody):
         "render": result.get("render"),
         "elapsed_ms": result["elapsed_ms"],
     }
+
+
+@app.post("/export")
+async def export(body: ExportBody):
+    """Geometry out: a mesh for a slicer, or STEP for another CAD tool."""
+    digest = job_hash("export", [p.model_dump() for p in body.parts], body.format, body.import_dir)
+    out_dir = CACHE_ROOT / digest
+    out_file = out_dir / f"export.{body.format}"
+    meta_file = out_dir / "export.json"
+    # A zero-byte file is a failed write, not a cache entry.
+    if out_file.exists() and out_file.stat().st_size > 0 and meta_file.exists():
+        return {
+            "ok": True, "hash": digest, "cached": True,
+            "file": f"/artifact/{digest}/export.{body.format}",
+            "export": json.loads(meta_file.read_text("utf8")),
+        }
+
+    job = {
+        "export": {"parts": [p.model_dump() for p in body.parts], "format": body.format},
+        "import_dir": body.import_dir,
+        "out_dir": str(out_dir),
+    }
+    result = await anyio.to_thread.run_sync(lambda: pool.execute(job, max(TIMEOUT_S, 120)))
+    if not result.get("ok"):
+        return JSONResponse(status_code=422, content={"ok": False, "hash": digest, **result})
+    return {
+        "ok": True,
+        "hash": digest,
+        "cached": False,
+        "file": f"/artifact/{digest}/export.{body.format}",
+        "export": result.get("export"),
+        "elapsed_ms": result["elapsed_ms"],
+    }
+
+
+@app.get("/artifact/{digest}/export.{ext}")
+async def export_artifact(digest: str, ext: str):
+    path = CACHE_ROOT / digest / f"export.{ext}"
+    if not path.exists():
+        return JSONResponse(status_code=404, content={"error": "no export for that hash"})
+    return FileResponse(path, media_type="application/octet-stream", filename=f"patchcad.{ext}")
 
 
 @app.post("/render-assembly")

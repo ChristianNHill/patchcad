@@ -76,6 +76,29 @@ def worker_main(conn: Connection) -> None:
                 conn.send(run_import(job["import_job"] | {"out_dir": job["out_dir"]}))
                 continue
 
+            if "export" in job:
+                from .exporters import export_parts
+
+                spec = job["export"]
+                extra_ns_e: dict[str, object] = _registry_namespace()
+                if job.get("import_dir"):
+                    from .meshpart import load_import_part
+
+                    de = job["import_dir"]
+                    extra_ns_e["load_import"] = lambda name, scale=1.0: load_import_part(de, name, scale)
+                shapes = []
+                for part in spec["parts"]:
+                    tree_e = gates.g0_scan(part["code"])
+                    shapes.append((gates.g1_execute(tree_e, part.get("params", {}), extra_ns_e), part.get("matrix", [])))
+                os.makedirs(job["out_dir"], exist_ok=True)
+                out = os.path.join(job["out_dir"], f"export.{spec['format']}")
+                info = export_parts(shapes, out, spec["format"])
+                with open(os.path.join(job["out_dir"], "export.json"), "w", encoding="utf8") as f:
+                    json.dump(info, f)
+                conn.send({"ok": True, "export": info, "file": out,
+                           "elapsed_ms": int((time.monotonic() - started) * 1000)})
+                continue
+
             if "assembly" in job:
                 from .render import render_assembly
 

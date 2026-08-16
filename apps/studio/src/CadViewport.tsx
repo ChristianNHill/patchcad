@@ -311,10 +311,75 @@ function CadViewportInner() {
         {(data?.scene.problems.length ?? 0) > 0 && (
           <span className="cad-viewport__problem">{data!.scene.problems[0]}</span>
         )}
+        <ExportButton nodeId={selectedNodeId} partCount={parts.length} />
         <button className="btn btn--quiet btn--tiny" onClick={() => setReloadKey((k) => k + 1)}>
           refresh
         </button>
       </div>
     </div>
+  );
+}
+
+/**
+ * Geometry out. Exports the SELECTED part in its own frame when there is one,
+ * because that is what you slice — parts print flat and separately, not posed.
+ * With nothing selected it writes the whole assembly as one mesh.
+ *
+ * The kernel serves the file; the browser saves it. Nothing is written into
+ * the project, so exporting can never disturb a graph.
+ */
+function ExportButton({ nodeId, partCount }: { nodeId: string | null; partCount: number }) {
+  const [format, setFormat] = useState<string>("stl");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const q = new URLSearchParams({ format, ...(nodeId ? { node: nodeId } : {}) });
+      const res = await fetch(`${API}/api/project/export?${q}`);
+      const body = (await res.json()) as { url?: string; filename?: string; error?: string; hint?: string };
+      if (!res.ok || !body.url) {
+        setError(body.hint ? `${body.error} — ${body.hint}` : (body.error ?? "export failed"));
+        return;
+      }
+      const a = document.createElement("a");
+      a.href = body.url;
+      a.download = body.filename ?? `patchcad.${format}`;
+      a.click();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <span className="cad-viewport__export">
+      <select
+        className="input"
+        value={format}
+        onChange={(e) => setFormat(e.target.value)}
+        aria-label="export format"
+        title="stl / 3mf / obj write a mesh for a slicer; step writes B-rep for another CAD tool, one part at a time"
+      >
+        {["stl", "3mf", "obj", "step"].map((f) => (
+          <option key={f} value={f}>
+            {f}
+          </option>
+        ))}
+      </select>
+      <button
+        className="btn btn--quiet btn--tiny"
+        onClick={() => void run()}
+        disabled={busy || partCount === 0}
+        data-state={busy ? "loading" : undefined}
+        title={nodeId ? "export the selected part in its own frame" : "export the whole assembly, posed"}
+      >
+        {busy ? "exporting…" : nodeId ? "export part" : "export all"}
+      </button>
+      {error && <span className="cad-viewport__problem">{error}</span>}
+    </span>
   );
 }
