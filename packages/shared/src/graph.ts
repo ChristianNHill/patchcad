@@ -223,6 +223,12 @@ export const GraphDoc = z.object({
     goal: z.string(),
     constraints: z.array(z.string()).default([]),
     clarifications: z.array(ChatMessage).default([]),
+    /** Non-structural intent every generator sees: proportion, edge treatment,
+     *  how the thing should read. Hermeticity gives parts no way to agree on
+     *  anything the contract does not pin, so without this each one invents its
+     *  own styling and the assembly looks like several projects. Architect
+     *  output, not neighbour code, so the invariant holds. */
+    design: z.string().default(""),
   }),
   nodes: z.record(NodeRecord),
   edges: z.array(Edge),

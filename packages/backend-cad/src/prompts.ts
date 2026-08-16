@@ -141,6 +141,9 @@ export function generatePrompt(ctx: GenerateCtx<CadContractPayload>): PromptSpec
   const user = [
     `Part: ${ctx.node.title} — ${ctx.node.spec}`,
     `Design brief: ${ctx.brief.goal}`,
+    // The only channel through which parts can agree on anything the contracts
+    // do not pin. Hermeticity is what makes it necessary, not optional.
+    ctx.brief.design ? `Shared design intent (every part follows this): ${ctx.brief.design}` : "",
     "",
     `Parameters (read via p.<name>):`,
     params || "  (none)",

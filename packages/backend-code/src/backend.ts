@@ -171,6 +171,9 @@ function contractBlock(ctx: GenerateCtx<CodeContractPayload>): string {
       : "",
     "",
     `# App brief\n${ctx.brief.goal}`,
+    // Hermetic generators cannot agree on anything the contracts do not
+    // pin; this is the one channel that lets them.
+    ctx.brief.design ? `# Shared design intent (every node follows this)\n${ctx.brief.design}` : "",
     ctx.brief.constraints.length ? `Constraints:\n${ctx.brief.constraints.map((s) => `- ${s}`).join("\n")}` : "",
     "",
     ctx.upstream.length

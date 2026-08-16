@@ -157,3 +157,34 @@ describe("repairPrompt", () => {
     expect(p.messages[0]!.content).toContain("Base Plate");
   });
 });
+
+describe("shared design intent", () => {
+  const withDesign = (design: string) =>
+    generatePrompt({
+      ...ctx(),
+      brief: { goal: "a clamp", constraints: [], clarifications: [], design },
+    } as unknown as Parameters<typeof generatePrompt>[0]).messages[0]!.content;
+
+  it("reaches the generator when the architect wrote one", () => {
+    // The only channel by which hermetic parts can agree on anything the
+    // contracts do not pin.
+    expect(withDesign("Soft 1mm fillets throughout; chunky, workshop-tool proportions.")).toContain(
+      "Soft 1mm fillets throughout",
+    );
+  });
+
+  it("adds no empty scaffolding when there isn't one", () => {
+    const bare = withDesign("");
+    expect(bare).not.toContain("Shared design intent");
+    // and the goal still gets through
+    expect(bare).toContain("a clamp");
+  });
+
+  it("rides into repair rounds too, so a fix cannot drift off-style", () => {
+    const repair = repairPrompt({
+      ...ctx(),
+      brief: { goal: "a clamp", constraints: [], clarifications: [], design: "Chamfered edges only." },
+    } as never);
+    expect(repair.messages[0]!.content).toContain("Chamfered edges only.");
+  });
+});

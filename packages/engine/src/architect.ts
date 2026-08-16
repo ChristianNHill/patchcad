@@ -55,6 +55,12 @@ export function makeArchitectSchema<P>(payloadSchema: z.ZodType<P>, kinds?: stri
     ),
     entryNodeId: z.string(),
     rationale: z.string().describe("one paragraph: why this decomposition"),
+    design: z
+      .string()
+      .default("")
+      .describe(
+        "2-3 sentences of NON-STRUCTURAL shared intent every generator will see: proportion, edge treatment (fillet vs chamfer and roughly what radius), wall feel, how the whole thing should read. No dimensions, no per-part instructions — those belong in contracts."
+      ),
   });
 }
 export type ArchitectOutput = z.infer<ReturnType<typeof makeArchitectSchema<unknown>>>;
@@ -84,6 +90,12 @@ function architectSystem(backend: DomainBackend<unknown>): string {
     "  labels — anything a user might want to slide without regenerating.",
     "- Prefer boundaries a user thinks in (header, grid, theme), not",
     "  per-function granularity.",
+    "- Write the `design` paragraph. Generators are hermetic: they see their own",
+    "  contract and their neighbours' contracts, and nothing else. That means",
+    "  they have NO way to agree on anything a contract does not pin, so unless",
+    "  you say it once here, every part invents its own edge treatment and",
+    "  proportions and the assembly reads as several projects. Keep it to shared",
+    "  intent — never dimensions, never per-part instructions.",
   ].join("\n");
 }
 
@@ -284,7 +296,7 @@ export function architectOutputToGraph(
     schemaVersion: 1,
     id: projectIdValue,
     backend: backendId,
-    brief: { goal, constraints: [], clarifications: [] },
+    brief: { goal, constraints: [], clarifications: [], design: out.design ?? "" },
     nodes,
     edges,
     assembly: { entryNodeId: out.entryNodeId },
