@@ -165,7 +165,7 @@
       },
       "pinned": true,
       "params": {
-        "thickness": 7.35,
+        "thickness": 5.5,
         "depth": 60
       },
       "deps": [],
@@ -494,7 +494,7 @@
       "pinned": true,
       "params": {
         "thread": "M4",
-        "length": 16
+        "length": 12
       },
       "deps": [
         "base-plate"
