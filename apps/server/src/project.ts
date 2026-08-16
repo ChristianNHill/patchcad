@@ -23,7 +23,10 @@ export function codeExt(backendId: string): string {
   return backendId === "cad" ? "py" : "tsx";
 }
 
-export function codeFile(dir: string, nodeIdValue: string, version: number, ext = "tsx"): string {
+/** `ext` is required on purpose. It defaulted to "tsx", which silently made
+ *  every caller a web-code caller: CAD nodes store .py, so an omitted argument
+ *  looked for a file that never exists and failed as "no stored code". */
+export function codeFile(dir: string, nodeIdValue: string, version: number, ext: string): string {
   return path.join(dir, "nodes", nodeIdValue, `v${version}.code.${ext}`);
 }
 

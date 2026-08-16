@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { GraphDoc } from "@patchcad/shared";
 import { contractHash } from "@patchcad/engine";
 import { FileLibrary } from "./library.js";
-import { codeFile } from "./project.js";
+import { codeExt, codeFile } from "./project.js";
 
 /**
  * Dev utility: seed the node library from an existing project's ready nodes.
@@ -25,7 +25,7 @@ async function main() {
     if (node.status !== "ready" || node.thread.length > 0) continue;
     let code: string;
     try {
-      code = await readFile(codeFile(dir, node.id, node.version), "utf8");
+      code = await readFile(codeFile(dir, node.id, node.version, codeExt(graph.backend)), "utf8");
     } catch {
       console.warn(`skip ${node.id}: no code file for v${node.version}`);
       continue;

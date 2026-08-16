@@ -24,7 +24,7 @@ import {
 } from "@patchcad/engine";
 import { CodeBackend, writeNodeModule } from "@patchcad/backend-code";
 import { boundDependents, CadBackend, resolveParamBindings } from "@patchcad/backend-cad";
-import { codeFile, loadProject, type LoadedProject } from "./project.js";
+import { codeExt, codeFile, loadProject, type LoadedProject } from "./project.js";
 import { FileLibrary } from "./library.js";
 import { NO_PROVIDER_HELP, resolveProvider } from "./providers.js";
 
@@ -1063,7 +1063,7 @@ async function main() {
     if (!body.success) return reply.code(400).send({ error: body.error.message });
     const node = active.store.doc.nodes[nid];
     if (!node) return reply.code(404).send({ error: "unknown node" });
-    const file = codeFile(active.dir, nid, body.data.version);
+    const file = codeFile(active.dir, nid, body.data.version, codeExt(active.store.doc.backend));
     let code: string;
     try {
       code = await readFile(file, "utf8");
