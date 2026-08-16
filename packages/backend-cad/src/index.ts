@@ -95,7 +95,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { KernelClient, type KernelResult } from "./kernel.js";
 import { generatePrompt, repairPrompt } from "./prompts.js";
-import { REGISTRY_HARDWARE, resolveDeterministic } from "./registry.js";
+import { FASTENING_HARDWARE, REGISTRY_HARDWARE, resolveDeterministic } from "./registry.js";
 import { solveAssembly, type AssemblyMate, type AssemblyNode } from "./assembly.js";
 import { resolveDim, resolvePose } from "./bindings.js";
 
@@ -160,7 +160,7 @@ export const cadFastenerJustifiedLint = {
         FASTENED_PORT_TYPES.has(p.type),
       );
     for (const n of Object.values(graph.nodes)) {
-      if (!REGISTRY_HARDWARE.has(n.kind)) continue;
+      if (!FASTENING_HARDWARE.has(n.kind)) continue;
       const neighbors = graph.edges
         .filter((e) => e.from === n.id || e.to === n.id)
         .map((e) => (e.from === n.id ? e.to : e.from));
@@ -263,6 +263,8 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       { kind: "fastener", description: "Registry socket-head cap screw (never LLM-generated).", guidance: "One node per screw spec; resolved from the fastener registry." },
       { kind: "nut", description: "Registry hex nut (never LLM-generated).", guidance: "Use when a screw is captured by a nut rather than threading into a boss or insert. One param: thread." },
       { kind: "insert", description: "Registry heat-set threaded insert (never LLM-generated).", guidance: "Use for screws threading into printed plastic — the durable choice over tapping the plastic directly. One param: thread." },
+      { kind: "threaded_rod", description: "Registry threaded rod / stud, real ISO profile (never LLM-generated).", guidance: "Use for a stud captured by nuts at both ends. Params: thread and length." },
+      { kind: "gear", description: "Registry involute spur gear (never LLM-generated).", guidance: "Params: module, teeth, pressure_angle, thickness, bore. Mesh distance between two gears is module * (teeth_a + teeth_b) / 2." },
     ],
     payloadSchema: CadContractPayload as z.ZodType<CadContractPayload>,
     graphLints: [cadPortConsistencyLint, cadFastenerJustifiedLint],
@@ -288,13 +290,20 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       "(probes don't apply) and a small cylinder envelope around the origin.",
       "Emit one node per hardware ROLE, not per physical piece — counts and",
       "patterns belong to the consuming part's HOLE_PATTERN port params.",
-      "  fastener  SHCS, head base at origin, shank hanging -z.",
-      "            Params: thread (enum M3|M4|M5) AND length (mm).",
-      "  nut       hex nut, seating face on z=0, body +z. Param: thread only.",
-      "  insert    heat-set threaded insert, flange on z=0, body +z. Param: thread only.",
+      "  fastener      SHCS, head base at origin, shank hanging -z.",
+      "                Params: thread (enum M3|M4|M5) AND length (mm).",
+      "  nut           hex nut, seating face on z=0, body +z. Param: thread only.",
+      "  insert        heat-set threaded insert, flange on z=0, body +z. Param: thread only.",
+      "  threaded_rod  ISO threaded stud from z=0 up. Params: thread AND length.",
       "Pick the mating half deliberately: a screw into printed plastic wants an",
       "`insert` (tapped plastic strips); a screw through both parts wants a `nut`;",
       "a screw into a SCREW_BOSS needs neither.",
+      "",
+      "GEAR NODES are registry too — an involute tooth profile is not something",
+      "to write by hand. Params: module, teeth, pressure_angle (20 unless you",
+      "have a reason), thickness, bore (0 for none). The gear is centered on the",
+      "origin. Two meshing gears sit module * (teeth_a + teeth_b) / 2 apart; put",
+      "that distance in the parts that carry their shafts, via expressions.",
       "",
       "Layout-first: choose each part's envelope primitives, then assign ports at",
       "the mating faces, and size hole/boss diameters from the fastener registry",

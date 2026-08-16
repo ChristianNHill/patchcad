@@ -68,6 +68,32 @@ def main() -> None:
     body4 = r4.json()
     check("G0 rejects import os", r4.status_code == 422 and body4.get("stage") == "G0", body4.get("error", ""))
 
+    # 4b. Registry classes are INJECTED into the exec namespace, not importable.
+    # Both halves matter: the server's codegen must be able to build a gear,
+    # and generated code must still be refused the import — otherwise a model
+    # starts inventing calls to an API it has no cheat sheet for.
+    gear = (
+        "from build123d import *\n\n"
+        "def build(p):\n"
+        "    return SpurGear(module=1, tooth_count=12, pressure_angle=20, thickness=4)\n"
+    )
+    r4b = client.post("/execute", json={"code": gear, "params": {}}).json()
+    check(
+        "registry gear builds from the injected namespace",
+        r4b.get("ok") is True,
+        f"Ø{r4b['measurements']['bbox']['size'][0]:.1f}" if r4b.get("ok") else r4b.get("error", ""),
+    )
+    r4c = client.post(
+        "/execute",
+        json={"code": "from bd_warehouse.gear import SpurGear\n" + gear, "params": {}},
+    )
+    body4c = r4c.json()
+    check(
+        "G0 still rejects importing bd_warehouse",
+        r4c.status_code == 422 and body4c.get("stage") == "G0",
+        body4c.get("error", ""),
+    )
+
     # 5. G2: zero-volume result caught with a hint.
     gone = PLATE.replace("return plate - hole", "return plate - Box(p.width*2, p.depth*2, p.thickness*2)")
     r5 = client.post("/execute", json={"code": gone, "params": params})

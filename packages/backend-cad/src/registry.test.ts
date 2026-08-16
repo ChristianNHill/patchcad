@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { NodeRecord } from "@patchcad/shared";
-import { METRIC, REGISTRY_HARDWARE, resolveDeterministic, resolveHardware } from "./registry.js";
+import {
+  FASTENING_HARDWARE,
+  METRIC,
+  REGISTRY_HARDWARE,
+  resolveDeterministic,
+  resolveHardware,
+} from "./registry.js";
 
 /**
  * Registry hardware never reaches an LLM, so these are the only tests it gets
@@ -19,8 +25,20 @@ const node = (over: Partial<NodeRecord> = {}): NodeRecord =>
   }) as unknown as NodeRecord;
 
 describe("resolveHardware", () => {
-  it("covers screw, nut and insert", () => {
-    expect([...REGISTRY_HARDWARE].sort()).toEqual(["fastener", "insert", "nut"]);
+  it("covers every registry class", () => {
+    expect([...REGISTRY_HARDWARE].sort()).toEqual([
+      "fastener",
+      "gear",
+      "insert",
+      "nut",
+      "threaded_rod",
+    ]);
+  });
+
+  it("only the joining hardware needs justifying by a hole port", () => {
+    // A gear meshes with another gear rather than bolting to anything.
+    expect(FASTENING_HARDWARE.has("gear")).toBe(false);
+    for (const kind of FASTENING_HARDWARE) expect(REGISTRY_HARDWARE.has(kind), kind).toBe(true);
   });
 
   it("emits a complete module per kind", () => {
@@ -29,6 +47,20 @@ describe("resolveHardware", () => {
       expect(code, kind).toContain("def build(p)");
       expect(code, kind).toContain("from build123d import *");
     }
+  });
+
+  it("builds gears from params, so a param change needs no re-codegen", () => {
+    const a = resolveHardware(node({ kind: "gear", params: { teeth: 20 } }));
+    const b = resolveHardware(node({ kind: "gear", params: { teeth: 40 } }));
+    expect(a).toBe(b);
+    expect(a).toContain("SpurGear");
+    // Injected into the kernel namespace, never imported — G0 stays closed.
+    expect(a).not.toContain("bd_warehouse");
+  });
+
+  it("gives the threaded rod its ISO pitch from the table", () => {
+    expect(resolveHardware(node({ kind: "threaded_rod", params: { thread: "M4" } }))).toContain("pitch=0.7");
+    expect(resolveHardware(node({ kind: "threaded_rod", params: { thread: "M5" } }))).toContain("pitch=0.8");
   });
 
   it("takes the thread from live params first, contract default second", () => {

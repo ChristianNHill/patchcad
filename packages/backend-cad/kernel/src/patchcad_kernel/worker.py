@@ -30,6 +30,27 @@ def _apply_rlimits() -> None:
         pass
 
 
+def _registry_namespace() -> dict[str, object]:
+    """Names the deterministic registry may build with, injected into the exec
+    namespace instead of being importable.
+
+    G0's allowlist stays {build123d, math} on purpose: these are standards-exact
+    part classes the SERVER codegens, and a generator reaching for them would be
+    inventing calls it has no cheat sheet for — the exact failure the registry
+    exists to avoid. Injection lets registry code use them while an `import
+    bd_warehouse` in generated code is still rejected at G0.
+
+    bd_warehouse costs ~0.03s to import on top of build123d, and sys.modules
+    caches it after the first job.
+    """
+    try:
+        from bd_warehouse.gear import SpurGear
+        from bd_warehouse.thread import IsoThread
+    except Exception:  # noqa: BLE001 — absent dependency must not break plain parts
+        return {}
+    return {"SpurGear": SpurGear, "IsoThread": IsoThread}
+
+
 def worker_main(conn: Connection) -> None:
     _apply_rlimits()
 
@@ -55,7 +76,7 @@ def worker_main(conn: Connection) -> None:
                 conn.send(run_import(job["import_job"] | {"out_dir": job["out_dir"]}))
                 continue
 
-            extra_ns: dict[str, object] = {}
+            extra_ns: dict[str, object] = _registry_namespace()
             if job.get("import_dir"):
                 from .meshpart import load_import_part
 

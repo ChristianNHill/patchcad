@@ -15,6 +15,8 @@ import type { NodeRecord } from "@patchcad/shared";
 export interface MetricThread {
   /** ISO 273 normal-fit clearance hole Ø */
   clearance: number;
+  /** coarse thread pitch (mm) — ISO 261 */
+  pitch: number;
   /** tap drill Ø (coarse pitch) */
   tap: number;
   /** socket head cap screw: head Ø / head height */
@@ -29,9 +31,9 @@ export interface MetricThread {
 }
 
 export const METRIC: Record<string, MetricThread> = {
-  M3: { clearance: 3.4, tap: 2.5, shcsHeadD: 5.5, shcsHeadH: 3.0, insertD: 4.0, insertL: 5.8, nutAf: 5.5, nutH: 2.4 },
-  M4: { clearance: 4.5, tap: 3.3, shcsHeadD: 7.0, shcsHeadH: 4.0, insertD: 5.6, insertL: 8.1, nutAf: 7.0, nutH: 3.2 },
-  M5: { clearance: 5.5, tap: 4.2, shcsHeadD: 8.5, shcsHeadH: 5.0, insertD: 6.4, insertL: 9.5, nutAf: 8.0, nutH: 4.7 },
+  M3: { clearance: 3.4, pitch: 0.5, tap: 2.5, shcsHeadD: 5.5, shcsHeadH: 3.0, insertD: 4.0, insertL: 5.8, nutAf: 5.5, nutH: 2.4 },
+  M4: { clearance: 4.5, pitch: 0.7, tap: 3.3, shcsHeadD: 7.0, shcsHeadH: 4.0, insertD: 5.6, insertL: 8.1, nutAf: 7.0, nutH: 3.2 },
+  M5: { clearance: 5.5, pitch: 0.8, tap: 4.2, shcsHeadD: 8.5, shcsHeadH: 5.0, insertD: 6.4, insertL: 9.5, nutAf: 8.0, nutH: 4.7 },
 };
 
 /** SHCS modeled head-down at origin: head sits on z ∈ [0, headH], shank hangs -z. */
@@ -83,6 +85,50 @@ def build(p):
 `;
 }
 
+/**
+ * Threaded rod / stud: a real ISO profile from bd_warehouse, not a cylinder
+ * pretending. Starts at z = 0 running +z, like the nut and insert.
+ *
+ * `IsoThread` is injected into the kernel exec namespace rather than imported
+ * (worker.py _registry_namespace) — G0 stays closed so a generator cannot
+ * reach for an API it has no cheat sheet for.
+ */
+export function threadedRodCode(thread: keyof typeof METRIC): string {
+  const t = METRIC[thread]!;
+  const major = Number(thread.slice(1));
+  return `from build123d import *
+
+def build(p):
+    return IsoThread(major_diameter=${major}, pitch=${t.pitch}, length=p.length, external=True)
+`;
+}
+
+/**
+ * Involute spur gear. This is the clearest case for the registry in the whole
+ * taxonomy: a correct tooth profile is an involute curve, which a language
+ * model will approximate with trapezoids every time, and no gate can tell a
+ * plausible-looking wrong tooth from a right one.
+ *
+ * Unlike the thread-driven hardware this is param-driven, so the code text is
+ * constant and a param change needs no re-codegen — it just re-executes.
+ * SpurGear centers on the origin, matching the part-local frame convention.
+ */
+export function gearCode(): string {
+  return `from build123d import *
+
+def build(p):
+    gear = SpurGear(
+        module=p.module,
+        tooth_count=int(p.teeth),
+        pressure_angle=p.pressure_angle,
+        thickness=p.thickness,
+    )
+    if p.bore > 0:
+        gear = gear - Cylinder(p.bore / 2, p.thickness * 2)
+    return gear
+`;
+}
+
 /** Rectangular plate with a symmetric corner hole pattern, top face at z = t/2. */
 export function plateCode(): string {
   return `from build123d import *
@@ -115,37 +161,56 @@ def build(p):
 `;
 }
 
-/**
- * Metric hardware: kind → codegen. Everything here is fully determined by its
- * thread, is exact by construction, and declares no geometric ports — so these
- * kinds skip G4 envelope grading and the port-consistency lint (see
- * REGISTRY_HARDWARE below). Adding a class is a table entry plus a factory.
- */
-const HARDWARE: Record<string, (thread: keyof typeof METRIC) => string> = {
-  fastener: shcsCode,
-  nut: nutCode,
-  insert: insertCode,
-};
-
-/** Kinds resolved from HARDWARE. Exported because the gates and lints need to
- *  know which kinds are exact-by-construction rather than architect guesses. */
-export const REGISTRY_HARDWARE = new Set(Object.keys(HARDWARE));
-
-/**
- * The cook-time hook: hardware nodes resolve here, deterministically, before
- * any library or LLM step. The thread spec comes from contract params
- * (`thread` enum) — never from generated code.
- */
-export function resolveHardware(node: NodeRecord): string | null {
-  const factory = HARDWARE[node.kind];
-  if (!factory) return null;
+/** The thread spec comes from contract params (`thread` enum) — live value
+ *  first, contract default second, never from generated code. */
+function threadOf(node: NodeRecord): keyof typeof METRIC | null {
   const thread = String(
     node.params.thread ??
       node.contract.params.find((p) => p.name === "thread")?.default ??
       "",
   ).toUpperCase();
-  if (!(thread in METRIC)) return null;
-  return factory(thread as keyof typeof METRIC);
+  return thread in METRIC ? (thread as keyof typeof METRIC) : null;
+}
+
+/** Wrap a thread-driven factory as a node-driven one. These re-codegen when
+ *  the thread changes: an M5 nut is different code, not an M4 with new params. */
+const byThread =
+  (factory: (thread: keyof typeof METRIC) => string) =>
+  (node: NodeRecord): string | null => {
+    const thread = threadOf(node);
+    return thread ? factory(thread) : null;
+  };
+
+/**
+ * Registry parts: kind → codegen. Everything here is exact by construction and
+ * declares no geometric ports, so these kinds skip G4 envelope grading and the
+ * port-consistency lint. Adding a class is one entry plus a factory.
+ */
+const REGISTRY: Record<string, (node: NodeRecord) => string | null> = {
+  fastener: byThread(shcsCode),
+  nut: byThread(nutCode),
+  insert: byThread(insertCode),
+  threaded_rod: byThread(threadedRodCode),
+  gear: () => gearCode(),
+};
+
+/** Kinds resolved from REGISTRY. Exported because the gates and lints need to
+ *  know which kinds are exact-by-construction rather than architect guesses. */
+export const REGISTRY_HARDWARE = new Set(Object.keys(REGISTRY));
+
+/**
+ * The subset that exists to join parts together, and so must be justified by a
+ * hole port somewhere (cadFastenerJustifiedLint). A gear meshes with another
+ * gear rather than bolting to anything, so it is deliberately not in here.
+ */
+export const FASTENING_HARDWARE = new Set(["fastener", "nut", "insert", "threaded_rod"]);
+
+/**
+ * The cook-time hook: registry nodes resolve here, deterministically, before
+ * any library or LLM step.
+ */
+export function resolveHardware(node: NodeRecord): string | null {
+  return REGISTRY[node.kind]?.(node) ?? null;
 }
 
 /** Imported pieces (STL/STEP/3MF segments) load their mesh deterministically —
