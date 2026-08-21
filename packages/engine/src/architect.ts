@@ -30,6 +30,21 @@ import { contractHash } from "./graph/diff.js";
  */
 const ARCHITECT_MAX_TOKENS = 32000;
 
+/**
+ * The architect ran at the provider default, which is the highest setting, and
+ * it is the single largest call in the system. Measured on the same fan-bracket
+ * goal, opus, direct path: high took 135.0s and 11,673 output tokens for $0.30;
+ * medium took 52.3s and 4,984 for $0.14. Two and a half times faster, less than
+ * half the cost.
+ *
+ * High also returned SIX nodes where medium returned five, and the guidance
+ * these prompts carry argues a smaller decomposition is the better answer, so
+ * the extra deliberation was not obviously buying quality. That is one sample
+ * and not a quality measurement: revisit it against the eval harness, which is
+ * the only thing that can settle it.
+ */
+const ARCHITECT_EFFORT = "medium" as const;
+
 const SLUG = /^[a-z][a-z0-9-]{1,40}$/;
 
 export function makeArchitectSchema<P>(payloadSchema: z.ZodType<P>, kinds?: string[]) {
@@ -361,6 +376,7 @@ export async function planGraph(opts: {
     messages: [goalMessage],
     schema,
     maxTokens: ARCHITECT_MAX_TOKENS,
+    effort: ARCHITECT_EFFORT,
     signal: opts.signal,
   });
 
@@ -403,6 +419,7 @@ export async function planGraph(opts: {
       ],
       schema,
       maxTokens: ARCHITECT_MAX_TOKENS,
+      effort: ARCHITECT_EFFORT,
       signal: opts.signal,
     });
     usage.inputTokens += repair.usage.inputTokens;

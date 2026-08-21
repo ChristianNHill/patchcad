@@ -97,6 +97,8 @@ export class ClaudeProvider implements LlmProvider {
     );
     const price = PRICES[model] ?? { in: 5, out: 25 };
     const usage = { inputTokens: 0, outputTokens: 0, usd: 0 };
+    /** Set when the API refuses to compile this schema into a grammar. */
+    let promptSchema = false;
 
     const attempt = async (extra?: { assistant: string; user: string }): Promise<string> => {
       // A message with images becomes a content array; without, it stays a
@@ -123,7 +125,22 @@ export class ClaudeProvider implements LlmProvider {
       const params: Anthropic.MessageCreateParamsStreaming = {
         model,
         max_tokens: req.maxTokens ?? 16000,
-        system: req.system,
+        // GRAMMAR FALLBACK. Structured outputs compiles the schema into a
+        // sampling grammar, and rejects one that gets too large: "The compiled
+        // grammar is too large". The whole-graph architect schema is exactly
+        // that, and it cannot be deduplicated out of the problem, because the
+        // compiler expands refs, so hoisting repeats into `$defs` shrinks the
+        // document and not the grammar (tried, measured, reverted).
+        //
+        // So where the grammar will not compile, the schema goes in the prompt
+        // and zod validates the reply instead. That is precisely what the
+        // OpenAI-compat adapter always does, and how the architect has been
+        // running all along, so it costs nothing that was previously working.
+        // What it buys is the direct path for the largest call in the system:
+        // effort, streaming, and a real price.
+        system: promptSchema
+          ? `${req.system}\n\nRespond with ONLY a JSON object matching this schema. No prose, no code fence.\n${JSON.stringify(jsonSchema)}`
+          : req.system,
         messages,
         stream: true,
         output_config: {
@@ -133,7 +150,9 @@ export class ClaudeProvider implements LlmProvider {
           // thinking outright: on this model family a disabled-thinking request
           // can write a tool call into visible text or leak reasoning tags.
           ...(req.effort ? { effort: req.effort } : {}),
-          format: { type: "json_schema", schema: jsonSchema as Record<string, unknown> },
+          ...(promptSchema
+            ? {}
+            : { format: { type: "json_schema", schema: jsonSchema as Record<string, unknown> } }),
         },
       };
       // STREAMING IS NOT OPTIONAL HERE. The SDK refuses a non-streaming request
@@ -162,7 +181,25 @@ export class ClaudeProvider implements LlmProvider {
       return text.text;
     };
 
-    let raw = await attempt();
+    let raw: string;
+    try {
+      raw = await attempt();
+    } catch (err) {
+      // Narrow on purpose: a 400 whose message names the compiled grammar, and
+      // nothing else. A bare /grammar/ test would match any message containing
+      // the word, and keying on the message alone would let a 429 or a 529
+      // trigger a retry that is not free. A schema rejection is refused before
+      // any tokens are generated, so this retry costs one round trip and no
+      // output; a rate limit is not, which is the whole reason to be strict.
+      if (
+        !(err instanceof Anthropic.BadRequestError) ||
+        !/compiled grammar/i.test((err as Error).message)
+      ) {
+        throw err;
+      }
+      promptSchema = true;
+      raw = await attempt();
+    }
     let parsed = this.tryParse(req, raw);
     if (!parsed.success) {
       raw = await attempt({
@@ -182,8 +219,20 @@ export class ClaudeProvider implements LlmProvider {
     req: LlmRequest<T>,
     raw: string,
   ): { success: true; data: T } | { success: false; error: string } {
+    // Tolerate a fenced or prose-wrapped reply, matching the OpenAI-compat
+    // adapter. Structured outputs returns bare JSON, so this never mattered
+    // here, but the grammar fallback puts the schema in the prompt instead, and
+    // a model answering a prompt is free to wrap it in ```json. Without this
+    // the fallback pays a whole validation-repair round trip for a code fence.
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) {
+      return {
+        success: false,
+        error: `no JSON object found in response (raw ${raw.length} chars: ${JSON.stringify(raw.slice(0, 200))})`,
+      };
+    }
     try {
-      const value: unknown = JSON.parse(raw);
+      const value: unknown = JSON.parse(match[0]);
       const result = req.schema.safeParse(value);
       if (result.success) return { success: true, data: result.data };
       return {
