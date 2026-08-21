@@ -104,11 +104,19 @@ export interface AssemblyMate {
   dofs?: MateDofs;
 }
 
+/** How far two mates may disagree about where a part goes before it is a
+ *  problem. Loose enough to absorb float error through a BFS chain of
+ *  transforms, tight enough that a feature visibly missing its partner is
+ *  reported. */
+const MATE_CONSISTENCY_TOL_MM = 0.05;
+
 /**
  * BFS from the root: each mate places the consumer relative to its provider.
- * Returns world matrices per node. Unreached nodes sit at identity (floating
- * parts are legal, just unmated). A node mated twice keeps its first placement
- * — the second mate is reported for the (future) consistency check.
+ * Returns world matrices per node. A node mated twice keeps its first
+ * placement, and the extra mate is CHECKED against it rather than dropped —
+ * that is where a two-hole bracket whose second hole is 10mm out shows up.
+ * Unreached nodes are reported: identity is a fallback so the viewport has a
+ * matrix, not a placement.
  */
 export function solveAssembly(
   nodes: AssemblyNode[],
@@ -118,6 +126,7 @@ export function solveAssembly(
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const world: Record<string, Mat4> = {};
   const problems: string[] = [];
+  const used = new Set<AssemblyMate>();
   if (!byId.has(rootId)) return { world, problems: [`root node "${rootId}" not found`] };
 
   world[rootId] = IDENTITY;
@@ -128,6 +137,7 @@ export function solveAssembly(
       const isForward = mate.fromNode === current && !(mate.toNode in world);
       const isReverse = mate.toNode === current && !(mate.fromNode in world);
       if (!isForward && !isReverse) continue;
+      used.add(mate);
       const [placedId, placingId, placedPortKey, placingPortKey] = isForward
         ? [mate.fromNode, mate.toNode, mate.fromPort, mate.toPort]
         : [mate.toNode, mate.fromNode, mate.toPort, mate.fromPort];
@@ -151,8 +161,46 @@ export function solveAssembly(
     }
   }
 
+  // OVER-CONSTRAINT IS A FINDING, NOT A NO-OP. A mate whose both ends were
+  // already placed by other mates used to be skipped by the loop guard above
+  // and never mentioned — the docstring claimed it was reported, and it was
+  // not. Silence there means a bracket bolted through two holes can align on
+  // the first and be arbitrarily far out on the second, with the assembly
+  // reporting clean. So compute what this mate WOULD have given and compare.
+  for (const mate of mates) {
+    if (used.has(mate)) continue;
+    const a = byId.get(mate.fromNode);
+    const b = byId.get(mate.toNode);
+    if (!a || !b || !(mate.fromNode in world) || !(mate.toNode in world)) continue;
+    const portA = a.ports[mate.fromPort];
+    const portB = b.ports[mate.toPort];
+    if (!portA || !portB) continue;
+    const expected = mul(world[mate.fromNode]!, mateTransform(portA, portB, mate.dofs));
+    const actual = world[mate.toNode]!;
+    // Positional disagreement only: it is the number a user can act on, and a
+    // pure rotation mismatch still moves the mated features apart.
+    const off = Math.hypot(expected[12]! - actual[12]!, expected[13]! - actual[13]!, expected[14]! - actual[14]!);
+    if (off > MATE_CONSISTENCY_TOL_MM) {
+      problems.push(
+        `mate ${mate.fromNode}.${mate.fromPort} → ${mate.toNode}.${mate.toPort} disagrees with the placement already solved for ${mate.toNode} by ${off.toFixed(2)}mm. Both parts are positioned by another mate, so this one cannot be satisfied — the two features will not line up.`,
+      );
+    }
+  }
+
+  // A NODE NOTHING PLACED IS NOT AT THE ORIGIN, IT IS UNPLACED. Falling back to
+  // identity silently drops it wherever the root already is, so a part whose
+  // mate could not be solved appears buried inside another one and the assembly
+  // still reports clean. Identity remains the fallback — the viewport needs a
+  // matrix for every node — but it is now a reported problem rather than a
+  // decision made in silence. A single-part graph has nothing to mate, so its
+  // one node being the root is not a problem.
   for (const n of nodes) {
-    if (!(n.id in world)) world[n.id] = IDENTITY;
+    if (!(n.id in world)) {
+      world[n.id] = IDENTITY;
+      problems.push(
+        `${n.id} is not positioned by any mate — it defaults to the origin, which is almost certainly inside another part. Wire it to a neighbour's port, or make it the assembly root.`,
+      );
+    }
   }
   return { world, problems };
 }

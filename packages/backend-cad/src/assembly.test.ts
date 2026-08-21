@@ -98,3 +98,67 @@ describe("solveAssembly", () => {
     expect(world.screw).toEqual(IDENTITY);
   });
 });
+
+describe("solveAssembly reports what it cannot solve", () => {
+  const flat = (o: [number, number, number], z: [number, number, number] = [0, 0, 1]) => ({
+    origin: o,
+    zAxis: z,
+    xAxis: [1, 0, 0] as [number, number, number],
+  });
+
+  it("reports a node no mate positions, instead of silently stacking it at the origin", () => {
+    const { world, problems } = solveAssembly(
+      [
+        { id: "plate", ports: { top: flat([0, 0, 5]) } },
+        { id: "orphan", ports: { bottom: flat([0, 0, 0], [0, 0, -1]) } },
+      ],
+      [],
+      "plate",
+    );
+    // Identity is still returned — the viewport needs a matrix for every node.
+    expect(world.orphan).toEqual(IDENTITY);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("orphan");
+    expect(problems[0]).toContain("not positioned by any mate");
+  });
+
+  it("says nothing about the root of a single-part graph", () => {
+    const { problems } = solveAssembly([{ id: "solo", ports: {} }], [], "solo");
+    expect(problems).toEqual([]);
+  });
+
+  it("accepts a second mate that agrees with the placement already solved", () => {
+    // Two holes 20mm apart on both parts: consistent, so both mates are satisfiable.
+    const { problems } = solveAssembly(
+      [
+        { id: "plate", ports: { a: flat([0, 0, 5]), b: flat([20, 0, 5]) } },
+        { id: "bracket", ports: { a: flat([0, 0, 0], [0, 0, -1]), b: flat([20, 0, 0], [0, 0, -1]) } },
+      ],
+      [
+        { fromNode: "plate", fromPort: "a", toNode: "bracket", toPort: "a" },
+        { fromNode: "plate", fromPort: "b", toNode: "bracket", toPort: "b" },
+      ],
+      "plate",
+    );
+    expect(problems).toEqual([]);
+  });
+
+  it("reports a second mate that disagrees, with the distance", () => {
+    // The bracket's second hole is 10mm off, so the two mates cannot both hold.
+    // This used to be skipped in silence while the assembly reported clean.
+    const { problems } = solveAssembly(
+      [
+        { id: "plate", ports: { a: flat([0, 0, 5]), b: flat([20, 0, 5]) } },
+        { id: "bracket", ports: { a: flat([0, 0, 0], [0, 0, -1]), b: flat([30, 0, 0], [0, 0, -1]) } },
+      ],
+      [
+        { fromNode: "plate", fromPort: "a", toNode: "bracket", toPort: "a" },
+        { fromNode: "plate", fromPort: "b", toNode: "bracket", toPort: "b" },
+      ],
+      "plate",
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("disagrees");
+    expect(problems[0]).toContain("10.00mm");
+  });
+});
