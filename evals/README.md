@@ -99,7 +99,8 @@ graph there is one CLEARANCE_HOLE measuring 6mm" survives a rename that
 | `volumeFraction` | `{max, min}` on measured volume over bounding-box volume, judged on the largest node. Separates a hollow or cut part from the solid block of the same size. Scale-free, but it reads an axis-aligned box, so a diagonal or organic part fills little of its box while being solid. |
 | `volume` | `{max, min}` on absolute mm3 summed over the graph. Fails differently from the ratio, and covers the diagonal case the ratio cannot. A `Box(75,75,95)` is 534,375 mm3; the real pen cup measured 47,232. |
 | `zeroLlmKinds` | these kinds must cost 0 model calls. Registry hardware that touches a model is a defect. |
-| `assemblyProblems` | expected count from `solveScene`. |
+| `assemblyProblems` | expected count from `solveScene`: unsolved mates and unplaced parts. |
+| `globalProblems` | expected count from the backend's `globalCheck`, which is where the G5 clash gate lives. **Defaults to 0**, unlike the others: `assemblyProblems` never saw a clash, so `two-plate-bolted` scored PASS on an assembly whose screw and nut shared 12.8mm³. |
 
 ## What it reports
 
@@ -123,6 +124,14 @@ zero dead, zero repair rounds.
 | single-plate | 1 | 1/1 | 4 | $0.198 | 26.4s |
 | two-plate-bolted | 4 (2 registry) | 2/2 | 4 | $0.304 | 3.7s |
 | pen-cup-hexagonal | 1 | 1/1 | 2 | $0.194 | 88.1s |
+| rib-blocked-hole | 1 | **0/1** | 4 | $0.247 | 21.2s |
+
+`rib-blocked-hole` is the only rung that enters the repair loop, which is what
+makes a repair-strategy change measurable at all. It cooked `repair-2` after the
+plan-time lint cleared a face/hole conflict, and its generated code fuses the rib
+before cutting the bore, with a cutter spanning `T + rh + 4`. One repair on one
+case is a thin baseline: before any repair change claims anything, this rung
+needs repeating to show whether `repair-2` is stable or sampling noise.
 
 Each of those numbers is a second or third attempt, and the ladder earned its
 cost in what the first attempts found rather than in the green line:

@@ -90,7 +90,14 @@ type CaseExpect = {
    *  that describes them. */
   volumeFraction?: { max?: number; min?: number };
   zeroLlmKinds?: string[];
+  /** Problems from solveScene: unsolved mates and unplaced parts. */
   assemblyProblems?: number;
+  /** Problems from the backend's globalCheck, which is where G5 CLASH lives.
+   *  assemblyProblems never saw it: two-plate-bolted scored PASS on an assembly
+   *  whose screw and nut shared 12.8mm3 of material, because the case only
+   *  counted mate-solving problems. A clashing assembly passing its case is the
+   *  same defect as a port verified by nothing. Defaults to 0. */
+  globalProblems?: number;
 };
 type EvalCase = { id: string; prompt: string; why?: string; expect: CaseExpect };
 
@@ -146,7 +153,12 @@ function checkPorts(probes: Probe[], want: PortExpect): Miss[] {
   return misses;
 }
 
-function score(c: EvalCase, store: GraphStore, problems: unknown[]): { misses: Miss[]; probes: Probe[] } {
+function score(
+  c: EvalCase,
+  store: GraphStore,
+  problems: unknown[],
+  global: string[] = [],
+): { misses: Miss[]; probes: Probe[] } {
   const nodes = Object.values(store.doc.nodes);
   const misses: Miss[] = [];
   const e = c.expect;
@@ -271,6 +283,13 @@ function score(c: EvalCase, store: GraphStore, problems: unknown[]): { misses: M
 
   if (e.assemblyProblems != null && problems.length !== e.assemblyProblems)
     misses.push(`${problems.length} assembly problem(s), expected ${e.assemblyProblems}: ${JSON.stringify(problems).slice(0, 200)}`);
+
+  // Default 0, unlike assemblyProblems: a clash is never something a case wants
+  // to tolerate silently, and every case written before this one asserted
+  // nothing about it.
+  const wantGlobal = e.globalProblems ?? 0;
+  if (global.length !== wantGlobal)
+    misses.push(`${global.length} global check problem(s), expected ${wantGlobal}: ${global.join(" | ").slice(0, 300)}`);
 
   return { misses, probes };
 }
@@ -501,6 +520,21 @@ function selfTest(): void {
       faceNode({ key: "g", type: "GROOVE", measured_width: 3, measured_depth: 4 }), []).misses,
     "quiet");
 
+  // globalCheck problems default to zero, because a clash is never something a
+  // case should tolerate in silence. two-plate-bolted scored PASS while its
+  // screw and nut shared 12.8mm3, since assemblyProblems counts only mates.
+  const plain: EvalCase = { id: "t", prompt: "p", expect: { allReady: false } };
+  const oneNode = mk({ p: node("p", {}, { volume_mm3: 1, bbox: { size: [1, 1, 1] }, ports: [] }) });
+  expect("a clash fails a case that never mentioned clashes",
+    score(plain, oneNode, [], ["a and b occupy the same space: 12.8 mm3"]).misses,
+    "fire", "global check problem");
+  expect("no clash, no complaint",
+    score(plain, oneNode, [], []).misses, "quiet");
+  expect("a case may accept a known clash by declaring the count",
+    score({ id: "t", prompt: "p", expect: { allReady: false, globalProblems: 1 } },
+      oneNode, [], ["a and b occupy the same space: 12.8 mm3"]).misses,
+    "quiet");
+
   const caseBolt: EvalCase = {
     id: "b", prompt: "p",
     expect: { nodes: { min: 1 }, allReady: true, zeroLlmKinds: ["fastener"], assemblyProblems: 0 },
@@ -597,6 +631,17 @@ async function runCase(c: EvalCase) {
     problems = [`solveScene threw: ${String(err)}`];
   }
 
+  // globalCheck is a SEPARATE question from solveScene, and it is where the
+  // clash gate lives. Running one and asserting on it while calling the case
+  // "assembly verified" is how a clashing assembly passed.
+  let global: string[] = [];
+  try {
+    const res = await backend.globalCheck?.(store.doc, workspace);
+    global = (res?.problems ?? []) as string[];
+  } catch (err) {
+    global = [`globalCheck threw: ${String(err)}`];
+  }
+
   const nodes = Object.values(store.doc.nodes);
   // THE ARCHITECT'S CALL BELONGS TO NO NODE. Summing node costs alone
   // understates every case by the largest single output in the system, which is
@@ -615,7 +660,7 @@ async function runCase(c: EvalCase) {
   const firstTry = modelNodes.filter((n) => n.status === "ready" && n.cost.calls === 1);
   const dead = nodes.filter((n) => n.status.startsWith("error"));
 
-  const { misses, probes } = score(c, store, problems);
+  const { misses, probes } = score(c, store, problems, global);
 
   return {
     id: c.id, pass: misses.length === 0, misses,
@@ -624,6 +669,7 @@ async function runCase(c: EvalCase) {
     firstTry: firstTry.length, dead: dead.length,
     calls, inTok, outTok, usd,
     architect: { usd: arch.usd, inTok: arch.inputTokens, outTok: arch.outputTokens, repaired: plan.repaired },
+    globalProblems: global,
     planMs, cookMs, probes: probes.length,
     skipped: probes.filter((p) => p.skipped).length,
     // A FAIL THAT CANNOT BE DIAGNOSED COSTS A SECOND FULL RUN, which is the

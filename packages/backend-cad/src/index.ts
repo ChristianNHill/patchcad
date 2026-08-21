@@ -1119,6 +1119,21 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
           problems.push(`clash check incomplete — ${e}. Those two parts were not compared.`);
         }
         for (const c of res.clash?.clashes ?? []) {
+          // A SCREW IS SUPPOSED TO INTERFERE WITH ITS NUT. Solid models of a
+          // thread engagement always interpenetrate: the screw carries its
+          // MAJOR diameter and the nut is bored to the TAP (minor) diameter, so
+          // the difference is the thread itself. Measured on two-plate-bolted:
+          // G5 reported 12.8 mm³ between an M4 screw and its nut, and
+          // pi/4 * (4.0² - 3.3²) * 3.2 is 12.8 to the tenth. The assembly is
+          // correct; the gate was describing a modelling convention.
+          //
+          // Left unfiltered this is a false clash on every screw-into-nut,
+          // screw-into-insert and screw-into-tapped-boss design in the domain,
+          // which is most of them. Two fastening parts are DESIGNED to occupy
+          // the same space; two printed parts are not, and those still report.
+          const aKind = graph.nodes[c.a]?.kind;
+          const bKind = graph.nodes[c.b]?.kind;
+          if (aKind && bKind && FASTENING_HARDWARE.has(aKind) && FASTENING_HARDWARE.has(bKind)) continue;
           problems.push(
             `${c.a} and ${c.b} occupy the same space: ${c.volume_mm3.toFixed(1)} mm³ of shared material near [${c.at.join(", ")}]. Both parts pass their own gates, so the fault is in a mate offset or a port pose, not in either part's code.`,
           );
