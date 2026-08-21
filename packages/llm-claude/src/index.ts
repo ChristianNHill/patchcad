@@ -92,9 +92,8 @@ export class ClaudeProvider implements LlmProvider {
     // difference stayed invisible because OpenRouter ignores the schema field
     // for Anthropic models and reads the copy embedded in the prompt instead.
     // So the architect schema had never actually been validated by anyone.
-    const jsonSchema = sanitizeSchema(
-      zodToJsonSchema(req.schema, { target: "jsonSchema7", $refStrategy: "none" }),
-    );
+    const rawSchema = zodToJsonSchema(req.schema, { target: "jsonSchema7", $refStrategy: "none" });
+    const jsonSchema = sanitizeSchema(rawSchema);
     const price = PRICES[model] ?? { in: 5, out: 25 };
     const usage = { inputTokens: 0, outputTokens: 0, usd: 0 };
     /** Set when the API refuses to compile this schema into a grammar. */
@@ -138,12 +137,21 @@ export class ClaudeProvider implements LlmProvider {
         // running all along, so it costs nothing that was previously working.
         // What it buys is the direct path for the largest call in the system:
         // effort, streaming, and a real price.
+        // The PROMPT path gets the unsanitized schema. sanitizeSchema strips
+        // minimum/maximum/pattern/minItems/maxItems because structured outputs
+        // rejects them, and zod still enforces every one of them client-side.
+        // Showing the model the stripped copy hides the constraints it is about
+        // to be judged against: the architect caps nodes at .max(15) and the
+        // model never saw the 15, so a violation costs a repair round on the
+        // most expensive call in the system. Costs ~240 input tokens.
         system: promptSchema
-          ? `${req.system}\n\nRespond with ONLY a JSON object matching this schema. No prose, no code fence.\n${JSON.stringify(jsonSchema)}`
+          ? `${req.system}\n\nRespond with ONLY a JSON object matching this schema. No prose, no code fence.\n${JSON.stringify(rawSchema)}`
           : req.system,
         messages,
         stream: true,
-        output_config: {
+        // Omitted entirely when there is nothing to put in it, rather than sent
+        // as an empty object.
+        ...(req.effort || !promptSchema ? { output_config: {
           // Effort rides alongside the schema in the same block. Left unset it
           // defaults to "high" — which is what made thinking 89-98% of billed
           // output on real projects. Lowering it is preferred over disabling
@@ -153,7 +161,7 @@ export class ClaudeProvider implements LlmProvider {
           ...(promptSchema
             ? {}
             : { format: { type: "json_schema", schema: jsonSchema as Record<string, unknown> } }),
-        },
+        } } : {}),
       };
       // STREAMING IS NOT OPTIONAL HERE. The SDK refuses a non-streaming request
       // whose max_tokens could outrun the HTTP timeout, and the architect emits
@@ -166,14 +174,16 @@ export class ClaudeProvider implements LlmProvider {
         stream.on("text", (delta) => req.onDelta!(delta));
       }
       const response = await stream.finalMessage();
-      if (response.stop_reason === "refusal") {
-        throw new Error(`model refused request "${req.label}"`);
-      }
+      // Account BEFORE any throw: the API bills a refusal, and returning zero
+      // for it puts spend in the ledger that nobody can see.
       usage.inputTokens += response.usage.input_tokens;
       usage.outputTokens += response.usage.output_tokens;
       usage.usd +=
         (response.usage.input_tokens * price.in + response.usage.output_tokens * price.out) /
         1_000_000;
+      if (response.stop_reason === "refusal") {
+        throw new Error(`model refused request "${req.label}"`);
+      }
       const text = response.content.find((b) => b.type === "text");
       if (!text || text.type !== "text") {
         throw new Error(`no text block in response for "${req.label}" (stop: ${response.stop_reason})`);

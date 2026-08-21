@@ -31,19 +31,34 @@ import { contractHash } from "./graph/diff.js";
 const ARCHITECT_MAX_TOKENS = 32000;
 
 /**
- * The architect ran at the provider default, which is the highest setting, and
- * it is the single largest call in the system. Measured on the same fan-bracket
- * goal, opus, direct path: high took 135.0s and 11,673 output tokens for $0.30;
- * medium took 52.3s and 4,984 for $0.14. Two and a half times faster, less than
- * half the cost.
+ * The emission keeps the top tier. Measured on one goal, opus, direct path:
+ * high took 135.0s and 11,673 output tokens for $0.3036, medium 52.3s and 4,984
+ * for $0.1364. Cheaper and faster, and I set medium on the strength of it, which
+ * was wrong twice over.
  *
- * High also returned SIX nodes where medium returned five, and the guidance
- * these prompts carry argues a smaller decomposition is the better answer, so
- * the extra deliberation was not obviously buying quality. That is one sample
- * and not a quality measurement: revisit it against the eval harness, which is
- * the only thing that can settle it.
+ * The evidence cannot carry the claim. Temperature is unset (1.0) and thinking is
+ * on, so decomposition varies run to run at FIXED effort. Six nodes at high
+ * against five at medium is n=1 versus n=1 and cannot separate an effort effect
+ * from sampling noise. Arguing that fewer nodes meant medium was also better was
+ * reaching for a quality story after the cost number was already in hand.
+ *
+ * And the economics run the other way. This is one call per project, and the
+ * contracts it pins constrain every generator downstream. Recorded whole-project
+ * costs are $0.35 for a 7-node bracket and about $1 for an 11-node app, so the
+ * $0.17 saved on the plan is erased by a single extra repair wave, let alone a
+ * replan or a user re-prompting a bad decomposition. Latency is the weak counter
+ * now that the reply streams: 135s of visible progress is not 135s of dead
+ * spinner. Revisit against the eval harness, which is the only thing that can
+ * actually measure plan quality.
  */
-const ARCHITECT_EFFORT = "medium" as const;
+const ARCHITECT_EFFORT = "high" as const;
+
+/**
+ * Repairs are a different job. A lint repair is "fix these named problems and
+ * re-emit", not a decomposition decision, so the deliberation that earns its
+ * keep above buys little here. This is where the measured saving belongs.
+ */
+const ARCHITECT_REPAIR_EFFORT = "low" as const;
 
 const SLUG = /^[a-z][a-z0-9-]{1,40}$/;
 
@@ -419,7 +434,7 @@ export async function planGraph(opts: {
       ],
       schema,
       maxTokens: ARCHITECT_MAX_TOKENS,
-      effort: ARCHITECT_EFFORT,
+      effort: ARCHITECT_REPAIR_EFFORT,
       signal: opts.signal,
     });
     usage.inputTokens += repair.usage.inputTokens;
