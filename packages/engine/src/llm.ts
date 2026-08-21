@@ -33,6 +33,16 @@ export interface LlmRequest<T> {
   /** Human label for logs/cost attribution, e.g. "generate:product-grid". */
   label: string;
   maxTokens?: number;
+  /**
+   * How hard the model should think. Output is billed at 5x input and reasoning
+   * tokens come out of the output budget, so on measured CAD projects 89-98% of
+   * every billed output token was thinking rather than emitted code. Unset means
+   * the provider's default, which is the highest setting.
+   *
+   * A provider that has no such control ignores this, like the rest of the
+   * optional fields here.
+   */
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
   signal?: AbortSignal;
   onDelta?: (text: string) => void;
 }

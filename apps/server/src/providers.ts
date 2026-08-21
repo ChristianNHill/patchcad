@@ -9,16 +9,34 @@ import { OpenAiCompatProvider } from "@patchcad/llm-openai-compat";
 
 /**
  * Provider resolution, in order:
- *  1. ANTHROPIC_API_KEY env (or `ant auth` ambient credentials) → Claude.
- *  2. OPENROUTER_API_KEY env → OpenRouter on the default model set.
- *  3. ~/.patchcad/config.json → a `routing` map composes per-role providers
- *     (the hosted-architect + local-generators hybrid); otherwise the first
- *     configured entry wins: claude | openrouter | local.
+ *  1. ~/.patchcad/config.json `routing` map → per-role providers composed
+ *     (the hosted-architect + local-generators hybrid). A per-role map is a
+ *     deliberate statement and outranks the ambient env keys below; an exported
+ *     key used to shadow it silently, which read as "my config does nothing".
+ *     If its providers lack credentials, this warns and falls through rather
+ *     than failing the boot.
+ *  2. ANTHROPIC_API_KEY env (or `ant auth` ambient credentials) → Claude.
+ *  3. OPENROUTER_API_KEY env → OpenRouter on the default model set.
+ *  4. ~/.patchcad/config.json with no `routing` map → the first configured
+ *     entry wins: claude | openrouter | local.
+ * Steps 2 and 3 are the first-run escape hatch: they exist so a fresh install
+ * needs no config file at all.
  * Returns null when nothing is configured; planning endpoints then explain
  * how to set a key instead of failing cryptically.
  */
 
 const ProviderName = z.enum(["claude", "openrouter", "local"]);
+
+/** List prices per MTok for the Anthropic models routed through OpenRouter,
+ *  keyed by OpenRouter's slugs. Attribution only — OpenRouter's own margin is
+ *  not modelled, and an unlisted model falls back to the opus rate so it reads
+ *  high rather than free. Mirrors the PRICES table in @patchcad/llm-claude. */
+const OPENROUTER_PRICES: Record<string, { in: number; out: number }> = {
+  "anthropic/claude-opus-5": { in: 5, out: 25 },
+  "anthropic/claude-sonnet-5": { in: 3, out: 15 },
+  "anthropic/claude-haiku-4.5": { in: 1, out: 5 },
+  "anthropic/claude-haiku-4-5": { in: 1, out: 5 },
+};
 
 /** Per-role model overrides. Every role is optional; an omitted role falls back
  * to the provider's own default (see buildEntry), so a config can pin just the
@@ -90,6 +108,17 @@ function buildEntry(name: z.infer<typeof ProviderName>, config: Config): LlmProv
         repair: m?.repair ?? m?.generator ?? "anthropic/claude-sonnet-5",
         classifier: m?.classifier ?? "anthropic/claude-haiku-4.5",
       },
+      // WITHOUT THIS EVERY CALL REPORTS $0. The adapter falls back to a zero
+      // price when none is passed, so the token counters were right and the
+      // dollar column was a lie — every project on disk reads $0.000 against
+      // tens of thousands of tokens, which is why the cost chip was never worth
+      // looking at. Priced per model, not flat: roles run on different models by
+      // design, and one rate for all of them priced the haiku classifier at opus
+      // rates. The flat `price` stays as the fallback for a model pinned through
+      // `openrouter.models` that isn't listed here — deliberately the expensive
+      // guess, so an unknown model overstates rather than disappears.
+      prices: OPENROUTER_PRICES,
+      price: { in: 5, out: 25 },
     });
   }
   if (!config.local) throw new Error(`routing references "local" but it is not configured`);
@@ -103,9 +132,74 @@ function buildEntry(name: z.infer<typeof ProviderName>, config: Config): LlmProv
   });
 }
 
+/** The per-role routing map, if the config declares one. Separate from
+ *  resolveProvider so it can be consulted BEFORE the ambient env hatches. */
+async function readRouting(
+  configPath: string,
+): Promise<{ provider: LlmProvider; source: string } | null> {
+  let config: z.infer<typeof ConfigSchema>;
+  try {
+    config = ConfigSchema.parse(JSON.parse(await readFile(configPath, "utf8")));
+  } catch {
+    // A malformed config is reported by the caller's own parse below, which
+    // still runs; staying quiet here avoids warning twice about one file.
+    return null;
+  }
+  if (!config.routing) return null;
+  const r = config.routing;
+  const names = {
+    architect: r.architect,
+    generator: r.generator,
+    repair: r.repair ?? r.architect, // escalation defaults to the strong provider
+    classifier: r.classifier ?? r.generator,
+  };
+  // One instance per distinct provider name, shared across roles.
+  const instances = new Map<string, LlmProvider>();
+  const get = (name: z.infer<typeof ProviderName>) => {
+    if (!instances.has(name)) instances.set(name, buildEntry(name, config));
+    return instances.get(name)!;
+  };
+  try {
+    return {
+      provider: new CompositeProvider({
+        architect: get(names.architect),
+        generator: get(names.generator),
+        repair: get(names.repair),
+        classifier: get(names.classifier),
+      }),
+      source: `${configPath} (routing)`,
+    };
+  } catch (err) {
+    // A ROUTING MAP MISSING ITS CREDENTIALS MUST NOT STOP THE SERVER BOOTING.
+    // `buildEntry` throws when a routed provider has no key, and the only caller
+    // of resolveProvider awaits it un-caught at startup — so the perfectly
+    // ordinary arrangement of "routing in the config file, secret in the shell"
+    // took the whole server down rather than falling through to the env hatch
+    // that used to serve it. Warn loudly (the map is what the user asked for, so
+    // silently using something else is its own trap) and let resolution
+    // continue.
+    console.warn(
+      `[patchcad] routing map in ${configPath} is unusable: ${(err as Error).message}` +
+        ` — falling back to environment credentials`,
+    );
+    return null;
+  }
+}
+
 export async function resolveProvider(
   configPath = path.join(os.homedir(), ".patchcad", "config.json"),
 ): Promise<{ provider: LlmProvider; source: string } | null> {
+  // AN EXPLICIT ROUTING MAP OUTRANKS AMBIENT ENV KEYS. The env hatches below
+  // exist so a first run needs no config file at all; they were never meant to
+  // override a config that names a provider per role. They did: a stale
+  // OPENROUTER_API_KEY left in a shell profile silently shadowed a freshly
+  // written routing map, and the only clue was one line of startup log — the
+  // symptom being every request going to the provider the config had just been
+  // edited to stop using. A per-role map is a deliberate statement; an
+  // exported key is ambient, so the map wins.
+  const routed = existsSync(configPath) ? await readRouting(configPath) : null;
+  if (routed) return routed;
+
   if (process.env.ANTHROPIC_API_KEY) {
     return { provider: new ClaudeProvider(), source: "env:ANTHROPIC_API_KEY" };
   }
@@ -113,8 +207,6 @@ export async function resolveProvider(
   // The same escape hatch for OpenRouter, so a first run needs no config file
   // at all — creating ~/.patchcad/config.json by hand is the step people get
   // wrong (wrong directory, Notepad saving .txt, a UTF-8 BOM breaking parse).
-  // Env beats the file, matching ANTHROPIC_API_KEY above; the startup log
-  // prints this source, so a key shadowing a tuned config is visible.
   if (process.env.OPENROUTER_API_KEY) {
     return {
       provider: buildEntry("openrouter", { openrouter: { apiKey: process.env.OPENROUTER_API_KEY } }),
@@ -125,30 +217,7 @@ export async function resolveProvider(
   if (existsSync(configPath)) {
     try {
       const config = ConfigSchema.parse(JSON.parse(await readFile(configPath, "utf8")));
-      if (config.routing) {
-        const r = config.routing;
-        const names = {
-          architect: r.architect,
-          generator: r.generator,
-          repair: r.repair ?? r.architect, // escalation defaults to the strong provider
-          classifier: r.classifier ?? r.generator,
-        };
-        // One instance per distinct provider name, shared across roles.
-        const instances = new Map<string, LlmProvider>();
-        const get = (name: z.infer<typeof ProviderName>) => {
-          if (!instances.has(name)) instances.set(name, buildEntry(name, config));
-          return instances.get(name)!;
-        };
-        return {
-          provider: new CompositeProvider({
-            architect: get(names.architect),
-            generator: get(names.generator),
-            repair: get(names.repair),
-            classifier: get(names.classifier),
-          }),
-          source: `${configPath} (routing)`,
-        };
-      }
+      // A routing map was already handled above, before the env hatches.
       // No routing map: the first configured provider wins. buildEntry is the
       // only construction path, so a routed and an unrouted config of the same
       // provider can never drift apart (model overrides included).

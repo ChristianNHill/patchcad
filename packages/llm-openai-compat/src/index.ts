@@ -15,8 +15,14 @@ export interface OpenAiCompatOptions {
   models: Partial<Record<LlmRole, string>> & { generator: string };
   /** Server supports response_format: json_schema (OpenRouter: per-model). */
   nativeJsonSchema?: boolean;
-  /** USD per MTok for cost attribution; 0 for local models. */
+  /** USD per MTok for cost attribution; 0 for local models. Used only when
+   *  `prices` has no entry for the model in play. */
   price?: { in: number; out: number };
+  /** Per-model prices per MTok, keyed by the model id as configured. A single
+   *  flat rate is wrong the moment roles run on different models — pricing a
+   *  haiku classifier at opus rates overstated it 5x — and per-role model
+   *  overrides are the documented way to change them. */
+  prices?: Record<string, { in: number; out: number }>;
 }
 
 interface ChatResponse {
@@ -103,7 +109,8 @@ export class OpenAiCompatProvider implements LlmProvider {
       }
     }
 
-    const price = this.opts.price ?? { in: 0, out: 0 };
+    const price =
+      this.opts.prices?.[model] ?? this.opts.price ?? { in: 0, out: 0 };
     const inputTokens = usage?.prompt_tokens ?? 0;
     const outputTokens = usage?.completion_tokens ?? 0;
     return {

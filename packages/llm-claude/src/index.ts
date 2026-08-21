@@ -50,6 +50,23 @@ function sanitizeSchema(schema: unknown): unknown {
   ]) {
     delete obj[key];
   }
+  // A zod tuple becomes `items: [A, B, C]`, which structured outputs rejects:
+  // "Array types must be specified with a single object schema for 'items'".
+  // Every tuple in the CAD payload is a homogeneous xyz triple, so collapsing
+  // to the single element schema loses nothing but the arity — and arity is a
+  // client-side concern here like every other constraint stripped above, since
+  // safeParse re-checks it. A heterogeneous tuple degrades to the union of its
+  // positions rather than silently pinning position 0's type on all of them.
+  if (Array.isArray(obj.items)) {
+    const parts = (obj.items as unknown[]).map(sanitizeSchema);
+    const distinct = [...new Map(parts.map((p) => [JSON.stringify(p), p])).values()];
+    obj.items = distinct.length === 1 ? distinct[0] : { anyOf: distinct };
+    // Deliberately NOT returning early. Today a tuple node carries only
+    // type/minItems/maxItems/items, so falling through changes nothing — but a
+    // `z.tuple().rest()` adds `additionalItems`, and a 2020-12 target renames
+    // this to `prefixItems`, either of which would then slip past unsanitized.
+    // sanitizeSchema is idempotent, so re-walking the collapsed items is free.
+  }
   if (obj.type === "object") obj.additionalProperties = false;
   for (const [k, v] of Object.entries(obj)) obj[k] = sanitizeSchema(v);
   return obj;
@@ -67,7 +84,17 @@ export class ClaudeProvider implements LlmProvider {
 
   async complete<T>(req: LlmRequest<T>): Promise<LlmResult<T>> {
     const model = this.models[req.role];
-    const jsonSchema = sanitizeSchema(zodToJsonSchema(req.schema, { target: "jsonSchema7" }));
+    // `$refStrategy: "none"` inlines every repeated subschema. Without it,
+    // zod-to-json-schema emits internal refs pointing at `#/properties/...`,
+    // and structured outputs rejects the whole schema: "References must be
+    // defined under '$defs' or 'definitions', not 'properties'". The
+    // OpenAI-compat adapter has always passed this; this one did not, and the
+    // difference stayed invisible because OpenRouter ignores the schema field
+    // for Anthropic models and reads the copy embedded in the prompt instead.
+    // So the architect schema had never actually been validated by anyone.
+    const jsonSchema = sanitizeSchema(
+      zodToJsonSchema(req.schema, { target: "jsonSchema7", $refStrategy: "none" }),
+    );
     const price = PRICES[model] ?? { in: 5, out: 25 };
     const usage = { inputTokens: 0, outputTokens: 0, usd: 0 };
 
@@ -93,16 +120,33 @@ export class ClaudeProvider implements LlmProvider {
             ]
           : []),
       ];
-      const params: Anthropic.MessageCreateParamsNonStreaming = {
+      const params: Anthropic.MessageCreateParamsStreaming = {
         model,
         max_tokens: req.maxTokens ?? 16000,
         system: req.system,
         messages,
+        stream: true,
         output_config: {
+          // Effort rides alongside the schema in the same block. Left unset it
+          // defaults to "high" — which is what made thinking 89-98% of billed
+          // output on real projects. Lowering it is preferred over disabling
+          // thinking outright: on this model family a disabled-thinking request
+          // can write a tool call into visible text or leak reasoning tags.
+          ...(req.effort ? { effort: req.effort } : {}),
           format: { type: "json_schema", schema: jsonSchema as Record<string, unknown> },
         },
       };
-      const response = await this.client.messages.create(params, { signal: req.signal });
+      // STREAMING IS NOT OPTIONAL HERE. The SDK refuses a non-streaming request
+      // whose max_tokens could outrun the HTTP timeout, and the architect emits
+      // a whole graph — it asks for 32000 and got a hard error. Streaming also
+      // finally gives `onDelta` something to deliver: the field has been on
+      // LlmRequest since the beginning with no adapter behind it, which is why
+      // planning showed a dead spinner for the entire call.
+      const stream = this.client.messages.stream(params, { signal: req.signal });
+      if (req.onDelta) {
+        stream.on("text", (delta) => req.onDelta!(delta));
+      }
+      const response = await stream.finalMessage();
       if (response.stop_reason === "refusal") {
         throw new Error(`model refused request "${req.label}"`);
       }

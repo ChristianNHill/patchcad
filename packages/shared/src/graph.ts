@@ -59,6 +59,29 @@ export const ParamDecl = z.discriminatedUnion("type", [
 ]);
 export type ParamDecl = z.infer<typeof ParamDecl>;
 
+/**
+ * ParamDecl without `ui`. Spelled out per variant rather than derived, because
+ * mapping over a discriminated union's options loses the per-option type that
+ * `.omit` and `z.discriminatedUnion` both need — KEEP THIS IN STEP WITH THE
+ * UNION ABOVE when adding a param type.
+ *
+ * This exists for the architect. Structured outputs caps a schema at 24
+ * optional parameters, and because `ui` sits in `paramCommon` it was inlined
+ * once per variant — `ui`, `ui.group` and `ui.unit` across five variants was 15
+ * of the whole-graph schema's 31 optionals, on its own over half the budget.
+ * Dropping it there is also just correct: `ui` is presentation, which is why it
+ * is stripped from contractHash, and a planner has no business choosing an
+ * inspector grouping. The studio and T2 contract edits still set it.
+ */
+export const ParamDeclNoUi = z.discriminatedUnion("type", [
+  ParamDecl.options[0].omit({ ui: true }),
+  ParamDecl.options[1].omit({ ui: true }),
+  ParamDecl.options[2].omit({ ui: true }),
+  ParamDecl.options[3].omit({ ui: true }),
+  ParamDecl.options[4].omit({ ui: true }),
+]);
+export type ParamDeclNoUi = z.infer<typeof ParamDeclNoUi>;
+
 export const ParamValue = z.union([z.number(), z.string(), z.boolean()]);
 export type ParamValue = z.infer<typeof ParamValue>;
 
