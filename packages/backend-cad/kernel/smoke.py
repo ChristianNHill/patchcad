@@ -29,7 +29,11 @@ def build(p):
 failures: list[str] = []
 
 
-CLASH_DEPTH_FLOOR = 0.02  # mirrors gates.CLASH_MIN_DEPTH_MM
+# Imported, not mirrored. A test carrying its own copy of the constant under
+# test drifts silently, and the reason for the copy ("importing gates drags OCP
+# into the test process") was false: gates imports ast, math and typing only,
+# and build123d is lazy inside its __main__ block. Measured at 34ms, no OCP.
+from patchcad_kernel.gates import CLASH_MIN_DEPTH_MM as CLASH_DEPTH_FLOOR
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
@@ -47,8 +51,14 @@ def structural() -> None:
                           cwd=pathlib.Path(__file__).parent,
                           capture_output=True, text=True)
     ok = proc.returncode == 0
-    check("kernel source has no duplicate or unbound names", ok,
-          "" if ok else proc.stdout.strip().splitlines()[-1])
+    # stdout is EMPTY exactly when check_module cannot start (SyntaxError,
+    # import error, bad interpreter): the traceback goes to stderr. Indexing
+    # [-1] blind crashed the guard-for-the-guard with a trace naming this file.
+    # `or ["no output"]` would be unreachable: [""] is truthy, so the middle arm
+    # always yields one element. The default belongs inside it.
+    detail = (proc.stdout.strip().splitlines()
+              or [proc.stderr.strip() or "no output"])[-1]
+    check("kernel source has no duplicate or unbound names", ok, "" if ok else detail)
 
 
 def main() -> None:
