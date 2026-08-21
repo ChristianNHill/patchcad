@@ -294,6 +294,7 @@ const HOLE_PORT_TYPES = new Set(["CLEARANCE_HOLE", "SCREW_SEAT", "BORE", "HOLE_P
 const DIAMETER_KEYS = ["diameter", "dia", "holeDia", "hole_diameter", "d", "boreDia"];
 const FACE_SIZE_KEYS = ["size", "faceSize", "face_size", "width", "flatWidth", "flat_width"];
 const CHANNEL_PORT_TYPES = new Set(["GROOVE", "SLOT"]);
+const OUTER_DIAMETER_KEYS = ["outer_diameter", "outerDiameter", "od", "boss_diameter", "bossDiameter", "diameter"];
 const CHANNEL_WIDTH_KEYS = ["width", "slotWidth", "slot_width", "grooveWidth", "groove_width", "channelWidth"];
 
 export const cadFlatFaceSizeLint = {
@@ -314,6 +315,18 @@ export const cadFlatFaceSizeLint = {
           if (!keys.some((k) => DIAMETER_KEYS.includes(k))) {
             problems.push(
               `${n.id}: ${p.type} port "${p.name}" declares no diameter (params: ${JSON.stringify(keys)}). Add params.diameter in mm — probes measure the hole against it.`,
+            );
+          }
+        } else if (p.type === "SCREW_BOSS") {
+          // The last probed type with no branch here, found by auditing the
+          // probed set against this lint rather than by anything failing. Worse
+          // than the SHAFT gap was: _probe_boss indexed params["outer_diameter"]
+          // raw, so a missing key raised KeyError and reached the model as a
+          // stage-G1 surprise instead of a repairable G3. The probe reads through
+          // the alias helper now, and this stops it at plan time.
+          if (!keys.some((k) => OUTER_DIAMETER_KEYS.includes(k))) {
+            problems.push(
+              `${n.id}: SCREW_BOSS port "${p.name}" declares no outer diameter (params: ${JSON.stringify(keys)}). Add params.outer_diameter in mm — the boss wall diameter the probe measures.`,
             );
           }
         } else if (p.type === "SHAFT") {

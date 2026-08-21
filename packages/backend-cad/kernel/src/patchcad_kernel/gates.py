@@ -445,9 +445,17 @@ def _probe_flat_face(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
 
 
 def _probe_boss(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
-    params = port["params"]
-    od = float(params["outer_diameter"])
-    pilot = float(params.get("pilot_diameter", 0))
+    # ALIAS-TOLERANT, and not a raw index. `params["outer_diameter"]` raised
+    # KeyError on a missing key, which surfaced as an unexpected failure under
+    # stage G1 instead of a repairable G3, so the model was told nothing it
+    # could act on. _port_dim's own docstring recorded this defect by name and
+    # pointed at this line; it went unfixed until an audit of which probed types
+    # the plan-time lints cover turned SCREW_BOSS up as the last one missing.
+    od = _port_dim(
+        port, OUTER_D_KEYS, "outer diameter",
+        "declare params.outer_diameter in mm — the boss wall diameter the probe measures",
+    )
+    pilot = _port_dim_opt(port, PILOT_D_KEYS) or 0.0
     frame = _frame(port["pose"])
     o, x, y, z = frame
     w = -PROBE_DEPTH_MM
@@ -475,6 +483,8 @@ def _probe_boss(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+OUTER_D_KEYS = ("outer_diameter", "outerDiameter", "od", "boss_diameter", "bossDiameter", "diameter")
+PILOT_D_KEYS = ("pilot_diameter", "pilotDiameter", "pilot", "pilot_hole_diameter")
 LENGTH_TOL_MM = 0.5  # a peg is a slip fit; half a millimetre short still seats
 DIAMETER_KEYS = ("diameter", "dia", "shaftDiameter", "shaft_diameter", "pegDiameter", "peg_diameter")
 LENGTH_KEYS = ("length", "len", "shaftLength", "shaft_length", "pegLength", "peg_length")
@@ -495,8 +505,8 @@ def _probe_shaft(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     hole probe tolerates one at a mouth.
     """
     key = port.get("key", "?")
-    d = _port_dim(port, DIAMETER_KEYS, f'port "{key}" (SHAFT): no diameter declared',
-                  "declare params.diameter for a SHAFT port")
+    d = _port_dim(port, DIAMETER_KEYS, "diameter",
+                  "declare params.diameter in mm — the peg diameter at its base")
     declared_len = _port_dim_opt(port, LENGTH_KEYS)
     frame = _frame(port["pose"])
     o, x, y, z = frame
@@ -604,8 +614,11 @@ DEPTH_KEYS = ("depth", "slotDepth", "slot_depth", "grooveDepth", "groove_depth")
 
 def _port_dim(port: dict[str, Any], keys: tuple[str, ...], label: str, hint: str) -> float:
     """Alias-tolerant numeric param, following _port_diameter. Deliberately NOT
-    raw params["x"]: _probe_boss does that for outer_diameter and a missing key
-    surfaces as an unexpected KeyError under stage G1 instead of a repairable G3."""
+    raw params["x"]: _probe_boss used to index outer_diameter that way and a
+    missing key surfaced as an unexpected KeyError under stage G1 instead of a
+    repairable G3, so the model was told nothing it could act on. This docstring
+    named that defect and pointed at the line for two commits before anyone
+    fixed it. Every probe reads its dimensions through here now."""
     params = port.get("params", {})
     for k in keys:
         v = params.get(k)
@@ -1122,7 +1135,7 @@ if __name__ == "__main__":  # pragma: no cover
     expect("no diameter at all fails with a repairable hint",
            lambda: _probe_shaft(pegged, {"key": "p", "type": "SHAFT", "pose": peg_pose,
                                          "params": {"length": 12}}),
-           "no diameter declared")
+           "declares no numeric diameter")
     # A SHAFT pose pointing INTO the solid has no peg out front. Without this the
     # probe would read the box itself as an enormous peg.
     # The four defects review found, each proven by the case that failed it.
@@ -1157,6 +1170,28 @@ if __name__ == "__main__":  # pragma: no cover
                                          "pose": {"origin": [0, 0, -3], "zAxis": [0, 0, -1], "xAxis": [1, 0, 0]},
                                          "params": {"diameter": 5.0, "length": 12}}),
            "there is no peg")
+
+    print("SCREW_BOSS — dimensions read through the alias helper, not a raw index")
+    # Boss standing on a plate: plate z -3..3, boss spans 3..15, so the mating
+    # face is its top at z=15 with +z pointing out of it.
+    bossed = Box(30, 30, 6) + Pos(0, 0, 9) * Cylinder(5, 12) - Pos(0, 0, 9) * Cylinder(1.5, 14)
+    boss_pose = pose((0, 0, 15))
+    expect("canonical keys measure the pilot",
+           lambda: _probe_boss(bossed, {"key": "b", "type": "SCREW_BOSS", "pose": boss_pose,
+                                        "params": {"outer_diameter": 10.0, "pilot_diameter": 3.0}}))
+    expect("aliases are read too",
+           lambda: _probe_boss(bossed, {"key": "b", "type": "SCREW_BOSS", "pose": boss_pose,
+                                        "params": {"od": 10.0, "pilot": 3.0}}))
+    # The defect this replaced: a raw index raised KeyError, which reached the
+    # model as a stage-G1 surprise rather than something it could repair.
+    expect("a missing outer diameter is a repairable G3, not a KeyError",
+           lambda: _probe_boss(bossed, {"key": "b", "type": "SCREW_BOSS", "pose": boss_pose,
+                                        "params": {"pilot_diameter": 3.0}}),
+           "declares no numeric outer diameter")
+    expect("a wrong pilot is still caught",
+           lambda: _probe_boss(bossed, {"key": "b", "type": "SCREW_BOSS", "pose": boss_pose,
+                                        "params": {"outer_diameter": 10.0, "pilot_diameter": 6.0}}),
+           "expected pilot Ø6")
 
     print("_march — the shared directional primitive")
     frame = _frame(pose((0, 0, 5)))

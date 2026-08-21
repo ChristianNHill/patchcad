@@ -249,6 +249,35 @@ describe("cadProbedPortsLint", () => {
 });
 
 describe("cadFlatFaceSizeLint · SHAFT", () => {
+  it("demands an outer diameter on SCREW_BOSS, the last probed type with no branch", () => {
+    const bare = graph([envNode("p", [cyl(0, 20, 10)], [{ name: "b", type: "SCREW_BOSS", params: {} }])], []);
+    const out = cadFlatFaceSizeLint.run(bare);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toContain("SCREW_BOSS");
+    expect(out[0]).toContain("no outer diameter");
+    for (const key of ["outer_diameter", "od", "bossDiameter"]) {
+      const ok = graph([envNode("p", [cyl(0, 20, 10)], [{ name: "b", type: "SCREW_BOSS", params: { [key]: 10 } }])], []);
+      expect(cadFlatFaceSizeLint.run(ok), key).toEqual([]);
+    }
+  });
+
+  // Guard against the next probed type arriving with no branch. This lint's
+  // whole job is to catch a missing dimension before the kernel does, and two
+  // types (SHAFT, SCREW_BOSS) reached production without one.
+  it("has a branch for every probed port type", () => {
+    const needsDim: Record<string, Record<string, number>> = {
+      CLEARANCE_HOLE: { diameter: 5 }, BORE: { diameter: 5 }, SCREW_SEAT: { diameter: 5 },
+      SCREW_BOSS: { outer_diameter: 10 }, SHAFT: { diameter: 5 },
+      GROOVE: { width: 3 }, SLOT: { width: 3 }, FLAT_FACE: { size: 20 },
+    };
+    for (const [type, params] of Object.entries(needsDim)) {
+      const bare = graph([envNode("p", [cyl(0, 20, 10)], [{ name: "x", type, params: {} }])], []);
+      expect(cadFlatFaceSizeLint.run(bare), `${type} with no params must be flagged`).toHaveLength(1);
+      const ok = graph([envNode("p", [cyl(0, 20, 10)], [{ name: "x", type, params }])], []);
+      expect(cadFlatFaceSizeLint.run(ok), `${type} with params must pass`).toEqual([]);
+    }
+  });
+
   it("demands a diameter on SHAFT, which the import path emits unlinted", () => {
     const bare = graph([envNode("p", [cyl(0, 20, 10)], [{ name: "peg", type: "SHAFT", params: {} }])], []);
     const out = cadFlatFaceSizeLint.run(bare);
