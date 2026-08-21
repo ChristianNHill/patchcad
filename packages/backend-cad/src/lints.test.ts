@@ -7,6 +7,7 @@ import {
   cadFlatFaceSizeLint,
   cadProbedPortsLint,
   cadFaceHoleConflictLint,
+  cadPortConsistencyLint,
   OUTER_DIAMETER_KEYS,
 } from "./index.js";
 
@@ -340,6 +341,33 @@ describe("alias lists agree with the kernel", () => {
   });
 });
 
+describe("cadPortConsistencyLint · edges to hardware", () => {
+  // The architect emitted plate-a.screw_hole -> screw-m4.hole and
+  // plate-b.nut_hole -> nut-m4.hole. Registry hardware declares no ports, so
+  // both named something that cannot exist, and the edge check skipped them for
+  // being hardware. The cook finished and the assembly reported "missing port".
+  it("rejects an edge naming a port on registry hardware", () => {
+    const g = graph(
+      [node("plate-a", "part", [{ name: "screw_hole", type: "CLEARANCE_HOLE" }]),
+       node("screw-m4", "fastener", [])],
+      [{ from: "plate-a", fromPort: "screw_hole", to: "screw-m4", toPort: "hole" }],
+    );
+    const out = cadPortConsistencyLint.run(g);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toContain("declares no ports");
+    expect(out[0]).toContain("will not solve");
+  });
+
+  it("still allows an edge between two real parts", () => {
+    const g = graph(
+      [node("a", "part", [{ name: "face", type: "FLAT_FACE" }]),
+       node("b", "part", [{ name: "face", type: "FLAT_FACE" }])],
+      [{ from: "a", fromPort: "face", to: "b", toPort: "face" }],
+    );
+    expect(cadPortConsistencyLint.run(g)).toEqual([]);
+  });
+});
+
 describe("cadFaceHoleConflictLint", () => {
   const at = (name: string, type: string, origin: (number | string)[], zAxis = [0, 0, 1]) => ({
     name, type, pose: { origin, zAxis, xAxis: [1, 0, 0] }, params: {},
@@ -370,6 +398,43 @@ describe("cadFaceHoleConflictLint", () => {
     expect(out[0]).toContain("top_face");
   });
 
+  // THE CONTRACT THAT COST $1.03, copied from the run that failed on it: a
+  // through-hole on one face and the mating face on the other, coaxial.
+  it("rejects the real two-plate contract: a clearance hole coaxial with a face", () => {
+    const g = graph([posed("plate-a", "part", [
+      at("screw_hole", "CLEARANCE_HOLE", [0, 0, "param(plate-a.thickness) / 2"]),
+      at("mating_face", "FLAT_FACE", [0, 0, "0 - param(plate-a.thickness) / 2"], [0, 0, -1]),
+    ])], []);
+    const out = cadFaceHoleConflictLint.run(g);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toContain("coaxial");
+    expect(out[0]).toContain("screw_hole");
+  });
+
+  it("exempts a BLIND bore, which stops before the far face", () => {
+    const g = graph([posed("p", "part", [
+      at("seat", "BORE", [0, 0, 2]),
+      at("mating_face", "FLAT_FACE", [0, 0, -2], [0, 0, -1]),
+    ])], []);
+    expect(cadFaceHoleConflictLint.run(g)).toEqual([]);
+  });
+
+  it("allows a clearance hole OFF the face axis", () => {
+    const g = graph([posed("p", "part", [
+      at("bolt", "CLEARANCE_HOLE", [20, 0, 2]),
+      at("mating_face", "FLAT_FACE", [0, 0, -2], [0, 0, -1]),
+    ])], []);
+    expect(cadFaceHoleConflictLint.run(g)).toEqual([]);
+  });
+
+  it("allows a clearance hole PERPENDICULAR to the face", () => {
+    const g = graph([posed("p", "part", [
+      at("side_hole", "CLEARANCE_HOLE", [0, 0, 0], [1, 0, 0]),
+      at("top", "FLAT_FACE", [0, 0, 5]),
+    ])], []);
+    expect(cadFaceHoleConflictLint.run(g)).toEqual([]);
+  });
+
   it("allows a face with an OFFSET hole, which is an ordinary plate", () => {
     const g = graph([posed("p", "part", [
       at("top_face", "FLAT_FACE", [0, 0, 2.5]),
@@ -378,10 +443,24 @@ describe("cadFaceHoleConflictLint", () => {
     expect(cadFaceHoleConflictLint.run(g)).toEqual([]);
   });
 
-  it("allows a face and a hole on OPPOSITE faces", () => {
+  // This case previously asserted "allowed", and that expectation was wrong. A
+  // bore drilling from the exact point a face occupies removes the material the
+  // face probe samples just below itself, whichever way the bore points. Facing
+  // the other direction does not put the material back.
+  it("rejects a hole drilled from the very point a face occupies", () => {
     const g = graph([posed("p", "part", [
       at("top_face", "FLAT_FACE", [0, 0, 2.5]),
       at("b", "BORE", [0, 0, 2.5], [0, 0, -1]),
+    ])], []);
+    const out = cadFaceHoleConflictLint.run(g);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toContain("share an origin");
+  });
+
+  it("allows a face and a BLIND bore on genuinely opposite faces", () => {
+    const g = graph([posed("p", "part", [
+      at("top_face", "FLAT_FACE", [0, 0, 2.5]),
+      at("b", "BORE", [0, 0, -2.5], [0, 0, -1]),
     ])], []);
     expect(cadFaceHoleConflictLint.run(g)).toEqual([]);
   });

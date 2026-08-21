@@ -132,7 +132,20 @@ export const cadPortConsistencyLint = {
       if (from && !REGISTRY_HARDWARE.has(from.kind) && !payloadNames.get(e.from)?.has(e.fromPort)) {
         problems.push(`edge ${e.from}.${e.fromPort} → ${e.to}: "${e.fromPort}" is not a payload port name of ${e.from}`);
       }
-      if (to && !REGISTRY_HARDWARE.has(to.kind) && !payloadNames.get(e.to)?.has(e.toPort)) {
+      // Registry hardware is exempt from the contract-vs-payload check above,
+      // because it declares no geometric ports. An EDGE naming one is a
+      // different matter: it names something that cannot exist, and the skip
+      // here let two of them through a whole cook. The assembly then reported
+      // "mate plate-a.screw_hole → screw-m4.hole: missing port" and left the
+      // screw at the origin, which is the CAD-M4 fastener-mate gap arriving as
+      // a solver complaint instead of a plan-time repair.
+      if (to && REGISTRY_HARDWARE.has(to.kind) && (payloadNames.get(e.to)?.size ?? 0) === 0) {
+        problems.push(
+          `edge ${e.from}.${e.fromPort} → ${e.to}.${e.toPort}: ${e.to} is registry hardware and declares no ports, ` +
+            `so "${e.toPort}" cannot exist and the mate will not solve. Drop the edge: a fastener is placed by its ` +
+            `own seat geometry, not by a mate to a port it does not have.`,
+        );
+      } else if (to && !REGISTRY_HARDWARE.has(to.kind) && !payloadNames.get(e.to)?.has(e.toPort)) {
         problems.push(`edge ${e.from} → ${e.to}.${e.toPort}: "${e.toPort}" is not a payload port name of ${e.to}`);
       }
     }
@@ -421,19 +434,42 @@ export const cadFaceHoleConflictLint = {
       const holes = ports.filter((p) => HOLE_LIKE.has(p.type));
       for (const f of faces) {
         for (const h of holes) {
-          // Only a SHARED origin is a certain conflict. A hole elsewhere under
-          // the same face may or may not fall inside the probed disc, and this
-          // lint must not fire on a plate with a face and an offset hole, which
-          // is an ordinary and satisfiable part.
-          const same =
-            ["0", "1", "2"].every(
-              (i) => String(f.pose.origin[Number(i)]) === String(h.pose.origin[Number(i)]),
-            ) && String(f.pose.zAxis) === String(h.pose.zAxis);
-          if (same)
+          // A shared origin is one case. The other, which cost $1.03 and ten
+          // generator calls to learn, is a CLEARANCE_HOLE COAXIAL with a face at
+          // any axial distance: a clearance hole must pass through, so it pierces
+          // every face its axis crosses, not only the one it shares an origin
+          // with. plate-a declared screw_hole at +t/2 and mating_face at -t/2 and
+          // died contract-infeasible after five calls on "no material just below
+          // the declared face".
+          //
+          // Coaxial is decided on the LATERAL components only, so no size or
+          // expression resolution is needed: if the hole's axis passes through
+          // the face's centre, the face probe's centre sample is void whatever
+          // the declared size. A blind BORE or SCREW_SEAT is exempt because it
+          // stops, which is why this widening is safe for a plan blocker.
+          const parallel = ["0", "1", "2"].every(
+            (i) => Math.abs(Number(f.pose.zAxis[Number(i)] ?? 0)) === Math.abs(Number(h.pose.zAxis[Number(i)] ?? 0)),
+          );
+          const axis = [0, 1, 2].findIndex((i) => Math.abs(Number(h.pose.zAxis[i] ?? 0)) > 0.5);
+          const lateralSame =
+            axis >= 0 &&
+            [0, 1, 2].every(
+              (i) => i === axis || String(f.pose.origin[i]) === String(h.pose.origin[i]),
+            );
+          const sameOrigin = ["0", "1", "2"].every(
+            (i) => String(f.pose.origin[Number(i)]) === String(h.pose.origin[Number(i)]),
+          );
+          const coaxialThrough = h.type === "CLEARANCE_HOLE" && parallel && lateralSame;
+          if (sameOrigin || coaxialThrough)
             problems.push(
-              `${n.id}: port "${f.name}" (FLAT_FACE) and port "${h.name}" (${h.type}) share an origin, ` +
-                `so no geometry satisfies both: the face probe requires material at that point and the ` +
-                `hole removes it. Offset the face, shrink its size below the hole, or drop one of them.`,
+              sameOrigin
+                ? `${n.id}: port "${f.name}" (FLAT_FACE) and port "${h.name}" (${h.type}) share an origin, ` +
+                    `so no geometry satisfies both: the face probe requires material at that point and the ` +
+                    `hole removes it. Offset the face, shrink its size below the hole, or drop one of them.`
+                : `${n.id}: port "${h.name}" (CLEARANCE_HOLE) is coaxial with port "${f.name}" (FLAT_FACE), ` +
+                    `so no geometry satisfies both: a clearance hole passes through, which pierces that face ` +
+                    `at its centre where the probe samples. Move the face off the hole axis, or declare the ` +
+                    `hole a BORE or SCREW_SEAT if it is meant to stop before that face.`,
             );
         }
       }
