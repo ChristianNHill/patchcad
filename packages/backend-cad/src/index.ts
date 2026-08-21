@@ -713,6 +713,7 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     // was still converging on to the architect as unbuildable.
     const persistent = Math.max(2, Math.ceil((evidence.attempts * 2) / 3));
     const stages = evidence.failures.map((f) => f.stage);
+
     // A persistent envelope escape means the box the architect drew is too
     // small for the features it demanded — only the architect can fix that.
     if (stages.filter((s) => s === "G4").length >= persistent) return "contract-infeasible";

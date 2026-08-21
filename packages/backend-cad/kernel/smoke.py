@@ -526,6 +526,76 @@ def build(p):
           r17d["ok"] and r17d["clash"]["pairs_tested"] == 0 and r17d.get("hash") is None,
           str(r17d.get("clash")))
 
+    # 18. Hole depth. The diameter was measured at one plane 0.6mm down, so a
+    # Ø8 dimple 0.75mm deep reported "measured_diameter: 8.0" and passed as a
+    # clearance hole a screw was meant to go through.
+    dimple_code = (
+        "from build123d import *\n"
+        "def build(p):\n"
+        "    _ = p['nonce']\n"
+        "    with BuildPart() as bp:\n"
+        "        Box(40, 40, 10)\n"
+        "        with Locations((0, 0, 5 - p['d'] / 2)):\n"
+        "            Cylinder(4, p['d'], mode=Mode.SUBTRACT)\n"
+        "    return bp.part\n"
+    )
+    top_face = {"origin": [0, 0, 5], "zAxis": [0, 0, 1], "xAxis": [1, 0, 0]}
+
+    def hole(depth, params=None):
+        port = {"key": "bolt", "type": "CLEARANCE_HOLE", "pose": top_face,
+                "params": {"diameter": 8.0, **(params or {})}}
+        return client.post("/execute", json={
+            "code": dimple_code, "params": {"d": depth, "nonce": int(time.time())}, "ports": [port],
+        })
+
+    r18 = hole(0.75)
+    check("G3 catches a pocket declared as a clearance hole",
+          r18.status_code == 422 and "instead of passing through" in r18.json().get("error", ""),
+          r18.json().get("error", ""))
+    r18b = hole(14.0)
+    ports18b = (r18b.json().get("measurements", {}).get("ports") or [{}])[0]
+    check("G3 passes a through hole and says it is through",
+          r18b.status_code == 200 and ports18b.get("through") is True,
+          str(ports18b))
+    # A SEAT IS LEGITIMATELY SHALLOW. A washer face, a head recess and a shallow
+    # counterbore are all correct well under a millimetre, so a depth floor here
+    # rejects real parts to catch nothing. Every BORE on disk is a blind seat.
+    def seat(depth, ptype):
+        port = {"key": "seat", "type": ptype, "pose": top_face, "params": {"diameter": 8.0}}
+        return client.post("/execute", json={
+            "code": dimple_code, "params": {"d": depth, "nonce": int(time.time())}, "ports": [port],
+        })
+
+    for ptype in ("BORE", "SCREW_SEAT"):
+        r = seat(0.8, ptype)
+        m = (r.json().get("measurements", {}).get("ports") or [{}])[0]
+        check(f"G3 accepts a 0.8mm {ptype} and measures its depth",
+              r.status_code == 200 and abs((m.get("measured_depth") or 0) - 0.8) < 0.05,
+              str(m) if r.status_code == 200 else r.json().get("error", ""))
+
+    # _march_depth follows the axis to the DEEPEST floor in a coaxial stack, so a
+    # counterbore over a pilot measures the pilot. Reported, never enforced: a
+    # counterbore's own floor is an annulus and never lies on the axis, so
+    # comparing a declared depth against this would be unsatisfiable.
+    stepped = (
+        "from build123d import *\n"
+        "def build(p):\n"
+        "    _ = p['nonce']\n"
+        "    with BuildPart() as bp:\n"
+        "        Box(40, 40, 10)\n"
+        "        with Locations((0, 0, 5 - 1.5)):\n"
+        "            Cylinder(5, 3, mode=Mode.SUBTRACT)\n"
+        "        with Locations((0, 0, 5 - 4)):\n"
+        "            Cylinder(2.5, 8, mode=Mode.SUBTRACT)\n"
+        "    return bp.part\n"
+    )
+    r18e = client.post("/execute", json={
+        "code": stepped, "params": {"nonce": int(time.time())},
+        "ports": [{"key": "cb", "type": "BORE", "pose": top_face, "params": {"diameter": 10.0}}],
+    })
+    check("G3 accepts a stepped hole rather than failing it unsatisfiably",
+          r18e.status_code == 200, r18e.json().get("error", ""))
+
     print()
     if failures:
         print(f"{len(failures)} FAILURE(S): {failures}")

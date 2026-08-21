@@ -312,7 +312,45 @@ def _probe_hole(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     if abs(measured - d) > DIAMETER_TOL_MM:
         raise GateError("G3", f'port "{port["key"]}" ({port["type"]}): expected Ø{d:g}, measured Ø{measured:.2f}',
                         f"change the hole feature to Ø{d:g} as pinned in the contract")
-    return {"key": port["key"], "type": port["type"], "measured_diameter": round(measured, 3)}
+
+    result = {"key": port["key"], "type": port["type"], "measured_diameter": round(measured, 3)}
+
+    # DEPTH, because a diameter at one plane does not make a hole. The probe
+    # sampled a single slice 0.6mm down and compared its width, so a Ø8 dimple
+    # 0.75mm deep reported "measured_diameter: 8.0" and passed as a clearance
+    # hole a screw was supposed to go through.
+    bbox = shape.bounding_box()
+    reach = max(float(bbox.size.X), float(bbox.size.Y), float(bbox.size.Z)) + 2.0
+    floor = _march_depth(shape, frame, reach)
+    result["through"] = floor is None
+    if floor is not None:
+        result["measured_depth"] = round(floor, 3)
+
+    # A CLEARANCE HOLE EXISTS FOR SOMETHING TO PASS THROUGH IT. That is the whole
+    # defect this measurement was added for: a Ø8 pocket 0.75mm deep reported
+    # measured_diameter 8.0 and passed as a clearance hole a screw was meant to
+    # go through. Asserting `through` says the actual thing, where a minimum
+    # depth only guessed at it.
+    #
+    # BORE and SCREW_SEAT are deliberately exempt. A seat IS shallow: a washer
+    # face, a head recess and a shallow counterbore are all correct at well under
+    # a millimetre, and a depth floor there rejects real parts to catch nothing.
+    # Every BORE on disk is a blind seat, including the jointed-import sockets,
+    # which resolve deterministically and have no repair path at all, so a false
+    # fail on one is an unrecoverable error_code.
+    #
+    # A DECLARED depth is not enforced, on purpose. No hole port in any project
+    # declares one, so the comparison would be dead code, and on a stepped hole
+    # it is unsatisfiable: _march_depth follows the axis to the DEEPEST floor in
+    # a coaxial stack, so a counterbore over a pilot measures the pilot. A
+    # counterbore's own floor is an annulus and never lies on the axis. The
+    # FLAT_FACE grid already taught what an unsatisfiable check costs. Both
+    # numbers are still measured and reported, which is the part with value.
+    if port["type"] == "CLEARANCE_HOLE" and floor is not None:
+        raise GateError("G3", f'port "{port["key"]}" (CLEARANCE_HOLE): bottoms out at {floor:.2f}mm instead of passing through',
+                        "cut it through the part, or declare it as a BORE or SCREW_SEAT if it is meant to be a blind seat")
+
+    return result
 
 
 def _port_face_size(port: dict[str, Any]) -> float:
@@ -602,81 +640,8 @@ WIDTH_KEYS = ("width", "slotWidth", "slot_width", "grooveWidth", "groove_width",
 DEPTH_KEYS = ("depth", "slotDepth", "slot_depth", "grooveDepth", "groove_depth")
 
 
-def _port_dim(port: dict[str, Any], keys: tuple[str, ...], label: str, hint: str) -> float:
-    """Alias-tolerant numeric param, following _port_diameter. Deliberately NOT
-    raw params["x"]: _probe_boss does that for outer_diameter and a missing key
-    surfaces as an unexpected KeyError under stage G1 instead of a repairable G3."""
-    params = port.get("params", {})
-    for k in keys:
-        v = params.get(k)
-        if isinstance(v, (int, float)):
-            return float(v)
-        if isinstance(v, str):
-            try:
-                return float(v)
-            except ValueError:
-                break
-    raise GateError(
-        "G3",
-        f'port "{port.get("key", "?")}" ({port.get("type", "?")}) declares no numeric {label} (params: {sorted(params)})',
-        hint,
-    )
 
 
-def _port_dim_opt(port: dict[str, Any], keys: tuple[str, ...]) -> float | None:
-    """Alias-tolerant optional numeric param. DEPTH_KEYS existed but nothing read
-    it — the probe indexed params["depth"] directly, so a model writing slotDepth
-    got its floor check silently skipped, which is the unverified-port outcome
-    this probe exists to close. A declared 99mm floor on a 10mm plate passed."""
-    params = port.get("params", {})
-    for k in keys:
-        v = params.get(k)
-        if isinstance(v, (int, float)):
-            return float(v)
-        if isinstance(v, str):
-            try:
-                return float(v)
-            except ValueError:
-                return None
-    return None
-
-
-def _march_depth(shape: Any, frame, max_d: float) -> float | None:
-    """Distance straight down -z from the port origin to the floor, or None if
-    the cut passes through. Same march-then-bisect as _march, along the axis
-    rather than in-plane."""
-    o, x, y, z = frame
-    step = 0.25
-    lo, crossing, d = 0.0, None, step
-    while d <= max_d:
-        if _in_material(shape, _at(o, x, y, z, 0.0, 0.0, -d)):
-            crossing = d
-            break
-        lo = d
-        d += step
-    if crossing is None:
-        return None
-    hi = crossing
-    for _ in range(12):
-        mid = (lo + hi) / 2
-        if _in_material(shape, _at(o, x, y, z, 0.0, 0.0, -mid)):
-            hi = mid
-        else:
-            lo = mid
-    return (lo + hi) / 2
-
-
-# ---------------------------------------------------------------------------
-# G5 — clash. Every gate before this one grades ONE part against its own
-# contract, so none of them can see the failure that only exists between two
-# parts: they interpenetrate. A collar can satisfy every probe and every
-# envelope and still sit 1.5mm inside the base it is supposed to rest on, with
-# the assembly reporting clean, because nothing ever looked at two parts at
-# once.
-#
-# Assembly-level, so it reports through globalCheck rather than failing a node's
-# verify — no single node is at fault, and failing one arbitrarily would send a
-# generator to fix code that is correct.
 
 CLASH_MIN_DEPTH_MM = 0.02
 """MEAN PENETRATION DEPTH, 2V/A — not a volume. A volume threshold is a

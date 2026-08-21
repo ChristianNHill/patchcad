@@ -48,6 +48,8 @@ export interface PortMeasurement {
   ring_hits?: number;
   /** SCREW_BOSS with a declared pilot. */
   measured_pilot?: number;
+  /** Hole-like: does the hole pass through, or bottom out? */
+  through?: boolean;
   /** GROOVE / SLOT: the gap actually cut, measured across the channel. This is
    *  the number a mating tongue is cut to, so it is the one worth surfacing. */
   measured_width?: number;

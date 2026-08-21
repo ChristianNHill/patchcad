@@ -14,6 +14,7 @@ interface PortMeasurement {
   key: string;
   type: string;
   measured_diameter?: number;
+  through?: boolean;
   probed_size?: number;
   ring_diameter?: number;
   ring_hits?: number;
@@ -37,7 +38,11 @@ const mm = (v: number) => (Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(2).repl
 /** One line per port, in whatever terms that port type was actually probed in. */
 function portLine(p: PortMeasurement): string {
   if (p.skipped) return "no probe for this type yet";
-  if (p.measured_diameter !== undefined) return `Ø${mm(p.measured_diameter)} mm`;
+  if (p.measured_diameter !== undefined) {
+    const d = `Ø${mm(p.measured_diameter)} mm`;
+    if (p.through) return `${d} through`;
+    return p.measured_depth !== undefined ? `${d} × ${mm(p.measured_depth)} mm deep` : d;
+  }
   if (p.ring_diameter !== undefined) return `ring Ø${mm(p.ring_diameter)} mm`;
   if (p.probed_size !== undefined) {
     return p.probed_size > 0 ? `${mm(p.probed_size)} mm flat` : "flat (center probe)";

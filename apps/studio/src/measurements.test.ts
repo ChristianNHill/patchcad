@@ -87,3 +87,18 @@ describe("channel ports", () => {
     expect(html).not.toContain("deep");
   });
 });
+
+describe("hole depth", () => {
+  it("says whether a hole goes through or bottoms out", () => {
+    const html = render(
+      measured({
+        ports: [
+          { key: "bolt", type: "CLEARANCE_HOLE", measured_diameter: 4.5, through: true },
+          { key: "pocket", type: "BORE", measured_diameter: 8, measured_depth: 4 },
+        ],
+      }),
+    );
+    expect(html).toContain("Ø4.5 mm through");
+    expect(html).toContain("Ø8 mm × 4 mm deep");
+  });
+});
