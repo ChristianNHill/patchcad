@@ -136,6 +136,35 @@ export class KernelClient {
 
   /** Spawn `uv run patchcad-kernel` unless a kernel already answers, then
    * wait for the warm workers (first boot can pay the OCP import). */
+  /** In-flight or completed start, so concurrent callers wait on one spawn. */
+  private starting: Promise<void> | null = null;
+
+  /**
+   * Ensure the service is up, then do the work. Every request method goes
+   * through this, so no caller can reach a kernel that was never started.
+   *
+   * It used to be the caller's job, via a private ensureKernel on the backend,
+   * and five call sites did not do it: the sheet route, cad-scene, export and
+   * both import paths. On a fresh server those threw, and the viewport's empty
+   * `.catch(() => {})` turned the throw into a blank grid with no error. Putting
+   * the guard on the resource instead of in every caller makes that class of
+   * mistake unavailable.
+   */
+  private async ready(): Promise<void> {
+    if (!this.starting) {
+      // Memoized, and NOT cleared on success: four cook workers hitting a cold
+      // kernel each saw `kernelStarted === false` and each ran `uv run`, so
+      // three lost the port bind and then polled /health until the winner came
+      // up. Self-healing, and the exact "address already in use" footgun
+      // CLAUDE.md records.
+      this.starting = this.start().catch((err) => {
+        this.starting = null; // a failed start must be retryable
+        throw err;
+      });
+    }
+    return this.starting;
+  }
+
   async start(timeoutMs = 180_000): Promise<void> {
     if ((await this.health()).ok) return; // reuse an externally started kernel
 
@@ -162,6 +191,7 @@ export class KernelClient {
     params: Record<string, unknown>,
     contract?: { ports?: unknown[]; envelope?: unknown[]; importDir?: string },
   ): Promise<KernelResult> {
+    await this.ready();
     const res = await fetch(`${this.baseUrl}/execute`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -186,6 +216,7 @@ export class KernelClient {
     params: Record<string, unknown>,
     opts: { importDir?: string; views?: number } = {},
   ): Promise<RenderResult> {
+    await this.ready();
     const res = await fetch(`${this.baseUrl}/render`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -205,6 +236,7 @@ export class KernelClient {
     parts: { code: string; params: Record<string, unknown>; matrix: number[] }[],
     opts: { importDir?: string; views?: number } = {},
   ): Promise<RenderResult> {
+    await this.ready();
     const res = await fetch(`${this.baseUrl}/render-assembly`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -220,6 +252,7 @@ export class KernelClient {
     parts: { key: string; code: string; params: Record<string, unknown>; matrix: number[] }[],
     opts: { importDir?: string } = {},
   ): Promise<ClashResult> {
+    await this.ready();
     const res = await fetch(`${this.baseUrl}/clash`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -234,6 +267,7 @@ export class KernelClient {
     format: string,
     opts: { importDir?: string } = {},
   ): Promise<ExportResult> {
+    await this.ready();
     const res = await fetch(`${this.baseUrl}/export`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -264,6 +298,7 @@ export class KernelClient {
       }
     | { ok: false; stage: string; error: string; hint: string }
   > {
+    await this.ready();
     const res = await fetch(`${this.baseUrl}/import`, {
       method: "POST",
       headers: { "content-type": "application/json" },

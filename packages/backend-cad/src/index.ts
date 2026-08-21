@@ -444,18 +444,10 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
    *  long think returns no part at all. */
   readonly generation = { effort: "medium", maxTokens: 24000 } as const;
 
-  private kernelStarted = false;
 
   constructor(opts: { kernel?: KernelClient; maxAttempts?: number } = {}) {
     this.kernel = opts.kernel ?? new KernelClient();
     this.maxAttempts = opts.maxAttempts ?? 5;
-  }
-
-  private async ensureKernel(): Promise<void> {
-    if (!this.kernelStarted) {
-      await this.kernel.start();
-      this.kernelStarted = true;
-    }
   }
 
   planning = {
@@ -616,7 +608,6 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
   async renderArtifact(node: NodeRecord, ws: Workspace): Promise<LlmImage | null> {
     const code = node.artifact?.code;
     if (!code) return null;
-    await this.ensureKernel();
     const result = await this.kernel.render(code, mergedParams(node), {
       importDir: this.importDir(ws),
       views: 4, // iso/front/right/top: enough to judge shape, half the tokens of six
@@ -638,7 +629,6 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       .map((n) => ({ code: n.artifact!.code, params: mergedParams(n), matrix: world[n.id]! }));
     if (parts.length < 2) return null; // one part is not an assembly
 
-    await this.ensureKernel();
     const result = await this.kernel.renderAssembly(parts, { importDir: this.importDir(ws) });
     if (!result.ok || !result.sheet) return null;
     const res = await fetch(`${this.kernel.baseUrl}${result.sheet}`);
@@ -667,7 +657,6 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       params: mergedParams(n),
       matrix: opts.nodeId ? [] : (world[n.id] ?? []),
     }));
-    await this.ensureKernel();
     return this.kernel.export(parts, opts.format, { importDir: this.importDir(ws) });
   }
 
@@ -685,7 +674,6 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
 
   /** G0–G2 kernel-side: static scan, execution, validity. */
   async execute(node: NodeRecord, ws: Workspace): Promise<ExecuteResult> {
-    await this.ensureKernel();
     const result = await this.kernel.execute(node.artifact?.code ?? "", mergedParams(node), {
       importDir: this.importDir(ws),
     });
@@ -697,7 +685,6 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
    * Fastener geometry comes from the registry and is exact by construction,
    * so G4 would only be grading the architect's envelope guess — skip it. */
   async verify(node: NodeRecord, _graph: GraphDoc, ws: Workspace): Promise<VerifyResult> {
-    await this.ensureKernel();
     const payload = node.contract.payload as CadContractPayload;
     const result = await this.kernel.execute(node.artifact?.code ?? "", mergedParams(node), {
       ports: kernelPorts(_graph, payload),
@@ -830,8 +817,7 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       }));
     if (posed.length >= 2) {
       try {
-        await this.ensureKernel();
-        const res = await this.kernel.clash(posed, { importDir: this.importDir(ws) });
+            const res = await this.kernel.clash(posed, { importDir: this.importDir(ws) });
         for (const e of res.clash?.errors ?? []) {
           problems.push(`clash check incomplete — ${e}. Those two parts were not compared.`);
         }
