@@ -59,6 +59,20 @@ geometry, because three of the four projects that first came back clean were
 web-code graphs with zero ports. A pass over a graph the scorer cannot judge is
 the same defect one level up, so the verdict has to name which one it is.
 
+## A case must be able to detect its own premise
+
+The hardest part is not the assertions, it is whether any gate can see the thing
+the prompt is about. A first attempt at the fourth case asked for bolt holes
+clearing a boss on an adjoining leg. Nothing measures that: `_probe_boss`
+tolerates one lost ring point by design, `_probe_hole` only looks at its own
+pose, G4 ignores holes, and G5 never runs on a single part. A hole bored straight
+through the boss wall passes every gate, so the case would have reported PASS on
+a part violating its headline requirement.
+
+That is the pen-cup brick one rung up, and worse, because a green result looks
+like evidence. Before writing a case, name the gate that produces the failure.
+If there isn't one, the case is measuring something else.
+
 ## Writing a case
 
 Cases are JSON in `cases/`. They assert **structurally, never by node id**,
@@ -71,7 +85,8 @@ graph there is one CLEARANCE_HOLE measuring 6mm" survives a rename that
 | `nodes` | `{min, max}` node count. `max` catches over-decomposition, which is a real regression: `5mm-sphere-mswcd11k` answered a one-part prompt with 3 nodes and 14 calls. |
 | `allReady` | every node reached `ready`. Default on. |
 | `noSkippedPorts` | no port reports `skipped`. Default on. See above. |
-| `ports[]` | `{type, count \| minCount, diameter \| width, tol}`, matched against any node's probes. |
+| `ports[]` | `{type \| anyType, count \| minCount, tol}` plus one claim, matched against any node's probes. The claim is `diameter`, `width`, `pilot`, `through`, or the generic `measure: {field, value, tol}` naming the probe's own key. Use `measure` for anything else a probe emits: `probed_size` on a face, `measured_depth` on a hole or channel, `measured_length` on a shaft. |
+| | A boss reports `measured_pilot` and never `measured_diameter`, so asserting `diameter` on one fails as "measured by nothing" — a defect in the case, not the part. Check what the probe emits before asserting on it. |
 | `bboxSize` | `{value, tol, axes?}` against the largest node by volume. `axes` limits it when only some dimensions are pinned by the prompt. |
 | `requireProbedPorts` | every port a ready node declares appears in its probe list, with measurements present and current. Default on. Separate from `noSkippedPorts` on purpose: one flag disabling both let a case drop this by turning off skipped-port reporting. |
 | `volumeFraction` | `{max, min}` on measured volume over bounding-box volume, judged on the largest node. Separates a hollow or cut part from the solid block of the same size. Scale-free, but it reads an axis-aligned box, so a diagonal or organic part fills little of its box while being solid. |

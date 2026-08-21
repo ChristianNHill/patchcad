@@ -40,12 +40,20 @@ type PortExpect = {
   through?: boolean;
   count?: number;
   minCount?: number;
+  /** ONE GENERIC ASSERTION over whatever field the probe actually emits, rather
+   *  than a named key per dimension. Named keys were heading for six and each
+   *  new probe output needed a scorer change to be assertable at all: a boss
+   *  reports `measured_pilot` and never `measured_diameter`, so a case asserting
+   *  `diameter` on one failed as "measured by nothing" — a defect in the case,
+   *  not the part. Three more were unreachable for the same reason:
+   *  `probed_size` and `ring_diameter` on a face, `measured_depth` on holes and
+   *  channels, `measured_length` on a shaft.
+   *
+   *  `field` is the probe's own key, so the next probe output needs no change
+   *  here. diameter/width/pilot remain as shorthands for the common cases. */
+  measure?: { field: string; value: number; tol?: number };
   diameter?: number;
   width?: number;
-  /** A SCREW_BOSS reports `measured_pilot`, never `measured_diameter`: the probe
-   *  verifies the wall by a ring-hit count and measures only the pilot bore. A
-   *  case asserting `diameter` on a boss therefore fails as "measured by
-   *  nothing", which is a defect in the case rather than the part. */
   pilot?: number;
   tol?: number;
 };
@@ -119,13 +127,15 @@ function checkPorts(probes: Probe[], want: PortExpect): Miss[] {
         `no ${label} passes through; measured ${of.map((p) => `${p.key}(through=${p["through"]}, depth=${p["measured_depth"]})`).join(", ")}`,
       );
   }
-  for (const [key, want_v] of [
-    ["measured_diameter", want.diameter],
-    ["measured_width", want.width],
-    ["measured_pilot", want.pilot],
-  ] as const) {
+  const claims: [string, number | undefined, number | undefined][] = [
+    ["measured_diameter", want.diameter, want.tol],
+    ["measured_width", want.width, want.tol],
+    ["measured_pilot", want.pilot, want.tol],
+    ...(want.measure ? [[want.measure.field, want.measure.value, want.measure.tol ?? want.tol] as [string, number, number | undefined]] : []),
+  ];
+  for (const [key, want_v, want_tol] of claims) {
     if (want_v == null) continue;
-    const tol = want.tol ?? 0.2;
+    const tol = want_tol ?? 0.2;
     // ANY port of this type may satisfy it: the architect picks which node
     // carries which hole, and the case must not care.
     const got = of.map((p) => p[key]).filter((v): v is number => typeof v === "number");
@@ -467,6 +477,30 @@ function selfTest(): void {
     score(bossCase, bossNode({ key: "b", type: "SCREW_BOSS", ring_hits: 8 }), []).misses,
     "fire", "measured by nothing");
 
+  // The generic field, which exists so the next probe output needs no scorer
+  // change. Three fields were unassertable before it: probed_size on a face,
+  // measured_depth on holes and channels, measured_length on a shaft.
+  const anyField = (field: string, value: number): EvalCase => ({
+    id: "t", prompt: "p",
+    expect: { ports: [{ type: "FLAT_FACE", minCount: 1, measure: { field, value, tol: 0.5 } }] },
+  });
+  const faceNode = (probe: Record<string, unknown>) =>
+    mk({ p: node("p", {}, { volume_mm3: 1, bbox: { size: [1, 1, 1] }, ports: [probe] }) });
+  expect("measure reaches probed_size, which no named field could",
+    score(anyField("probed_size", 20), faceNode({ key: "f", type: "FLAT_FACE", probed_size: 20 }), []).misses,
+    "quiet");
+  expect("and catches it when wrong",
+    score(anyField("probed_size", 20), faceNode({ key: "f", type: "FLAT_FACE", probed_size: 55.5 }), []).misses,
+    "fire", "within 0.5 of 20");
+  expect("and catches a field the probe never emitted",
+    score(anyField("probed_size", 20), faceNode({ key: "f", type: "FLAT_FACE" }), []).misses,
+    "fire", "measured by nothing");
+  expect("measure reaches measured_depth too",
+    score({ id: "t", prompt: "p",
+            expect: { ports: [{ type: "GROOVE", minCount: 1, measure: { field: "measured_depth", value: 4 } }] } },
+      faceNode({ key: "g", type: "GROOVE", measured_width: 3, measured_depth: 4 }), []).misses,
+    "quiet");
+
   const caseBolt: EvalCase = {
     id: "b", prompt: "p",
     expect: { nodes: { min: 1 }, allReady: true, zeroLlmKinds: ["fastener"], assemblyProblems: 0 },
@@ -638,9 +672,9 @@ async function main() {
     for (const pe of c.expect.ports ?? []) {
       if (!pe.type && !pe.anyType)
         vacuous.push(`${c.id}: a port expectation names no type`);
-      if (pe.diameter == null && pe.width == null && pe.pilot == null && !pe.through)
+      if (pe.diameter == null && pe.width == null && pe.pilot == null && !pe.measure && !pe.through)
         vacuous.push(
-          `${c.id}: ${pe.anyType?.join("|") ?? pe.type} expectation has no diameter, width, pilot or through, so it only counts probes`,
+          `${c.id}: ${pe.anyType?.join("|") ?? pe.type} expectation has no diameter, width, pilot, measure or through, so it only counts probes`,
         );
     }
   }
@@ -658,7 +692,7 @@ async function main() {
         e.allReady !== false && "all nodes ready",
         e.noSkippedPorts !== false && "NO port verified by nothing",
         ...(e.ports ?? []).map((p) =>
-          `${p.anyType?.join("|") ?? p.type} ${p.diameter ?? p.width ?? p.pilot ?? ""}${p.through ? " through" : ""}`.trim()),
+          `${p.anyType?.join("|") ?? p.type} ${p.diameter ?? p.width ?? p.pilot ?? (p.measure ? `${p.measure.field}=${p.measure.value}` : "")}${p.through ? " through" : ""}`.trim()),
         e.bboxSize && `bbox ${e.bboxSize.value.join("x")} +/-${e.bboxSize.tol}`,
         e.volume && `material ${e.volume.min != null ? `>=${e.volume.min}` : ""}${e.volume.max != null ? `<=${e.volume.max}` : ""} mm3`,
         e.requireProbedPorts !== false && "every declared port probed, current",
