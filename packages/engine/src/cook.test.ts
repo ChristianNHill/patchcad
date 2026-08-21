@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { GraphDoc, hashValue } from "@patchcad/shared";
-import { cookOne, type CookDeps } from "./cook.js";
+import { cookNodes, cookOne, type CookDeps } from "./cook.js";
 import { EventBus } from "./events.js";
 import { GraphStore } from "./graph/store.js";
 import type { DomainBackend, RepairCtx } from "./backend.js";
@@ -650,5 +650,111 @@ describe("cookOne inspect step (write → render → inspect → rewrite)", () =
     await cookOne(deps, "widget");
     expect(h.generations()).toBe(1);
     expect(deps.store.node("widget").history[0]?.cause).toBe("generate");
+  });
+});
+
+describe("cookNodes orders the queue", () => {
+  /** A graph of n nodes, ids reg-* (deterministic) and llm-* interleaved. */
+  const graphOf = (ids: string[]) => {
+    const base = makeGraph();
+    const proto = base.nodes.widget!;
+    const nodes = Object.fromEntries(ids.map((id) => [id, { ...proto, id, contract: { ...proto.contract } }]));
+    return GraphDoc.parse({ ...base, nodes, assembly: { entryNodeId: ids[0]! }, edges: [] });
+  };
+
+  /** Records the order execute() is reached, and treats reg-* as registry. */
+  const orderingBackend = () => {
+    const order: string[] = [];
+    const backend: DomainBackend<unknown> = {
+      ...mockBackend,
+      deterministicArtifact: (node) => (node.id.startsWith("reg-") ? { code: `# ${node.id}` } : null),
+      execute: async (node) => {
+        order.push(node.id);
+        return { ok: true, stage: "execute", report: "" };
+      },
+    };
+    return { backend, order };
+  };
+
+  it("cooks the nodes needing no model call before the ones that do", async () => {
+    const { backend, order } = orderingBackend();
+    // Emission order deliberately puts a registry part last: that is the case
+    // that used to wait behind three LLM nodes for a slot it needs 0.2s of.
+    const ids = ["llm-a", "reg-a", "llm-b", "llm-c", "reg-b"];
+    const deps = { ...makeDeps(graphOf(ids), stubProvider, new MemoryLibrary(), backend), concurrency: 1 };
+    await cookNodes(deps, ids);
+
+    expect(order.slice(0, 2)).toEqual(["reg-a", "reg-b"]);
+    expect(order).toHaveLength(5);
+  });
+
+  it("keeps emission order within each group", async () => {
+    const { backend, order } = orderingBackend();
+    const ids = ["llm-a", "reg-a", "llm-b", "reg-b"];
+    const deps = { ...makeDeps(graphOf(ids), stubProvider, new MemoryLibrary(), backend), concurrency: 1 };
+    await cookNodes(deps, ids);
+    // The split is the only reordering; the architect's own sequence survives.
+    expect(order).toEqual(["reg-a", "reg-b", "llm-a", "llm-b"]);
+  });
+
+  // The tests above pin concurrency 1, which is the one setting where queue
+  // order is trivially the completion order. Production runs 4+, so this is the
+  // case that decides whether the partition is worth anything: with the slow
+  // nodes emitted FIRST and only 4 workers, an unpartitioned queue fills every
+  // worker with slow work and the fast nodes wait for one to free up.
+  it("finishes every no-model node before any slow one, at production concurrency", async () => {
+    const done: string[] = [];
+    const backend: DomainBackend<unknown> = {
+      ...mockBackend,
+      deterministicArtifact: (node) => (node.id.startsWith("reg-") ? { code: `# ${node.id}` } : null),
+      execute: async (node) => {
+        if (!node.id.startsWith("reg-")) {
+          // stands in for a 60-90s generator call
+          await new Promise((r) => setTimeout(r, 40));
+        }
+        done.push(node.id);
+        return { ok: true, stage: "execute", report: "" };
+      },
+    };
+    const ids = ["llm-a", "llm-b", "llm-c", "llm-d", "llm-e", "reg-a", "reg-b", "reg-c"];
+    const deps = { ...makeDeps(graphOf(ids), stubProvider, new MemoryLibrary(), backend), concurrency: 4 };
+    await cookNodes(deps, ids);
+
+    const lastReg = Math.max(...done.map((id, i) => (id.startsWith("reg-") ? i : -1)));
+    const firstLlm = done.findIndex((id) => !id.startsWith("reg-"));
+    expect(done.filter((id) => id.startsWith("reg-"))).toHaveLength(3);
+    expect(lastReg).toBeLessThan(firstLlm);
+  });
+
+  it("does not reorder a graph with no deterministic nodes", async () => {
+    const { backend, order } = orderingBackend();
+    const ids = ["llm-a", "llm-b", "llm-c"];
+    const deps = { ...makeDeps(graphOf(ids), stubProvider, new MemoryLibrary(), backend), concurrency: 1 };
+    await cookNodes(deps, ids);
+    expect(order).toEqual(ids);
+  });
+
+  it("survives a backend that throws when asked whether a node is deterministic", async () => {
+    const { order } = orderingBackend();
+    const backend: DomainBackend<unknown> = {
+      ...mockBackend,
+      deterministicArtifact: () => {
+        throw new Error("backend exploded");
+      },
+      execute: async (node) => {
+        order.push(node.id);
+        return { ok: true, stage: "execute", report: "" };
+      },
+    };
+    const ids = ["a", "b"];
+    const deps = { ...makeDeps(graphOf(ids), stubProvider, new MemoryLibrary(), backend), concurrency: 1 };
+    // Sorting is an optimisation and must never be the thing that throws out of
+    // cookNodes. The nodes still fail, because cookOne consults the same
+    // backend hook without a guard — that is pre-existing and not this
+    // ordering's business — but they fail as reported per-node failures rather
+    // than taking the whole wave down before any node is even queued.
+    const summary = await cookNodes(deps, ids);
+    expect(summary.failed.map((f) => f.nodeId)).toEqual(ids);
+    expect(summary.succeeded).toEqual([]);
   });
 });

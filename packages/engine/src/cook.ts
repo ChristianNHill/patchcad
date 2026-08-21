@@ -45,7 +45,29 @@ export interface CookSummary {
 
 export async function cookNodes(deps: CookDeps, nodeIds: string[]): Promise<CookSummary> {
   const summary: CookSummary = { succeeded: [], failed: [] };
-  const queue = [...nodeIds];
+  // DETERMINISTIC NODES FIRST. A registry screw or an imported piece needs no
+  // model call and commits in a fifth of a second, but the queue was emission
+  // order and the check for it lives inside cookOne — so a screw emitted sixth
+  // waited behind an LLM node for a slot it needed 0.2s of. The viewport
+  // already refetches on every commit, so ordering alone is the difference
+  // between real geometry on screen in seconds and nothing for three minutes.
+  //
+  // Stable within each group: emission order is the architect's own reading of
+  // the assembly, and there is no reason to disturb it beyond this split.
+  const isDeterministic = (id: string) => {
+    try {
+      return deps.backend.deterministicArtifact?.(deps.store.node(id)) != null;
+    } catch {
+      return false; // a backend that throws on inspection is not a fast path
+    }
+  };
+  // One pass, so the backend hook is consulted once per node. It happens to be
+  // pure today (a table lookup and string construction), but a scheduler should
+  // not depend on that.
+  const noModel: string[] = [];
+  const needsModel: string[] = [];
+  for (const id of nodeIds) (isDeterministic(id) ? noModel : needsModel).push(id);
+  const queue = [...noModel, ...needsModel];
   const workers = Math.max(1, Math.min(deps.concurrency ?? 4, queue.length));
 
   for (const id of queue) deps.store.setStatus(id, "queued");
