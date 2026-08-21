@@ -1,0 +1,11 @@
+{
+  "id": "pen-cup-hexagonal",
+  "prompt": "a pen cup holder with hexagonal cutouts that is 75 mm wide",
+  "why": "THE BRICK. projects/a-pen-cup-holder-with-hexagonal-msw95gq7 cooked green with every port typed GROOVE or SLOT, neither of which had a probe, so nothing verified the cutouts the prompt asked for. A solid Box(75,75,95) passed. noSkippedPorts is the assertion that fails that build.",
+  "expect": {
+    "nodes": { "min": 1, "max": 3 },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "bboxSize": { "value": [75, 75, 95], "tol": 25.0, "axes": [0, 1] }
+  }
+}

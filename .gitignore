@@ -26,3 +26,6 @@ skills-lock.json
 
 # runtime user data: imported meshes + generated projects
 projects/
+
+# eval run artifacts, not fixtures
+evals/results/

@@ -1,0 +1,13 @@
+{
+  "id": "two-plate-bolted",
+  "prompt": "two 50mm square plates 4mm thick bolted face to face with a single M4 screw",
+  "why": "The smallest thing with an assembly. Exercises a fastener from the registry (must cost zero LLM calls), a clearance hole that has to pass through, and one mate.",
+  "expect": {
+    "nodes": { "min": 3, "max": 4 },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": ["fastener", "nut", "insert", "threaded_rod", "gear"],
+    "ports": [{ "type": "CLEARANCE_HOLE", "minCount": 2, "diameter": 4.5, "tol": 0.4 }],
+    "assemblyProblems": 0
+  }
+}

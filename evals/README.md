@@ -1,0 +1,70 @@
+# evals
+
+A prompt ladder scored on measured geometry, not on whether a cook finished.
+
+```sh
+cd apps/server
+pnpm exec tsx src/eval.ts --self-test              # 12 scorer checks, 0 LLM calls
+pnpm exec tsx src/eval.ts --dry-run               # what each case asserts, 0 LLM calls
+pnpm exec tsx src/eval.ts --case single-plate --max-usd 0.50
+pnpm exec tsx src/eval.ts --max-usd 2.00          # the whole ladder
+```
+
+`--max-usd` is required and is a hard stop. A ladder left running against a real
+provider is the one way this harness costs more than it is worth.
+
+## Why it is scored this way
+
+The claim PatchCAD makes is that it measures geometry while everything else
+generates and hopes. An audit found that true about the machinery and false
+about the coverage: `projects/a-pen-cup-holder-with-hexagonal-msw95gq7` is a
+finished four-node project, every node `ready`, and every port on it typed
+`GROOVE` or `SLOT` when neither had a probe. A solid `Box(75, 75, 95)` passed.
+Nothing verified the hexagonal cutouts the prompt asked for.
+
+So the load-bearing assertion here is `noSkippedPorts`, and it defaults to on. A
+port the kernel cannot probe reports `skipped` and passes, and a case that
+tolerates one is measuring nothing.
+
+## Writing a case
+
+Cases are JSON in `cases/`. They assert **structurally, never by node id**,
+because ids come from the architect and change between runs. "Somewhere in this
+graph there is one CLEARANCE_HOLE measuring 6mm" survives a rename that
+`nodes["plate"].ports[0]` does not.
+
+| Key | Checks |
+|---|---|
+| `nodes` | `{min, max}` node count. `max` catches over-decomposition, which is a real regression: `5mm-sphere-mswcd11k` answered a one-part prompt with 3 nodes and 14 calls. |
+| `allReady` | every node reached `ready`. Default on. |
+| `noSkippedPorts` | no port reports `skipped`. Default on. See above. |
+| `ports[]` | `{type, count \| minCount, diameter \| width, tol}`, matched against any node's probes. |
+| `bboxSize` | `{value, tol, axes?}` against the largest node by volume. `axes` limits it when only some dimensions are pinned by the prompt. |
+| `zeroLlmKinds` | these kinds must cost 0 model calls. Registry hardware that touches a model is a defect. |
+| `assemblyProblems` | expected count from `solveScene`. |
+
+## What it reports
+
+Per case: pass/fail with every missed expectation named, node count, how many
+were deterministic, first-try rate over the nodes that used a model, dead nodes,
+calls, ports probed, ports skipped, dollars, and plan/cook wall clock.
+
+Dollars include the architect's own call, which belongs to no node. Summing node
+costs alone understates every case by the largest single output in the system.
+
+Baseline to beat, from the audit: **6/11 first-try, 3 nodes needing 4+ rounds, 2
+never converging.**
+
+Results land in `results/` as timestamped JSON, which is gitignored: they are
+run artifacts, not fixtures.
+
+## Why cases do not live in `examples/`
+
+`apps/server/src/main.ts:910` scans `examples/` for the project picker, so
+anything there is offered to users as a project to open. That is why
+`fixtures/shop` moved out. `evals/` is not scanned.
+
+The runner itself lives at `apps/server/src/eval.ts` rather than here, because it
+needs the engine, the CAD backend and `resolveProvider`, and `apps/server`
+already has all three plus a tsconfig. It follows `cad-acceptance.ts` and
+`verify-smoke.ts`, which are dev scripts in the same place.

@@ -1,0 +1,12 @@
+{
+  "id": "single-plate",
+  "prompt": "a 60mm square aluminium plate 5mm thick with a 6mm hole in the middle",
+  "why": "The floor. One part, one hole, no assembly. If this needs more than one node the architect is still over-decomposing, which is the regression 5mm-sphere-mswcd11k recorded at 3 nodes and 14 calls.",
+  "expect": {
+    "nodes": { "min": 1, "max": 1 },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "ports": [{ "type": "CLEARANCE_HOLE", "count": 1, "diameter": 6.0, "tol": 0.3 }],
+    "bboxSize": { "value": [60, 60, 5], "tol": 1.0 }
+  }
+}
