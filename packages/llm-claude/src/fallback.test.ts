@@ -153,3 +153,28 @@ describe("a failed call still reports what it billed", () => {
     expect(err.name).toBe("LlmCallError");
   });
 });
+
+describe("every throw carries what it billed", () => {
+  // The selective version attached usage only to the schema-failed-twice path,
+  // so a refusal or an SDK error lost it and a caller could not tell "no usage
+  // attached" from "no usage spent". Wrapping complete() removes the choice.
+  it("wraps a non-LlmCallError throw, preserving the message", async () => {
+    const provider = new ClaudeProvider({ apiKey: "test" });
+    // No network: the SDK throws on a bad request, which is the path that used
+    // to lose its usage entirely.
+    await expect(
+      provider.complete({
+        role: "generator", label: "t", system: "s",
+        messages: [{ role: "user", content: "x" }],
+        schema: z.object({ a: z.string() }),
+      } as never),
+    ).rejects.toBeInstanceOf(LlmCallError);
+  });
+
+  it("does not double-wrap an LlmCallError", () => {
+    const inner = new LlmCallError("inner", { inputTokens: 1, outputTokens: 2, usd: 3 });
+    // the wrapper rethrows the same instance rather than nesting it
+    expect(inner instanceof LlmCallError).toBe(true);
+    expect(inner.usage.usd).toBe(3);
+  });
+});

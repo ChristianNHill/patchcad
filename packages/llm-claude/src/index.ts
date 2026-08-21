@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import type { LlmProvider, LlmRequest, LlmResult, LlmRole } from "@patchcad/engine";
+import type { LlmProvider, LlmRequest, LlmResult, LlmRole, LlmUsage} from "@patchcad/engine";
 
 /**
  * Native Anthropic adapter. Structured output via output_config.format with
@@ -115,7 +115,25 @@ export class ClaudeProvider implements LlmProvider {
     this.models = { ...DEFAULT_MODELS, ...opts.models };
   }
 
+  /** Every throw carries what the call billed.
+   *
+   *  The selective version attached usage only to the schema-failed-twice
+   *  throw, so a refusal, a missing text block and any SDK error still lost
+   *  theirs. That left a caller unable to tell "no usage attached" from "no
+   *  usage spent", which is the one distinction a budget guard needs. Wrapping
+   *  once is smaller than choosing per site and removes the asymmetry.
+   */
   async complete<T>(req: LlmRequest<T>): Promise<LlmResult<T>> {
+    const usage: LlmUsage = { inputTokens: 0, outputTokens: 0, usd: 0 };
+    try {
+      return await this.attemptComplete(req, usage);
+    } catch (err) {
+      if (err instanceof LlmCallError) throw err;
+      throw new LlmCallError(err instanceof Error ? err.message : String(err), { ...usage });
+    }
+  }
+
+  private async attemptComplete<T>(req: LlmRequest<T>, usage: LlmUsage): Promise<LlmResult<T>> {
     const model = this.models[req.role];
     // `$refStrategy: "none"` inlines every repeated subschema. Without it,
     // zod-to-json-schema emits internal refs pointing at `#/properties/...`,
@@ -128,7 +146,8 @@ export class ClaudeProvider implements LlmProvider {
     const rawSchema = zodToJsonSchema(req.schema, { target: "jsonSchema7", $refStrategy: "none" });
     const jsonSchema = sanitizeSchema(rawSchema);
     const price = PRICES[model] ?? { in: 5, out: 25 };
-    const usage = { inputTokens: 0, outputTokens: 0, usd: 0 };
+    // usage is the caller's accumulator: the wrapper needs the running total
+    // at the moment of a throw, so this must not shadow it with a fresh object.
     /** Set when the API refuses to compile this schema into a grammar. */
     let promptSchema = false;
 
@@ -283,6 +302,13 @@ export class ClaudeProvider implements LlmProvider {
       };
     } catch (err) {
       const message = (err as Error).message;
+      // Reaching this branch at all is itself evidence AGAINST truncation, which
+      // is a better argument than the one I reasoned from: a cut-off reply
+      // usually loses its final brace, so the greedy match above fails and the
+      // no-JSON-object branch reports instead. Not airtight, since a nested
+      // brace can satisfy the match on a truncated reply, but derived from the
+      // code rather than from a stop reason nobody recorded.
+      //
       // A PARSE POSITION ALONE IS NOT A DIAGNOSIS. This reported only the
       // position, so a failed architect call said "Expected ',' or '}' at
       // position 3082" and nothing else: no length, no stop reason, not one

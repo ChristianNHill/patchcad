@@ -672,8 +672,9 @@ async function main() {
       const billed = (err as { usage?: { usd: number } }).usage?.usd ?? 0;
       r = {
         id: c.id, pass: false, error: String(err instanceof Error ? err.message : err),
-        usd: billed, misses: [`threw before scoring: ${String(err instanceof Error ? err.message : err)}`],
-        perNode: [],
+        // `error` carries the text; duplicating it into misses said the same
+        // thing twice.
+        usd: billed, misses: [], perNode: [],
       };
       console.log(`  THREW  $${billed.toFixed(3)} billed before the throw`);
       console.log(`    ${r.error.slice(0, 400)}`);
