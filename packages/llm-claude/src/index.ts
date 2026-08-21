@@ -95,8 +95,14 @@ export class LlmCallError extends Error {
   constructor(
     message: string,
     readonly usage: { inputTokens: number; outputTokens: number; usd: number },
+    options?: { cause?: unknown },
   ) {
-    super(message);
+    // `cause` keeps the original error reachable. Wrapping otherwise destroys
+    // it: a 429 or a network blip arrives as an LlmCallError carrying only a
+    // message, and nothing in the repo inspects provider error types TODAY, so
+    // this is not a policy — it is refusing to throw away the evidence a future
+    // retry-on-status rule would need. Stdlib since ES2022.
+    super(message, options);
     this.name = "LlmCallError";
   }
 }
@@ -129,7 +135,9 @@ export class ClaudeProvider implements LlmProvider {
       return await this.attemptComplete(req, usage);
     } catch (err) {
       if (err instanceof LlmCallError) throw err;
-      throw new LlmCallError(err instanceof Error ? err.message : String(err), { ...usage });
+      throw new LlmCallError(err instanceof Error ? err.message : String(err), { ...usage }, {
+        cause: err,
+      });
     }
   }
 

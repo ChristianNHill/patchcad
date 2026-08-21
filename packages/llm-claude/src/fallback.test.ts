@@ -171,6 +171,15 @@ describe("every throw carries what it billed", () => {
     ).rejects.toBeInstanceOf(LlmCallError);
   });
 
+  it("keeps the original error reachable through cause", () => {
+    const original = new TypeError("socket hang up");
+    const wrapped = new LlmCallError("socket hang up", { inputTokens: 0, outputTokens: 0, usd: 0 }, {
+      cause: original,
+    });
+    expect(wrapped.cause).toBe(original);
+    expect(wrapped.usage.usd).toBe(0);
+  });
+
   it("does not double-wrap an LlmCallError", () => {
     const inner = new LlmCallError("inner", { inputTokens: 1, outputTokens: 2, usd: 3 });
     // the wrapper rethrows the same instance rather than nesting it
