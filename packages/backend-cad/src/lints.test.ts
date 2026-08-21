@@ -8,6 +8,7 @@ import {
   cadProbedPortsLint,
   cadFaceHoleConflictLint,
   cadPortConsistencyLint,
+  cadHardwareSeatLint,
   OUTER_DIAMETER_KEYS,
 } from "./index.js";
 
@@ -421,6 +422,64 @@ describe("cadPortConsistencyLint · edges to hardware", () => {
       [{ from: "a", fromPort: "face", to: "b", toPort: "face" }],
     );
     expect(cadPortConsistencyLint.run(g)).toEqual([]);
+  });
+});
+
+describe("cadHardwareSeatLint", () => {
+  const hw = (kind: string, thread: string, ring: number | string) => ({
+    ...node("m4", kind, []),
+    contract: {
+      name: "m4", summary: "",
+      params: [{ type: "enum", name: "thread", description: "", default: thread, options: ["M3", "M4", "M5"] }],
+      provides: [], requires: [],
+      payload: { units: "mm", process: { kind: "FDM", minWall: 1.2, nozzle: 0.4 },
+                 ports: [{ name: "head_seat", type: "FLAT_FACE",
+                           pose: { origin: [0, 0, 0], zAxis: [0, 0, -1], xAxis: [1, 0, 0] },
+                           params: { ring_diameter: ring } }],
+                 envelope: { volumes: [], clearance: 0.4 } },
+      hash: "",
+    },
+  }) as unknown as ReturnType<typeof node>;
+
+  // Measured against cad-clamp's M4 screw geometry: 4.5 to 6.9 pass, 7.5 fails.
+  it("accepts a ring inside the M4 bearing annulus", () => {
+    for (const r of [4.5, 5.5, 6.5, 6.9]) {
+      expect(cadHardwareSeatLint.run(graph([hw("fastener", "M4", r)], [])), String(r)).toEqual([]);
+    }
+  });
+
+  it("rejects a ring outside it, naming the band and a usable value", () => {
+    const out = cadHardwareSeatLint.run(graph([hw("fastener", "M4", 7.5)], []));
+    expect(out).toHaveLength(1);
+    expect(out[0]).toContain("between Ø4 and Ø7");
+    expect(out[0]).toContain("no repair round");
+    expect(out[0]).toContain("5.5");
+  });
+
+  it("rejects a ring inside the shank, where there is no material at all", () => {
+    const out = cadHardwareSeatLint.run(graph([hw("fastener", "M4", 3.5)], []));
+    expect(out).toHaveLength(1);
+  });
+
+  // The architect picked exactly 7.0 on a PASSING run, so the boundary must not
+  // fire. An earlier version warned here, and a lint that flags geometry which
+  // verifiably works risks a repair loop for no gain — the same shape as the
+  // deadlock in 97c82ed. The fragility belongs in guidance, not in a blocker.
+  it("stays silent at exactly the bearing edge, which a passing run used", () => {
+    expect(cadHardwareSeatLint.run(graph([hw("fastener", "M4", 7.0)], []))).toEqual([]);
+    expect(cadHardwareSeatLint.run(graph([hw("nut", "M4", 7.0)], []))).toEqual([]);
+  });
+
+  it("uses across-flats for a nut and the flange for an insert", () => {
+    expect(cadHardwareSeatLint.run(graph([hw("nut", "M5", 7.0)], []))).toEqual([]);      // M5 nutAf 8.0
+    expect(cadHardwareSeatLint.run(graph([hw("nut", "M5", 8.5)], []))).toHaveLength(1);
+    expect(cadHardwareSeatLint.run(graph([hw("insert", "M4", 5.0)], []))).toEqual([]);   // M4 insertD 5.6
+    expect(cadHardwareSeatLint.run(graph([hw("insert", "M4", 6.0)], []))).toHaveLength(1);
+  });
+
+  it("says nothing about an expression it cannot resolve, or a real part", () => {
+    expect(cadHardwareSeatLint.run(graph([hw("fastener", "M4", "param(x.d)")], []))).toEqual([]);
+    expect(cadHardwareSeatLint.run(graph([node("p", "part", [{ name: "f", type: "FLAT_FACE" }])], []))).toEqual([]);
   });
 });
 

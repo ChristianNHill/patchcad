@@ -96,7 +96,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { KernelClient, type ExportResult, type KernelResult } from "./kernel.js";
 import { generatePrompt, repairPrompt } from "./prompts.js";
-import { FASTENING_HARDWARE, REGISTRY_HARDWARE, resolveDeterministic } from "./registry.js";
+import { FASTENING_HARDWARE, REGISTRY_HARDWARE, resolveDeterministic, METRIC} from "./registry.js";
 import { solveAssembly, type AssemblyMate, type AssemblyNode } from "./assembly.js";
 import { resolveDim, resolvePose } from "./bindings.js";
 
@@ -432,6 +432,63 @@ const PROBED_PORT_TYPES = new Set([
  *  size, or dropping one of the two all resolve it, and the architect can do any
  *  of them for free at plan time.
  */
+/** A hardware seat's ring_diameter has to land on the bearing annulus.
+ *
+ *  The guidance now tells the architect to give every hardware node one seat
+ *  port, a FLAT_FACE with ring_diameter. That number has to fall between the
+ *  thread's own diameter and the bearing face's outer diameter, both of which
+ *  live in the METRIC table the architect never sees. A value outside that band
+ *  fails G3 with "no material just below the declared face" — and a fastener
+ *  resolves through deterministicArtifact with zero model calls and no repair
+ *  round, so it lands as an unrecoverable error_code.
+ *
+ *  Measured on cad-clamp's M4 screw: 4.5 through 6.9 pass, 7.5 and 8.0 fail.
+ *  The band is admitted INCLUSIVE at the top because the architect picked
+ *  exactly 7.0 on a passing run (M4 shcsHeadD is 7.0) and a lint that can stop
+ *  a plan must not reject geometry that verifiably works. The edge is fragile
+ *  rather than wrong: at exactly the head diameter the ring samples the rim and
+ *  tessellation decides, so the message says to move inboard.
+ */
+export const cadHardwareSeatLint = {
+  id: "cad-hardware-seat",
+  run(graph: GraphDoc): string[] {
+    const problems: string[] = [];
+    // Bearing face per kind: a screw bears on its head, a nut on its flats, an
+    // insert on its flange.
+    const bearing: Record<string, (m: (typeof METRIC)[string]) => number> = {
+      fastener: (m) => m.shcsHeadD,
+      nut: (m) => m.nutAf,
+      insert: (m) => m.insertD,
+    };
+    for (const n of Object.values(graph.nodes)) {
+      const outer = bearing[n.kind];
+      if (!outer) continue;
+      const declared = n.contract.params.find((p) => p.name === "thread")?.default;
+      const thread = typeof declared === "string" ? declared : undefined;
+      const m = thread ? METRIC[thread] : undefined;
+      if (!thread || !m) continue; // an unknown thread is another lint's business
+      const shank = Number(thread.slice(1));
+      if (!Number.isFinite(shank)) continue;
+      const max = outer(m);
+      for (const p of (n.contract.payload as CadContractPayload | undefined)?.ports ?? []) {
+        const ring = (p.params as { ring_diameter?: unknown } | undefined)?.ring_diameter;
+        if (typeof ring !== "number") continue; // an expression is not resolved here
+        if (ring <= shank || ring > max) {
+          problems.push(
+            `${n.id}: seat port "${p.name}" declares ring_diameter ${ring}, which is not on the bearing annulus of a ${thread} ${n.kind} (between Ø${shank} and Ø${max}). The probe samples that ring and would find air, and ${n.kind} nodes resolve from the registry with no repair round, so this fails unrecoverably. Use a value inside the band, e.g. ${((shank + max) / 2).toFixed(1)}.`,
+          );
+        }
+        // NOTHING AT THE BOUNDARY. ring === max samples the rim, where
+        // tessellation decides, so it is fragile — but a passing run used
+        // exactly 7.0 on an M4, and a lint that flags working geometry buys a
+        // repair round for nothing and risks the loop that 97c82ed created. The
+        // guidance asks for the midpoint instead.
+      }
+    }
+    return problems;
+  },
+};
+
 export const cadFaceHoleConflictLint = {
   id: "cad-face-hole-conflict",
   run(graph: GraphDoc): string[] {
@@ -643,6 +700,7 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       cadFlatFaceSizeLint,
       cadProbedPortsLint,
       cadFaceHoleConflictLint,
+      cadHardwareSeatLint,
     ],
     architectGuidance: [
       "ONE PART IS A COMPLETE ANSWER. Decomposing is a cost, not a virtue: every",
@@ -718,6 +776,10 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       "FLAT_FACE with ring_diameter 5.5, and the edge reads",
       "base-plate.back_right_hole -> m4-screw.head_seat. Declare no OTHER ports,",
       "and a small cylinder envelope around the origin.",
+      "Put ring_diameter in the MIDDLE of the bearing annulus, between the thread",
+      "diameter and the head or across-flats width, not at either edge: the probe",
+      "samples that exact ring, and on the rim tessellation decides whether it",
+      "finds material. For an M4 screw the band is Ø4 to Ø7, so 5.5.",
       "Emit one node per hardware ROLE, not per physical piece — counts and",
       "patterns belong to the consuming part's HOLE_PATTERN port params.",
       "  fastener      SHCS, head base at origin, shank hanging -z.",
