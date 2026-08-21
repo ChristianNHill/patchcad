@@ -316,6 +316,17 @@ export const cadFlatFaceSizeLint = {
               `${n.id}: ${p.type} port "${p.name}" declares no diameter (params: ${JSON.stringify(keys)}). Add params.diameter in mm — probes measure the hole against it.`,
             );
           }
+        } else if (p.type === "SHAFT") {
+          // The emitter is the IMPORT path (main.ts), which never runs a lint,
+          // and imported nodes resolve deterministically with no repair round.
+          // So a SHAFT missing its diameter would sail through plan time and die
+          // at G3 as an unrecoverable error_code. Live SHAFT ports all carry a
+          // diameter today; this is the guard for the first one that does not.
+          if (!keys.some((k) => DIAMETER_KEYS.includes(k))) {
+            problems.push(
+              `${n.id}: SHAFT port "${p.name}" declares no diameter (params: ${JSON.stringify(keys)}). Add params.diameter in mm — the peg diameter at its base, which the probe measures against.`,
+            );
+          }
         } else if (CHANNEL_PORT_TYPES.has(p.type)) {
           if (!keys.some((k) => CHANNEL_WIDTH_KEYS.includes(k))) {
             problems.push(

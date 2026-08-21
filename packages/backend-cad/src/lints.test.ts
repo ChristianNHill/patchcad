@@ -186,7 +186,7 @@ describe("cad-port-params lint", () => {
     // SLOT used to sit here. It has a probe now, and therefore a required
     // width, so the type had to change for the assertion to still mean
     // "params are only demanded where something measures them".
-    const g = graph([envNode("p", [cyl(0, 20, 10)], [{ name: "s", type: "SHAFT", params: {} }])], []);
+    const g = graph([envNode("p", [cyl(0, 20, 10)], [{ name: "s", type: "LIP", params: {} }])], []);
     expect(cadFlatFaceSizeLint.run(g)).toEqual([]);
   });
 
@@ -245,6 +245,18 @@ describe("cadProbedPortsLint", () => {
   it("skips registry hardware", () => {
     const g = graph([node("m4", "fastener", [{ name: "x", type: "LIP" }])], []);
     expect(cadProbedPortsLint.run(g)).toEqual([]);
+  });
+});
+
+describe("cadFlatFaceSizeLint · SHAFT", () => {
+  it("demands a diameter on SHAFT, which the import path emits unlinted", () => {
+    const bare = graph([envNode("p", [cyl(0, 20, 10)], [{ name: "peg", type: "SHAFT", params: {} }])], []);
+    const out = cadFlatFaceSizeLint.run(bare);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toContain("SHAFT");
+    expect(out[0]).toContain("no diameter");
+    const ok = graph([envNode("p", [cyl(0, 20, 10)], [{ name: "peg", type: "SHAFT", params: { diameter: 5 } }])], []);
+    expect(cadFlatFaceSizeLint.run(ok)).toEqual([]);
   });
 });
 

@@ -523,7 +523,38 @@ def _probe_shaft(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
             tip = t
             break
         t += step
-    w = (tip / 2) if tip else max(near, (declared_len / 2) if declared_len else PROBE_DEPTH_MM)
+    if tip is None and declared_len:
+        # Reach exhausted with a declared length. Returning a diameter and no
+        # length here was indistinguishable from "no length was declared", so a
+        # 200mm column declared 12mm passed with a shrug.
+        raise GateError(
+            "G3",
+            f'port "{key}" (SHAFT): material continues past {reach:.1f}mm, so this is not a {declared_len:g}mm peg',
+            f"the peg must end: build it {declared_len:g}mm long standing out of the mating face",
+        )
+
+    # LENGTH BEFORE DIAMETER, because it is the more specific diagnosis and the
+    # diameter probe cannot survive a bad pose. A pose sunk into the parent body
+    # puts "near the base" inside that body, so the rays find no edge and the
+    # honest complaint ("this is 13.25mm, not 12") came out as "0/8 rays".
+    #
+    # TWO-SIDED: a short peg misses its socket, a long one bottoms out and stops
+    # the joint seating. Only the short case was checked, so a sunk pose inflated
+    # the length and passed.
+    if declared_len and tip is not None and abs(tip - declared_len) > LENGTH_TOL_MM:
+        raise GateError(
+            "G3",
+            f'port "{key}" (SHAFT): expected length {declared_len:g}mm, material ends at {tip:.2f}mm',
+            f"build the peg {declared_len:g}mm long: short of that it misses its socket, "
+            f"over it the joint bottoms out before seating",
+        )
+
+    # NEAR THE BASE, not at mid-height. A declared diameter is the diameter at
+    # the base, and any draft makes the midpoint a different number by
+    # construction: 2 degrees over 12mm loses 0.42mm against a 0.25 tolerance,
+    # so measuring the middle false-failed the better part. Draft is good
+    # practice on a slip fit. Still clear of a base fillet by PROBE_DEPTH_MM.
+    w = min(near + PROBE_DEPTH_MM, tip / 2) if tip else max(near, PROBE_DEPTH_MM)
 
     radii = []
     for k in range(8):
@@ -531,7 +562,7 @@ def _probe_shaft(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
         r = _march(shape, frame, math.cos(theta), math.sin(theta), w, max_r=d * 2 + 4.0, find="void")
         if r is not None:
             radii.append(r)
-    if len(radii) < 5:
+    if len(radii) < 8:
         raise GateError(
             "G3",
             f'port "{key}" (SHAFT): could not measure a diameter, {len(radii)}/8 rays found an edge within {d * 2 + 4:.1f}mm',
@@ -539,6 +570,18 @@ def _probe_shaft(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
         )
     radii.sort()
     measured = 2 * radii[len(radii) // 2]
+    # EVERY ray, not a median over five. A Ø5 peg fused to a slab across three
+    # rays reported a perfect Ø5: the median took the free side and the mass on
+    # the other side cannot enter a socket at all. There is no chamfer to
+    # forgive at this depth, so the slack was paying for a problem that does not
+    # exist while hiding one that does.
+    spread = 2 * radii[-1] - 2 * radii[0]
+    if spread > 2 * DIAMETER_TOL_MM:
+        raise GateError(
+            "G3",
+            f'port "{key}" (SHAFT): not round, rays span Ø{2 * radii[0]:.2f} to Ø{2 * radii[-1]:.2f}',
+            "the peg must stand free of surrounding material, so a socket can receive it",
+        )
     if abs(measured - d) > DIAMETER_TOL_MM:
         raise GateError(
             "G3",
@@ -551,12 +594,6 @@ def _probe_shaft(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
         result["measured_length"] = round(tip, 3)
     # A peg shorter than declared cannot reach its socket, which a slip-fit joint
     # shows as a gap. Only enforced against a declaration.
-    if declared_len and tip is not None and tip + LENGTH_TOL_MM < declared_len:
-        raise GateError(
-            "G3",
-            f'port "{key}" (SHAFT): expected length {declared_len:g}mm, material ends at {tip:.2f}mm',
-            f"extend the peg to {declared_len:g}mm so it reaches its socket",
-        )
     return result
 
 
@@ -956,7 +993,7 @@ def _raise_selfcheck(msg: str) -> None:
 # directly against shapes built here, so a bad radius or a flipped polarity
 # fails in a second with a line number. There is no pytest in this package.
 if __name__ == "__main__":  # pragma: no cover
-    from build123d import Axis, Box, BuildPart, Cylinder, Locations, Mode, Pos, chamfer
+    from build123d import Axis, Box, BuildPart, Cone, Cylinder, Locations, Mode, Pos, chamfer
 
     fails: list[str] = []
 
@@ -1088,6 +1125,33 @@ if __name__ == "__main__":  # pragma: no cover
            "no diameter declared")
     # A SHAFT pose pointing INTO the solid has no peg out front. Without this the
     # probe would read the box itself as an enormous peg.
+    # The four defects review found, each proven by the case that failed it.
+    import math as _m
+    def _drafted(deg):
+        r = _m.radians(deg)
+        return Box(30, 30, 6) + Pos(0, 0, 9) * Cone(2.5, max(2.5 - 12 * _m.tan(r), 0.05), 12)
+    expect("a 3 degree drafted peg is NOT false-failed (nominal is the base Ø)",
+           lambda: _probe_shaft(_drafted(3), {"key": "p", "type": "SHAFT", "pose": peg_pose,
+                                              "params": {"diameter": 5.0, "length": 12}}))
+    expect("a 5 degree drafted peg is not false-failed either",
+           lambda: _probe_shaft(_drafted(5), {"key": "p", "type": "SHAFT", "pose": peg_pose,
+                                              "params": {"diameter": 5.0, "length": 12}}))
+    fused = Box(30, 30, 6) + Pos(0, 0, 9) * Cylinder(2.5, 12) + Pos(6, 0, 9) * Box(8, 6, 12)
+    expect("a peg fused to a slab cannot enter a socket, so it fails",
+           lambda: _probe_shaft(fused, {"key": "p", "type": "SHAFT", "pose": peg_pose,
+                                        "params": {"diameter": 5.0, "length": 12}}),
+           "not round")
+    expect("a peg LONGER than declared bottoms out, so it fails too",
+           lambda: _probe_shaft(pegged, {"key": "p", "type": "SHAFT",
+                                         "pose": pose((0, 0, 2.0)),
+                                         "params": {"diameter": 5.0, "length": 12}}),
+           "material ends at")
+    column = Box(30, 30, 6) + Pos(0, 0, 103) * Cylinder(2.5, 200)
+    expect("a 200mm column declared 12mm is not a peg",
+           lambda: _probe_shaft(column, {"key": "p", "type": "SHAFT", "pose": peg_pose,
+                                         "params": {"diameter": 5.0, "length": 12}}),
+           "material continues past")
+
     expect("a pose facing into the block reports no peg",
            lambda: _probe_shaft(pegged, {"key": "p", "type": "SHAFT",
                                          "pose": {"origin": [0, 0, -3], "zAxis": [0, 0, -1], "xAxis": [1, 0, 0]},

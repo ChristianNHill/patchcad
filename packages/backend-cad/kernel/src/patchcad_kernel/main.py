@@ -68,7 +68,13 @@ executor = ThreadPoolExecutor(max_workers=POOL_SIZE)
 # 7 -> 8: SHAFT is probed instead of skipped. Every peg joint on disk holds a
 # cached pass whose port report says "no probe for this type yet", and those are
 # exactly the verdicts this overturns.
-GATES_VERSION = 8
+# 8 -> 9: the SHAFT comparisons changed in every direction. Diameter is read
+# near the base instead of mid-height (a drafted peg was false-failed), all
+# eight rays must agree (a peg fused to a slab passed as perfectly round), the
+# length check is two-sided (a long peg bottoms out) and reach exhaustion is a
+# failure instead of a silent omission. Any peg that passed under 8 was judged
+# by weaker comparisons.
+GATES_VERSION = 9
 
 
 def job_hash(*parts: Any) -> str:
