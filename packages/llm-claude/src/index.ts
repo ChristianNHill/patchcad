@@ -72,6 +72,21 @@ function sanitizeSchema(schema: unknown): unknown {
   return obj;
 }
 
+/** Is this error the API refusing to compile the schema into a sampling grammar?
+ *
+ *  Narrow on purpose, and exported so a test pins the real predicate rather than
+ *  a copy of it. `err.message` is the whole JSON response body, and two throws
+ *  inside the request attempt interpolate `req.label`, which carries the user's
+ *  goal slug. A bare /grammar/ test would therefore re-run the most expensive
+ *  call in the system, at full price, for a project whose NAME contained the
+ *  word. The class gate is the real guard: a schema rejection is refused before
+ *  any tokens generate so the retry is free, while the post-generation throws
+ *  are plain Errors, and BadRequestError, RateLimitError and InternalServerError
+ *  are siblings under APIError. */
+export function isGrammarRejection(err: unknown): boolean {
+  return err instanceof Anthropic.BadRequestError && /compiled grammar/i.test(err.message);
+}
+
 export class ClaudeProvider implements LlmProvider {
   id = "claude";
   private client: Anthropic;
@@ -195,18 +210,7 @@ export class ClaudeProvider implements LlmProvider {
     try {
       raw = await attempt();
     } catch (err) {
-      // Narrow on purpose: a 400 whose message names the compiled grammar, and
-      // nothing else. A bare /grammar/ test would match any message containing
-      // the word, and keying on the message alone would let a 429 or a 529
-      // trigger a retry that is not free. A schema rejection is refused before
-      // any tokens are generated, so this retry costs one round trip and no
-      // output; a rate limit is not, which is the whole reason to be strict.
-      if (
-        !(err instanceof Anthropic.BadRequestError) ||
-        !/compiled grammar/i.test((err as Error).message)
-      ) {
-        throw err;
-      }
+      if (!isGrammarRejection(err)) throw err;
       promptSchema = true;
       raw = await attempt();
     }

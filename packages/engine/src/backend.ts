@@ -167,7 +167,14 @@ export interface DomainBackend<P = unknown> {
    *
    *  Omit either to leave it to the provider. Note `effort` is only honoured by
    *  adapters that have such a control; the rest ignore it, like every other
-   *  optional field on LlmRequest. */
+   *  optional field on LlmRequest.
+   *
+   *  This governs GENERATION, where the domain knows what writing one part in
+   *  its own language costs. The architect pass keeps its own constants in
+   *  architect.ts, and that is not the same mistake: the architect is the
+   *  engine's own call rather than a domain's, and its budget is pinned there
+   *  precisely so it stops depending on which adapter happens to serve it,
+   *  which is the failure this comment describes. */
   generation?: {
     effort?: "low" | "medium" | "high" | "xhigh" | "max";
     maxTokens?: number;
