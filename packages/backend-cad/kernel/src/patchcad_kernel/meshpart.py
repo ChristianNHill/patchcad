@@ -447,7 +447,16 @@ def segment(
             hp[axis] = plane
             if joints == "holes":
                 holes.append({"center": [round(float(c), 3) for c in hp], "diameter": hole_d})
-                cyl = trimesh.creation.cylinder(radius=hole_d / 2, height=40.0)
+                # SIZED TO THE MODEL, not a magic 40. A fixed 40mm cutter
+                # centred on the cut plane reaches 20mm each way, so any piece
+                # thicker than that got a BLIND hole while the docstring above
+                # promised a through-hole. import-handle is 120mm in three 40mm
+                # pieces: both end pieces carry holes that stop dead at 20.00mm,
+                # and a screw through one cannot reach its neighbour. Spanning
+                # the whole model guarantees it passes through whatever single
+                # piece it lands in.
+                span = float(bounds[1][axis] - bounds[0][axis]) + 2.0
+                cyl = trimesh.creation.cylinder(radius=hole_d / 2, height=span)
                 align = trimesh.geometry.align_vectors([0, 0, 1], np.eye(3)[axis])
                 cyl.apply_transform(align)
                 cyl.apply_translation(hp)

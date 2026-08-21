@@ -53,8 +53,11 @@ export interface PortMeasurement {
   /** GROOVE / SLOT: the gap actually cut, measured across the channel. This is
    *  the number a mating tongue is cut to, so it is the one worth surfacing. */
   measured_width?: number;
-  /** GROOVE / SLOT declared with a depth: the floor found at that depth.
-   *  Absent for a through-cut, which declares no depth. */
+  /** Depth to the first material straight down the port axis. For a channel
+   *  that is its floor. For a hole it is the DEEPEST floor in a coaxial stack,
+   *  so a counterbore over a pilot reports the pilot: a counterbore's own floor
+   *  is an annulus and never lies on the axis. Honest about what was measured,
+   *  but do not read it as the port's own feature depth. */
   measured_depth?: number;
   /** Port type with no probe implemented yet. */
   skipped?: string;

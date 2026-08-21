@@ -635,13 +635,18 @@ def _probe_channel(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
         result["measured_depth"] = round(floor, 3)
     return result
 
-CHANNEL_LIKE = {"GROOVE", "SLOT"}
-WIDTH_KEYS = ("width", "slotWidth", "slot_width", "grooveWidth", "groove_width", "channelWidth")
-DEPTH_KEYS = ("depth", "slotDepth", "slot_depth", "grooveDepth", "groove_depth")
 
-
-
-
+# ---------------------------------------------------------------------------
+# G5 — clash. Every gate before this one grades ONE part against its own
+# contract, so none of them can see the failure that only exists between two
+# parts: they interpenetrate. A collar can satisfy every probe and every
+# envelope and still sit 1.5mm inside the base it is supposed to rest on, with
+# the assembly reporting clean, because nothing ever looked at two parts at
+# once.
+#
+# Assembly-level, so it reports through globalCheck rather than failing a node's
+# verify — no single node is at fault, and failing one arbitrarily would send a
+# generator to fix code that is correct.
 
 CLASH_MIN_DEPTH_MM = 0.02
 """MEAN PENETRATION DEPTH, 2V/A — not a volume. A volume threshold is a
@@ -942,8 +947,12 @@ if __name__ == "__main__":  # pragma: no cover
     for k in ("depth", "slotDepth", "slot_depth", "grooveDepth", "groove_depth"):
         expect(f"depth alias {k}",
                lambda kk=k: _probe_channel(grooved4, {"key": "g", "type": "GROOVE", "pose": pose((0, 0, 5)), "params": {"width": 3.0, kk: 4.0}}))
+    # 99.0, not 4.0: the fixture's real floor IS 4.0, so a valid-looking value
+    # cannot tell "resolved the later alias" from "gave up and skipped the
+    # check". A wrong value discriminates.
     expect("a garbage depth does not shadow a valid alias",
-           lambda: _probe_channel(grooved4, {"key": "g", "type": "GROOVE", "pose": pose((0, 0, 5)), "params": {"width": 3.0, "depth": "abc", "slotDepth": 4.0}}))
+           lambda: _probe_channel(grooved4, {"key": "g", "type": "GROOVE", "pose": pose((0, 0, 5)), "params": {"width": 3.0, "depth": "abc", "slotDepth": 99.0}}),
+           "expected depth 99")
 
     print("_march — the shared directional primitive")
     frame = _frame(pose((0, 0, 5)))
