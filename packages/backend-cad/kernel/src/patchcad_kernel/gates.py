@@ -666,6 +666,126 @@ def _march_depth(shape: Any, frame, max_d: float) -> float | None:
     return (lo + hi) / 2
 
 
+# ---------------------------------------------------------------------------
+# G5 — clash. Every gate before this one grades ONE part against its own
+# contract, so none of them can see the failure that only exists between two
+# parts: they interpenetrate. A collar can satisfy every probe and every
+# envelope and still sit 1.5mm inside the base it is supposed to rest on, with
+# the assembly reporting clean, because nothing ever looked at two parts at
+# once.
+#
+# Assembly-level, so it reports through globalCheck rather than failing a node's
+# verify — no single node is at fault, and failing one arbitrarily would send a
+# generator to fix code that is correct.
+
+CLASH_MIN_DEPTH_MM = 0.02
+"""MEAN PENETRATION DEPTH, 2V/A — not a volume. A volume threshold is a
+function of contact area wearing an absolute number's clothes, which is the
+mistake _probe_flat_face already made once with a fractional inset.
+
+Planar contact is exact (two 400x400 faces intersect to volume 0.0 with zero
+faces, at any size), so flat mates were never the problem. Curved and mesh
+contact is: the same nominal Ø5 peg-in-bore reports 0.000, but at Ø60 it reports
+8.7 and at Ø150 54.4 — identical fit, identical tessellation tolerance, only the
+radius changed. A 1mm³ threshold therefore both invented a clash on a real
+split-seam (16.9mm³ across a 146x143mm interface, mean depth 0.005mm) and missed
+a Ø1.5 pin sunk a full 0.5mm into a plate (0.88mm³).
+
+Depth separates them by construction. Measured over every real and synthetic
+case: noise 0.001-0.0115mm, genuine interference 0.0495-1.333mm. 0.02 sits ~4x
+above the worst noise and ~2.5x below the tightest real case, and is about 1/5
+of the 0.1 tessellation tolerance in _posed_mesh — keep those two in step."""
+
+TESSELLATION_TOL_CLASH = 0.1
+"""Deviation for the meshes G5 compares. CLASH_MIN_DEPTH_MM is calibrated
+against this; changing one without the other moves the noise floor."""
+
+
+def _posed_mesh(shape: Any, matrix: list[float]) -> Any:
+    """Tessellate and place, as one welded trimesh. Mesh rather than B-rep on
+    purpose: it is the same path render_assembly takes, it costs one
+    tessellation instead of an OCP boolean per pair, and it works unchanged on
+    imported MeshParts."""
+    import numpy as np
+    import trimesh
+
+    # A build123d shape has a .mesh METHOD; a MeshPart's .mesh IS a Trimesh. The
+    # callable check is the discriminator — hasattr alone would send every part
+    # down the mesh branch.
+    if hasattr(shape, "mesh") and not callable(getattr(shape, "mesh")):
+        mesh = shape.mesh.copy()  # MeshPart — already a volume; copy so posing
+        if not mesh.is_watertight:  # does not mutate the caller's part
+            # This branch is where a non-watertight mesh can actually arrive:
+            # an imported STL. The repair used to sit on the build123d branch,
+            # where process=True has already welded and b3d tessellates closed
+            # anyway — guarding the case that could not happen.
+            mesh.merge_vertices(merge_tex=True, merge_norm=True)
+            trimesh.repair.fill_holes(mesh)
+    else:
+        verts, faces = shape.tessellate(TESSELLATION_TOL_CLASH)
+        # Welding is not optional: raw OCP tessellation duplicates vertices per
+        # face, and a boolean against an unwelded shell returns nonsense.
+        mesh = trimesh.Trimesh(
+            vertices=[(v.X, v.Y, v.Z) for v in verts],
+            faces=[tuple(f) for f in faces],
+            process=True,
+        )
+    if matrix:
+        m = np.asarray(matrix, dtype=np.float64).reshape(4, 4).T  # column-major in
+        mesh.apply_transform(m)
+    return mesh
+
+
+def g5_clash(parts: list[tuple[str, Any, list[float]]]) -> dict[str, Any]:
+    """Posed parts, pairwise. Cheap AABB pass first, then a real boolean only on
+    the pairs whose boxes actually overlap — n is small, but a boolean is not,
+    and most pairs in an assembly are nowhere near each other.
+
+    Returns a report; raises nothing. A clash is a fact about the assembly, and
+    the caller decides what it costs."""
+    import trimesh
+
+    meshes = [(key, _posed_mesh(shape, matrix)) for key, shape, matrix in parts]
+    clashes: list[dict[str, Any]] = []
+    errors: list[str] = []
+    pairs_tested = 0
+    for i in range(len(meshes)):
+        for j in range(i + 1, len(meshes)):
+            key_a, mesh_a = meshes[i]
+            key_b, mesh_b = meshes[j]
+            a_min, a_max = mesh_a.bounds
+            b_min, b_max = mesh_b.bounds
+            if any(a_min[k] > b_max[k] or b_min[k] > a_max[k] for k in range(3)):
+                continue  # boxes disjoint — no boolean needed
+            pairs_tested += 1
+            try:
+                overlap = trimesh.boolean.intersection([mesh_a, mesh_b], engine="manifold")
+            except Exception as err:  # noqa: BLE001
+                # A boolean that will not compute is not evidence of no clash.
+                # Swallowing it would report every pair clean forever if the
+                # engine were missing — an all-clear from a gate that never ran.
+                errors.append(f"{key_a} vs {key_b}: boolean failed ({type(err).__name__})")
+                continue
+            if overlap is None or not len(overlap.faces):
+                continue
+            volume = float(abs(overlap.volume))
+            area = float(overlap.area)
+            # Mean penetration depth of the shared lens. A seam disagreement is
+            # a wide, vanishingly thin sheet; real interference is thick.
+            depth = (2 * volume / area) if area > 1e-9 else 0.0
+            if depth > CLASH_MIN_DEPTH_MM:
+                centre = overlap.centroid
+                clashes.append({
+                    "a": key_a,
+                    "b": key_b,
+                    "volume_mm3": round(volume, 3),
+                    "depth_mm": round(depth, 4),
+                    "at": [round(float(c), 2) for c in centre],
+                })
+    return {"parts": len(meshes), "pairs_tested": pairs_tested,
+            "clashes": clashes, "errors": errors}
+
+
 def g3_ports(shape: Any, ports: list[dict[str, Any]]) -> list[dict[str, Any]]:
     report: list[dict[str, Any]] = []
     for port in ports:

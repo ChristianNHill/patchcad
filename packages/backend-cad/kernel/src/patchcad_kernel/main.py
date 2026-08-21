@@ -52,7 +52,11 @@ executor = ThreadPoolExecutor(max_workers=POOL_SIZE)
 # 3 -> 4: channel width became the NARROWEST gap over several depths, and the
 # floor is measured rather than echoed. Both change verdicts, and a chamfered
 # channel that passed under 3 as "3.00" may have been 2.2mm wide.
-GATES_VERSION = 4
+# 4 -> 5: G5's discriminator changed from a shared VOLUME to mean penetration
+# depth. Clash results are cached like any other job, so without this the
+# projects the change exists to re-judge keep the verdict it was correcting —
+# which is exactly what happened on the first sweep after the fix.
+GATES_VERSION = 5
 
 
 def job_hash(*parts: Any) -> str:
@@ -246,6 +250,44 @@ async def export_artifact(digest: str, ext: str):
     if not path.exists():
         return JSONResponse(status_code=404, content={"error": "no export for that hash"})
     return FileResponse(path, media_type="application/octet-stream", filename=f"patchcad.{ext}")
+
+
+class ClashPart(AssemblyPart):
+    """A posed part, identified so a clash can name both sides."""
+    key: str
+
+
+class ClashBody(BaseModel):
+    parts: list[ClashPart] = Field(default_factory=list)
+    import_dir: str = ""
+
+
+@app.post("/clash")
+async def clash_endpoint(body: ClashBody):
+    """Do any two parts occupy the same space? Every gate before this one grades
+    ONE part against its own contract, so none of them can see this: a collar
+    can pass every probe and every envelope and still sit inside the base it is
+    meant to rest on. Assembly-level, so it reports rather than failing a node —
+    no single part is at fault."""
+    if len(body.parts) < 2:
+        return {"ok": True, "clash": {"parts": len(body.parts), "pairs_tested": 0, "clashes": []}}
+    digest = job_hash(GATES_VERSION, "clash", [p.model_dump() for p in body.parts], body.import_dir)
+    out_dir = CACHE_ROOT / digest
+    cached_file = out_dir / "clash.json"
+    if cached_file.exists():
+        with open(cached_file, encoding="utf8") as f:
+            return {"ok": True, "hash": digest, "cached": True, "clash": json.load(f)}
+
+    job = {"clash": [p.model_dump() for p in body.parts], "import_dir": body.import_dir}
+    result = await anyio.to_thread.run_sync(lambda: pool.execute(job, max(TIMEOUT_S, 60)))
+    if not result.get("ok"):
+        return JSONResponse(status_code=422, content={"ok": False, "hash": digest, **result})
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tmp = cached_file.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf8") as f:
+        json.dump(result["clash"], f)
+    tmp.replace(cached_file)  # atomic: a half-written file would poison this hash
+    return {"ok": True, "hash": digest, "cached": False, "clash": result["clash"]}
 
 
 @app.post("/render-assembly")

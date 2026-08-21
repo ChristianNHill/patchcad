@@ -16,6 +16,25 @@ const KERNEL_DIR = path.resolve(here, "..", "kernel");
  *  present depends on the port type (gates.py g3_ports). Note the list only
  *  ever holds PASSES and may be partial: a failing probe raises and takes the
  *  whole job with it, so probing stops at the first failure. */
+/** One pair of parts sharing space, and how much of it. */
+export interface Clash {
+  a: string;
+  b: string;
+  volume_mm3: number;
+  /** Centroid of the shared volume, in world coordinates. */
+  at: [number, number, number];
+}
+
+export interface ClashResult {
+  ok: boolean;
+  hash?: string;
+  cached?: boolean;
+  stage?: string;
+  error?: string;
+  hint?: string;
+  clash?: { parts: number; pairs_tested: number; clashes: Clash[]; errors?: string[] };
+}
+
 export interface PortMeasurement {
   key: string;
   type: string;
@@ -192,6 +211,21 @@ export class KernelClient {
       body: JSON.stringify({ parts, import_dir: opts.importDir ?? "", views: opts.views ?? 4 }),
     });
     return (await res.json()) as RenderResult;
+  }
+
+  /** G5: do any two posed parts occupy the same space? Assembly-level, so it
+   *  reports rather than failing a node — no single part is at fault, and
+   *  failing one arbitrarily sends a generator to fix correct code. */
+  async clash(
+    parts: { key: string; code: string; params: Record<string, unknown>; matrix: number[] }[],
+    opts: { importDir?: string } = {},
+  ): Promise<ClashResult> {
+    const res = await fetch(`${this.baseUrl}/clash`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ parts, import_dir: opts.importDir ?? "" }),
+    });
+    return (await res.json()) as ClashResult;
   }
 
   /** Geometry out: a mesh a slicer can open, or STEP for another CAD tool. */

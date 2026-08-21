@@ -8,6 +8,7 @@ timeout, a hard native crash kills one worker while the service stays up.
 from __future__ import annotations
 
 import sys
+import math
 import time
 
 import httpx
@@ -24,6 +25,9 @@ def build(p):
 """
 
 failures: list[str] = []
+
+
+CLASH_DEPTH_FLOOR = 0.02  # mirrors gates.CLASH_MIN_DEPTH_MM
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
@@ -425,6 +429,102 @@ def build(p):
     check("G3 still rejects a narrow channel hidden by a chamfer",
           r16k.status_code == 422 and "narrowest measured 2.2" in r16k.json().get("error", ""),
           r16k.json().get("error", ""))
+
+    # 17. G5 clash. The failure that only exists BETWEEN parts: every gate
+    # before this grades one part against its own contract, so a collar could
+    # pass every probe and every envelope while sitting inside its base.
+    cube = (
+        "from build123d import *\n"
+        "def build(p):\n"
+        "    _ = p['nonce']\n"
+        "    with BuildPart() as bp:\n"
+        "        Box(20, 20, 10)\n"
+        "    return bp.part\n"
+    )
+
+    def at(z):
+        return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, z, 1]
+
+    def clash(z):
+        n = int(time.time())
+        return client.post("/clash", json={"parts": [
+            {"key": "base", "code": cube, "params": {"nonce": n}, "matrix": at(0)},
+            {"key": "lid", "code": cube, "params": {"nonce": n}, "matrix": at(z)},
+        ]}).json()
+
+    # MATED PARTS TOUCH BY DESIGN. If contact reported, every correct assembly
+    # would fail — the one outcome that makes this gate worse than not having it.
+    #
+    # CURVED contact, not planar: two flat faces intersect to exactly 0.0 with
+    # zero faces, so a planar check passes at ANY threshold — including 1e-12 —
+    # and pins nothing. A nominal peg in a nominal bore is where tessellation
+    # noise actually lives, and its mean depth is what the threshold has to sit
+    # above. This check is the reason CLASH_MIN_DEPTH_MM has a value.
+    bore = (
+        "from build123d import *\n"
+        "def build(p):\n"
+        "    _ = p['nonce']\n"
+        "    with BuildPart() as bp:\n"
+        "        Cylinder(30, 20)\n"
+        "        Cylinder(10, 22, mode=Mode.SUBTRACT)\n"
+        "    return bp.part\n"
+    )
+    peg = (
+        "from build123d import *\n"
+        "def build(p):\n"
+        "    _ = p['nonce']\n"
+        "    with BuildPart() as bp:\n"
+        "        Cylinder(p['r'], 20)\n"
+        "    return bp.part\n"
+    )
+
+    def fit(peg_r, clock_deg=7.0):
+        n = int(time.time())
+        c, sn = math.cos(math.radians(clock_deg)), math.sin(math.radians(clock_deg))
+        rot = [c, sn, 0, 0, -sn, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+        return client.post("/clash", json={"parts": [
+            {"key": "bore", "code": bore, "params": {"nonce": n}, "matrix": at(0)},
+            {"key": "peg", "code": peg, "params": {"nonce": n, "r": peg_r}, "matrix": rot},
+        ]}).json()
+
+    r17 = fit(10.0)
+    check("G5 does not report a nominal peg in a nominal Ø60 bore",
+          r17["ok"] and r17["clash"]["clashes"] == [],
+          str(r17.get("clash")))
+    r17x = fit(10.3)
+    clx = (r17x.get("clash") or {}).get("clashes") or [{}]
+    check("G5 catches 0.3mm of real interference on the same curved fit",
+          r17x["ok"] and len(clx) == 1 and clx[0].get("depth_mm", 0) > CLASH_DEPTH_FLOOR,
+          str(clx[0]))
+
+    # A ROTATED part, because every other matrix here is an axis-aligned
+    # translation with identity rotation — under which a transpose bug in
+    # _posed_mesh is undetectable. That is the same blind spot the assembly
+    # solver's tests had.
+    n17 = int(time.time())
+    c45, s45 = math.cos(math.radians(45)), math.sin(math.radians(45))
+    rot_z = [c45, s45, 0, 0, -s45, c45, 0, 0, 0, 0, 1, 0, 0, 0, 6, 1]
+    r17b = client.post("/clash", json={"parts": [
+        {"key": "base", "code": cube, "params": {"nonce": n17}, "matrix": at(0)},
+        {"key": "lid", "code": cube, "params": {"nonce": n17}, "matrix": rot_z},
+    ]}).json()
+    cl = (r17b.get("clash") or {}).get("clashes") or [{}]
+    check("G5 catches interpenetration of a ROTATED part, with a depth",
+          r17b["ok"] and len(cl) == 1 and cl[0].get("depth_mm", 0) > 1.0
+          and cl[0].get("a") == "base" and cl[0].get("b") == "lid",
+          str(cl[0]))
+    r17c = clash(60.0)
+    check("G5 skips the boolean for parts whose boxes are disjoint",
+          r17c["ok"] and r17c["clash"]["pairs_tested"] == 0,
+          str(r17c.get("clash")))
+    r17d = client.post("/clash", json={"parts": [
+        {"key": "only", "code": cube, "params": {"nonce": int(time.time())}, "matrix": at(0)}]}).json()
+    # This one pins the ENDPOINT guard, not the gate: main.py returns before
+    # hashing or touching a worker, so g5_clash never runs. Labelled honestly —
+    # it would pass with the gate deleted.
+    check("POST /clash short-circuits below two parts (endpoint guard, not the gate)",
+          r17d["ok"] and r17d["clash"]["pairs_tested"] == 0 and r17d.get("hash") is None,
+          str(r17d.get("clash")))
 
     print()
     if failures:

@@ -793,7 +793,7 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     return { scene, world, problems };
   }
 
-  async globalCheck(graph: GraphDoc, _ws: Workspace): Promise<CheckResult> {
+  async globalCheck(graph: GraphDoc, ws: Workspace): Promise<CheckResult> {
     if (Object.keys(graph.nodes).length === 0) return { ok: true, problems: [] };
     const problems: string[] = [];
     for (const e of graph.edges) {
@@ -804,7 +804,48 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       if (to && !to.ports.some((p) => p.name === e.toPort))
         problems.push(`edge ${e.id}: ${e.to} has no port "${e.toPort}"`);
     }
-    problems.push(...this.solveScene(graph).problems);
+    const { world, problems: sceneProblems } = this.solveScene(graph);
+    problems.push(...sceneProblems);
+
+    // G5: two parts in the same space. Every other gate grades ONE part against
+    // its own contract, so none of them can see this — a collar passed every
+    // probe and every envelope while sitting 1.5mm inside its base. Reported
+    // here rather than failing a node's verify because no single part is at
+    // fault; failing one arbitrarily would send a generator to fix correct code.
+    //
+    // Best-effort, but NOT SILENT. A kernel that is down must not turn a clean
+    // assembly into a failing one — and a bare catch here made "did not run"
+    // indistinguishable from "found nothing": a bad workspace threw inside
+    // importDir and every project reported clean in about a millisecond, a
+    // perfectly convincing false all-clear. That is the third silence of this
+    // shape in this file, one commit after two were deleted, so the reason is
+    // reported as a problem of its own.
+    const posed = Object.values(graph.nodes)
+      .filter((n) => n.artifact?.code && world[n.id])
+      .map((n) => ({
+        key: n.id,
+        code: n.artifact!.code,
+        params: mergedParams(n) as Record<string, unknown>,
+        matrix: world[n.id]!,
+      }));
+    if (posed.length >= 2) {
+      try {
+        await this.ensureKernel();
+        const res = await this.kernel.clash(posed, { importDir: this.importDir(ws) });
+        for (const e of res.clash?.errors ?? []) {
+          problems.push(`clash check incomplete — ${e}. Those two parts were not compared.`);
+        }
+        for (const c of res.clash?.clashes ?? []) {
+          problems.push(
+            `${c.a} and ${c.b} occupy the same space: ${c.volume_mm3.toFixed(1)} mm³ of shared material near [${c.at.join(", ")}]. Both parts pass their own gates, so the fault is in a mate offset or a port pose, not in either part's code.`,
+          );
+        }
+      } catch (err) {
+        problems.push(
+          `clash check did not run: ${(err as Error).message}. Parts may overlap without this reporting it — the gate is skipped, not passed.`,
+        );
+      }
+    }
     return { ok: problems.length === 0, problems };
   }
 }

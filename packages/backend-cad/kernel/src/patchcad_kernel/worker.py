@@ -99,6 +99,22 @@ def worker_main(conn: Connection) -> None:
                            "elapsed_ms": int((time.monotonic() - started) * 1000)})
                 continue
 
+            if "clash" in job:
+                extra_ns_c: dict[str, object] = _registry_namespace()
+                if job.get("import_dir"):
+                    from .meshpart import load_import_part
+
+                    dc = job["import_dir"]
+                    extra_ns_c["load_import"] = lambda name, scale=1.0: load_import_part(dc, name, scale)
+                posed = []
+                for part in job["clash"]:
+                    tree_c = gates.g0_scan(part["code"])
+                    shape_c = gates.g1_execute(tree_c, part.get("params", {}), extra_ns_c)
+                    posed.append((part.get("key", "?"), shape_c, part.get("matrix", [])))
+                conn.send({"ok": True, "clash": gates.g5_clash(posed),
+                           "elapsed_ms": int((time.monotonic() - started) * 1000)})
+                continue
+
             if "assembly" in job:
                 from .render import render_assembly
 
