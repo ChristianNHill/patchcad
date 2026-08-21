@@ -321,6 +321,44 @@ export const cadFlatFaceSizeLint = {
   },
 };
 
+/** The port types the kernel can actually MEASURE (gates.py: HOLE_LIKE, plus the
+ * FLAT_FACE and SCREW_BOSS branches of g3_ports). Everything else in CadPortType
+ * falls through g3_ports' else-branch and is recorded "skipped" — the job still
+ * passes. A contract built from unprobed ports is verified by nothing: a solid
+ * brick satisfies it, which is exactly how a 75x75x95 block once passed as a pen
+ * cup holder with hexagonal cutouts.
+ *
+ * So the taxonomy is narrowed to what the gates can defend. This is deliberately
+ * a capability restriction: tongue-and-groove joinery is unavailable until
+ * _probe_groove/_probe_slot exist. Widen this set in the same commit that adds a
+ * probe, never before it. */
+const PROBED_PORT_TYPES = new Set([
+  "CLEARANCE_HOLE",
+  "BORE",
+  "SCREW_SEAT",
+  "SCREW_BOSS",
+  "FLAT_FACE",
+]);
+
+export const cadProbedPortsLint = {
+  id: "cad-probed-ports",
+  run(graph: GraphDoc): string[] {
+    const problems: string[] = [];
+    const verified = [...PROBED_PORT_TYPES].join(", ");
+    for (const n of Object.values(graph.nodes)) {
+      if (REGISTRY_HARDWARE.has(n.kind)) continue;
+      for (const p of (n.contract.payload as CadContractPayload | undefined)?.ports ?? []) {
+        if (!PROBED_PORT_TYPES.has(p.type)) {
+          problems.push(
+            `${n.id}: port "${p.name}" is a ${p.type}, which no gate can measure — a node whose ports are all unprobed passes verify even if the geometry is a featureless block. Re-express this interface with a type the probes measure (${verified}), or drop the port and model the feature as part of one solid.`,
+          );
+        }
+      }
+    }
+    return problems;
+  },
+};
+
 /** Port params may hold expressions too (a hole Ø bound to the param that
  * drills it); non-arithmetic strings (thread names) pass through untouched. */
 function resolvePortParams(graph: GraphDoc, params: Record<string, number | string>) {
@@ -384,6 +422,15 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
    *  which converts to a fix far more often than a bare compiler error, so
    *  extra rounds are worth buying here. */
   readonly maxAttempts: number;
+
+  /** A build123d part is a few hundred tokens of code. Measured on real
+   *  projects, 89-98% of billed output was reasoning rather than emitted code,
+   *  and output is priced 5x input — so the top reasoning tier was most of the
+   *  bill for work the gates verify anyway. `medium` with room to answer:
+   *  thinking and code share one budget, so the ceiling has to clear both or a
+   *  long think returns no part at all. */
+  readonly generation = { effort: "medium", maxTokens: 24000 } as const;
+
   private kernelStarted = false;
 
   constructor(opts: { kernel?: KernelClient; maxAttempts?: number } = {}) {
@@ -407,13 +454,42 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       { kind: "threaded_rod", description: "Registry threaded rod / stud, real ISO profile (never LLM-generated).", guidance: "Use for a stud captured by nuts at both ends. Params: thread and length." },
       { kind: "gear", description: "Registry involute spur gear (never LLM-generated).", guidance: "Params: module, teeth, pressure_angle, thickness, bore. Mesh distance between two gears is module * (teeth_a + teeth_b) / 2." },
     ],
+    paramUnit: "mm",
     payloadSchema: CadContractPayload as z.ZodType<CadContractPayload>,
-    graphLints: [cadPortConsistencyLint, cadFastenerJustifiedLint, cadEnvelopeCoherentLint, cadFlatFaceSizeLint],
+    graphLints: [
+      cadPortConsistencyLint,
+      cadFastenerJustifiedLint,
+      cadEnvelopeCoherentLint,
+      cadFlatFaceSizeLint,
+      cadProbedPortsLint,
+    ],
     architectGuidance: [
+      "ONE PART IS A COMPLETE ANSWER. Decomposing is a cost, not a virtue: every",
+      "extra part adds an interface to get wrong, a mate to solve, and a joint the",
+      "user has to assemble. Emit a single node unless a SECOND part earns its",
+      "place for one of these reasons:",
+      "  - it moves relative to the first (a hinge, a slide, a thread)",
+      "  - it is a different material or process (a printed part plus a bought screw)",
+      "  - the whole thing does not fit the print bed in one piece",
+      "  - the user must open, service or replace that piece separately",
+      "  - the user explicitly asked for separate pieces",
+      "A cup, a vase, a bracket, a knob, a tray, an enclosure lid — each of these",
+      "is ONE part. Splitting a printable object into a base, a wall and a rim",
+      "joined by tongues and grooves is a WORSE answer than modeling it whole:",
+      "it invents joinery the user never asked for and cannot verify.",
+      "",
       "FRAME CONVENTION (critical): every part is modeled in its OWN LOCAL frame,",
       "roughly centered on the origin — the assembly places parts later via port",
       "mates. Never author ports or envelopes in assembly/world coordinates.",
       "Port poses: +z points OUT of the part's mating surface (out of material).",
+      "",
+      "ONLY FIVE PORT TYPES MAY BE USED: CLEARANCE_HOLE, BORE, SCREW_SEAT,",
+      "SCREW_BOSS, FLAT_FACE. These are the ones the gates can measure against the",
+      "real solid. Any other type is rejected at plan time, because a port nothing",
+      "can probe makes the whole node unverifiable. If an interface wants a groove,",
+      "a slot, a lip or a snap, either express it as a hole plus a flat face, or",
+      "model both sides as ONE part and declare no port at all.",
+      "",
       "Hole-like ports (CLEARANCE_HOLE, BORE, SCREW_SEAT) MUST carry",
       '  params: {"diameter": <mm>} — that exact key; probes measure against it.',
       "FLAT_FACE ports MUST carry params: {\"size\": <mm>} — the width of the flat",

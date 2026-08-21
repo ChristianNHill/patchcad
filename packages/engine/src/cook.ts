@@ -349,6 +349,15 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
         system: prompt.system,
         messages: prompt.messages,
         schema: prompt.schema,
+        // Owned by the backend: what a part costs to write is a fact about the
+        // domain, and a number picked here against one adapter's default is a
+        // reduction against another's. Repairs deliberately get the SAME tier as
+        // the first attempt — raising effort against an unchanged output ceiling
+        // is how a repair spends its whole budget thinking and returns no text
+        // at all (`stop: max_tokens`), costing a full call for nothing. Depth on
+        // a repair comes from the failure report and the render.
+        effort: backend.generation?.effort,
+        maxTokens: backend.generation?.maxTokens,
         signal: deps.signal,
       });
     } catch (err) {

@@ -2,7 +2,7 @@ import { z } from "zod";
 import {
   Edge,
   GraphDoc,
-  ParamDecl,
+  ParamDeclNoUi,
   PortDecl,
   type ChatMessage,
 } from "@patchcad/shared";
@@ -17,6 +17,18 @@ import { contractHash } from "./graph/diff.js";
  * unsatisfied requires, port mismatches), with one automatic repair
  * round-trip before surfacing failures.
  */
+
+/**
+ * The whole-graph emission is the largest single output in the system — a
+ * 15-node graph carries every contract, port pose and envelope — and reasoning
+ * tokens are billed against the same ceiling. Both call sites used to pass
+ * nothing and inherit the adapter default, which is 32000 on the OpenAI-compat
+ * adapter but 16000 on the Anthropic one: moving a project between providers
+ * silently halved the architect's headroom, and running out means truncated
+ * JSON, a failed parse, a full re-emission, and then a hard throw. Pin it here
+ * so the budget is a property of the pass, not of whoever is serving it.
+ */
+const ARCHITECT_MAX_TOKENS = 32000;
 
 const SLUG = /^[a-z][a-z0-9-]{1,40}$/;
 
@@ -36,14 +48,14 @@ export function makeArchitectSchema<P>(payloadSchema: z.ZodType<P>, kinds?: stri
           contract: z.object({
             name: z.string(),
             summary: z.string().describe("what neighbors are told about this node"),
-            params: z.array(ParamDecl).describe("live-tunable parameters (the T0 surface)"),
+            params: z.array(ParamDeclNoUi).describe("live-tunable parameters (the T0 surface)"),
             provides: z.array(PortDecl),
             requires: z.array(PortDecl),
             payload: payloadSchema,
           }),
         }),
       )
-      .min(3)
+      .min(1)
       .max(15),
     edges: z.array(
       z.object({
@@ -258,10 +270,22 @@ export function architectOutputToGraph(
   projectIdValue: string,
   backendId: string,
   goal: string,
+  /** Stamped onto numeric params as `ui.unit`. The architect's schema has no
+   *  `ui` (it costs optional-parameter budget it cannot afford), so the domain
+   *  supplies presentation the planner was never asked about. */
+  paramUnit?: string,
 ): GraphDoc {
   const nodes: GraphDoc["nodes"] = {};
   for (const n of out.nodes) {
-    const contract = { ...n.contract, hash: "" };
+    const contract = {
+      ...n.contract,
+      params: paramUnit
+        ? n.contract.params.map((prm) =>
+            prm.type === "number" ? { ...prm, ui: { unit: paramUnit } } : prm,
+          )
+        : n.contract.params,
+      hash: "",
+    };
     contract.hash = contractHash(contract);
     nodes[n.id] = {
       id: n.id,
@@ -320,6 +344,7 @@ export async function planGraph(opts: {
   clarifications?: ChatMessage[];
   /** Lint-repair round-trips (default 3 — weaker local models need the extra rounds). */
   maxRepairs?: number;
+  signal?: AbortSignal;
 }): Promise<PlanResult> {
   const schema = makeArchitectSchema(
     opts.backend.planning.payloadSchema,
@@ -335,6 +360,8 @@ export async function planGraph(opts: {
     system,
     messages: [goalMessage],
     schema,
+    maxTokens: ARCHITECT_MAX_TOKENS,
+    signal: opts.signal,
   });
 
   const usage: LlmUsage = { ...first.usage };
@@ -344,7 +371,7 @@ export async function planGraph(opts: {
   const lint = (o: ArchitectOutput): string[] => {
     const problems = genericLints(o);
     if (problems.length === 0) {
-      const graph = architectOutputToGraph(o, opts.projectId, opts.backend.id, opts.goal);
+      const graph = architectOutputToGraph(o, opts.projectId, opts.backend.id, opts.goal, opts.backend.planning.paramUnit);
       for (const l of opts.backend.planning.graphLints) problems.push(...l.run(graph));
     }
     return problems;
@@ -375,6 +402,8 @@ export async function planGraph(opts: {
         },
       ],
       schema,
+      maxTokens: ARCHITECT_MAX_TOKENS,
+      signal: opts.signal,
     });
     usage.inputTokens += repair.usage.inputTokens;
     usage.outputTokens += repair.usage.outputTokens;
@@ -387,7 +416,7 @@ export async function planGraph(opts: {
   }
 
   return {
-    graph: architectOutputToGraph(out, opts.projectId, opts.backend.id, opts.goal),
+    graph: architectOutputToGraph(out, opts.projectId, opts.backend.id, opts.goal, opts.backend.planning.paramUnit),
     rationale: out.rationale,
     usage,
     repaired,

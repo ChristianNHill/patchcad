@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { GraphDoc } from "@patchcad/shared";
-import { cadEnvelopeCoherentLint, cadFastenerJustifiedLint, cadFlatFaceSizeLint } from "./index.js";
+import {
+  cadEnvelopeCoherentLint,
+  cadFastenerJustifiedLint,
+  cadFlatFaceSizeLint,
+  cadProbedPortsLint,
+} from "./index.js";
 
 /** Plan-time lint: pure graph → problems. No kernel, no LLM, no I/O. */
 
@@ -179,5 +184,37 @@ describe("cad-port-params lint", () => {
   it("leaves port types it has no probe for alone", () => {
     const g = graph([envNode("p", [cyl(0, 20, 10)], [{ name: "s", type: "SLOT", params: {} }])], []);
     expect(cadFlatFaceSizeLint.run(g)).toEqual([]);
+  });
+});
+
+describe("cadProbedPortsLint", () => {
+  it("rejects a port type no gate can measure", () => {
+    const g = graph([node("wall", "part", [{ name: "tongue", type: "GROOVE" }])], []);
+    const problems = cadProbedPortsLint.run(g);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("GROOVE");
+    expect(problems[0]).toContain("featureless block");
+  });
+
+  it("accepts every port type the kernel probes", () => {
+    for (const type of ["CLEARANCE_HOLE", "BORE", "SCREW_SEAT", "SCREW_BOSS", "FLAT_FACE"]) {
+      const g = graph([node("p", "part", [{ name: "i", type }])], []);
+      expect(cadProbedPortsLint.run(g), type).toEqual([]);
+    }
+  });
+
+  it("names every unprobed port, not just the first", () => {
+    const g = graph(
+      [node("wall", "part", [{ name: "a", type: "SLOT" }, { name: "b", type: "LIP" }])],
+      [],
+    );
+    expect(cadProbedPortsLint.run(g)).toHaveLength(2);
+  });
+
+  // Registry hardware declares no ports and is exact by construction; the other
+  // four lints skip it the same way.
+  it("skips registry hardware", () => {
+    const g = graph([node("m4", "fastener", [{ name: "x", type: "SHAFT" }])], []);
+    expect(cadProbedPortsLint.run(g)).toEqual([]);
   });
 });

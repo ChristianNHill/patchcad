@@ -155,11 +155,36 @@ export interface DomainBackend<P = unknown> {
    *  more often than a type error does. Omit to take the engine default. */
   maxAttempts?: number;
 
+  /** How hard the generator should think, and how much room it gets to answer.
+   *
+   *  These belong to the domain, not the scheduler: what a part costs to write
+   *  is a fact about the domain's language and its gates. They live here for the
+   *  same reason `maxAttempts` does — and because hardcoding them in the engine
+   *  had a concrete cost. A flat `maxTokens` chosen against one adapter's
+   *  default (16000) was a silent REDUCTION against another's (32000), so the
+   *  same constant raised the ceiling or lowered it depending on which provider
+   *  a role happened to be routed to.
+   *
+   *  Omit either to leave it to the provider. Note `effort` is only honoured by
+   *  adapters that have such a control; the rest ignore it, like every other
+   *  optional field on LlmRequest. */
+  generation?: {
+    effort?: "low" | "medium" | "high" | "xhigh" | "max";
+    maxTokens?: number;
+  };
+
   planning: {
     nodeKinds: NodeKindSpec[];
     /** Validates Contract.payload for this domain. */
     payloadSchema: z.ZodType<P>;
     graphLints: GraphLint[];
+    /** Unit suffix to stamp on planned numeric params, e.g. "mm". The architect
+     *  is not asked to choose presentation (`ui` is stripped from its schema to
+     *  stay inside the structured-output optional-parameter budget), so without
+     *  this every slider in a freshly planned project shows a bare number — in a
+     *  domain where every number is millimetres. Omit where a domain has no one
+     *  natural unit. */
+    paramUnit?: string;
     /** Domain-specific fragment merged into the architect system prompt. */
     architectGuidance: string;
   };
