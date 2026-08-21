@@ -427,6 +427,35 @@ function failureReport(result: Extract<KernelResult, { ok: false }>): string {
   return `${result.error}${result.hint ? `\nhint: ${result.hint}` : ""}`;
 }
 
+/** Smallest dimension of the declared envelope's bounding box, or null when it
+ *  cannot be resolved. Used to judge a G4 escape in proportion to the box that
+ *  was drawn rather than against a fixed millimetre count. */
+function smallestEnvelopeDim(graph: GraphDoc, node: NodeRecord): number | null {
+  const volumes = (node.contract.payload as CadContractPayload | undefined)?.envelope?.volumes ?? [];
+  if (volumes.length === 0) return null;
+  // T1 expressions, not numbers: real envelopes are written `param(ball.diameter)`
+  // so that geometry tracks its parameters. Reading only literal numbers made
+  // this return null on every project on disk, and the caller then fell back to
+  // counting rounds. The fix worked exclusively in a test that hardcoded dims.
+  const num = (d: unknown): number => {
+    if (typeof d === "number") return d;
+    try {
+      return resolveDim(graph, d as string);
+    } catch {
+      return NaN;
+    }
+  };
+  let min: number | null = null;
+  for (const v of volumes) {
+    const dims = v.kind === "box" ? v.dims.map(num) : [num(v.d), num(v.h)];
+    for (const d of dims) {
+      if (!Number.isFinite(d) || d <= 0) continue;
+      min = min === null ? d : Math.min(min, d);
+    }
+  }
+  return min;
+}
+
 export class CadBackend implements DomainBackend<CadContractPayload> {
   id = "cad";
   readonly kernel: KernelClient;
@@ -706,6 +735,7 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     node: NodeRecord;
     failures: { stage: string; report: string }[];
     attempts: number;
+    graph: GraphDoc;
   }): FailureClass {
     // "Persistent" has to mean a clear majority of the rounds actually spent,
     // not a fixed 2. At a 3-round budget 2 failures is a majority; at 5 it is
@@ -713,6 +743,34 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     // was still converging on to the architect as unbuildable.
     const persistent = Math.max(2, Math.ceil((evidence.attempts * 2) / 3));
     const stages = evidence.failures.map((f) => f.stage);
+
+    // A LARGE escape is the architect's on the FIRST failure, not the third.
+    // G4 reports how far the worst vertex is outside the box, and past a point
+    // that number stops describing a feature the generator can shrink and
+    // starts describing a box drawn somewhere the part is not. 5mm-sphere/ball
+    // declared a Ø5 envelope spanning z -5 to 0 for a sphere its own spec says
+    // is centred on the origin: half the part was outside by construction, no
+    // code could pass, and it spent five rounds and died `cancelled` finding
+    // that out. Waiting for a majority of rounds only buys evidence when the
+    // failure is ambiguous, and a part hanging half its own depth out of its
+    // envelope is not ambiguous.
+    //
+    // Threshold is relative to the envelope, because 3mm is a lot for a bracket
+    // foot and nothing for a 200mm plate. Deliberately NOT a plan-time lint:
+    // the envelope lint records why it does not check origin containment (parts
+    // are legitimately base-at-origin, imports keep their source frame), and
+    // that reasoning still holds. This uses the measured escape instead of
+    // guessing before the build.
+    for (const f of evidence.failures) {
+      if (f.stage !== "G4") continue;
+      const escaped = Number(/worst ([\d.]+) mm/.exec(f.report)?.[1] ?? NaN);
+      if (!Number.isFinite(escaped)) continue;
+      const smallest = smallestEnvelopeDim(evidence.graph, evidence.node);
+      // Inclusive: the motivating case escapes by exactly half its envelope's
+      // smallest dimension (a Ø5 box, the part 2.5mm outside), so a strict
+      // comparison would miss the one failure this exists to catch.
+      if (smallest !== null && escaped >= smallest / 2) return "contract-infeasible";
+    }
     // A persistent envelope escape means the box the architect drew is too
     // small for the features it demanded — only the architect can fix that.
     if (stages.filter((s) => s === "G4").length >= persistent) return "contract-infeasible";

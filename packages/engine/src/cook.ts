@@ -499,6 +499,7 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
 
   // Budget exhausted — attribute and surface.
   const attribution = backend.classifyFailure({
+    graph,
     node: store.node(nodeIdValue),
     failures,
     attempts: maxAttempts,

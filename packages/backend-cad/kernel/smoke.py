@@ -526,6 +526,51 @@ def build(p):
           r17d["ok"] and r17d["clash"]["pairs_tested"] == 0 and r17d.get("hash") is None,
           str(r17d.get("clash")))
 
+    # 18. Hole depth. The diameter was measured at one plane 0.6mm down, so a
+    # Ø8 dimple 0.75mm deep reported "measured_diameter: 8.0" and passed as a
+    # clearance hole a screw was meant to go through.
+    dimple_code = (
+        "from build123d import *\n"
+        "def build(p):\n"
+        "    _ = p['nonce']\n"
+        "    with BuildPart() as bp:\n"
+        "        Box(40, 40, 10)\n"
+        "        with Locations((0, 0, 5 - p['d'] / 2)):\n"
+        "            Cylinder(4, p['d'], mode=Mode.SUBTRACT)\n"
+        "    return bp.part\n"
+    )
+    top_face = {"origin": [0, 0, 5], "zAxis": [0, 0, 1], "xAxis": [1, 0, 0]}
+
+    def hole(depth, params=None):
+        port = {"key": "bolt", "type": "CLEARANCE_HOLE", "pose": top_face,
+                "params": {"diameter": 8.0, **(params or {})}}
+        return client.post("/execute", json={
+            "code": dimple_code, "params": {"d": depth, "nonce": int(time.time())}, "ports": [port],
+        })
+
+    r18 = hole(0.75)
+    check("G3 catches a dimple declared as a clearance hole",
+          r18.status_code == 422 and "dimple rather than a hole" in r18.json().get("error", ""),
+          r18.json().get("error", ""))
+    r18b = hole(14.0)
+    ports18b = (r18b.json().get("measurements", {}).get("ports") or [{}])[0]
+    check("G3 passes a through hole and says it is through",
+          r18b.status_code == 200 and ports18b.get("through") is True,
+          str(ports18b))
+    r18c = hole(4.0, {"depth": 4.0})
+    ports18c = (r18c.json().get("measurements", {}).get("ports") or [{}])[0]
+    check("G3 measures a blind hole against its declared depth",
+          r18c.status_code == 200 and abs((ports18c.get("measured_depth") or 0) - 4.0) < 0.05,
+          str(ports18c))
+    r18d = hole(4.0, {"depth": 6.0})
+    check("G3 catches a hole shallower than declared",
+          r18d.status_code == 422 and "shallower than declared" in r18d.json().get("error", ""),
+          r18d.json().get("error", ""))
+    r18e = hole(14.0, {"depth": 4.0})
+    check("G3 catches a declared depth on a hole that goes through",
+          r18e.status_code == 422 and "straight through" in r18e.json().get("error", ""),
+          r18e.json().get("error", ""))
+
     print()
     if failures:
         print(f"{len(failures)} FAILURE(S): {failures}")

@@ -56,7 +56,10 @@ executor = ThreadPoolExecutor(max_workers=POOL_SIZE)
 # depth. Clash results are cached like any other job, so without this the
 # projects the change exists to re-judge keep the verdict it was correcting —
 # which is exactly what happened on the first sweep after the fix.
-GATES_VERSION = 5
+# 5 -> 6: hole probes measure depth and through-ness. A cached pass for a
+# dimple declared as a clearance hole would otherwise keep its old verdict, and
+# a dimple is exactly what this change exists to reject.
+GATES_VERSION = 6
 
 
 def job_hash(*parts: Any) -> str:

@@ -312,7 +312,38 @@ def _probe_hole(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     if abs(measured - d) > DIAMETER_TOL_MM:
         raise GateError("G3", f'port "{port["key"]}" ({port["type"]}): expected Ø{d:g}, measured Ø{measured:.2f}',
                         f"change the hole feature to Ø{d:g} as pinned in the contract")
-    return {"key": port["key"], "type": port["type"], "measured_diameter": round(measured, 3)}
+
+    result = {"key": port["key"], "type": port["type"], "measured_diameter": round(measured, 3)}
+
+    # DEPTH, because a diameter at one plane does not make a hole. The probe
+    # sampled a single slice 0.6mm down and compared its width, so a Ø8 dimple
+    # 0.75mm deep reported "measured_diameter: 8.0" and passed as a clearance
+    # hole a screw was supposed to go through.
+    bbox = shape.bounding_box()
+    reach = max(float(bbox.size.X), float(bbox.size.Y), float(bbox.size.Z)) + 2.0
+    floor = _march_depth(shape, frame, reach)
+    result["through"] = floor is None
+    if floor is not None:
+        result["measured_depth"] = round(floor, 3)
+
+    declared_depth = _port_dim_opt(port, DEPTH_KEYS)
+    if declared_depth and declared_depth > 0:
+        if floor is None:
+            raise GateError("G3", f'port "{port["key"]}" ({port["type"]}): declares a {declared_depth:g}mm depth but the hole goes straight through',
+                            f"stop the hole at {declared_depth:g}mm, or drop params.depth if it is meant to pass through")
+        if abs(floor - declared_depth) > DEPTH_TOL_MM:
+            direction = "deeper" if floor > declared_depth else "shallower"
+            raise GateError("G3", f'port "{port["key"]}" ({port["type"]}): expected depth {declared_depth:g}, measured {floor:.2f} ({direction} than declared)',
+                            f"cut the hole {declared_depth:g}mm deep from the port face; a screw seats on this number")
+    elif floor is not None and floor < PROBE_DEPTH_MM * 2:
+        # No declared depth, so nothing to compare against. Assert only that
+        # this is a hole rather than a surface dimple: deliberately a floor and
+        # not a guess at the right depth, because an unsatisfiable check is
+        # worse than a missing one, which is what the FLAT_FACE grid taught.
+        raise GateError("G3", f'port "{port["key"]}" ({port["type"]}): only {floor:.2f}mm deep, which is a dimple rather than a hole',
+                        f"cut it through, or declare params.depth if it is meant to be blind at {floor:.2f}mm")
+
+    return result
 
 
 def _port_face_size(port: dict[str, Any]) -> float:

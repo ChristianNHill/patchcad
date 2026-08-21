@@ -231,6 +231,11 @@ export interface DomainBackend<P = unknown> {
     node: NodeRecord;
     failures: { stage: string; report: string }[];
     attempts: number;
+    /** The whole graph, because a domain may need to resolve declarations that
+     *  reference other nodes before it can judge a failure. CAD envelope dims
+     *  are T1 expressions like `param(base-plate.thickness) / 2`, and without
+     *  this the attribution silently fell back to counting rounds. */
+    graph: GraphDoc;
   }): FailureClass;
 
   /** Materialize the whole graph into the workspace (glue, stubs, configs). */

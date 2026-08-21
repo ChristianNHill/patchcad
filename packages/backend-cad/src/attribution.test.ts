@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { NodeRecord } from "@patchcad/shared";
+import { GraphDoc, type NodeRecord } from "@patchcad/shared";
 import { CadBackend } from "./index.js";
 
 /**
@@ -9,15 +9,18 @@ import { CadBackend } from "./index.js";
  * the repair budget — see CadBackend.maxAttempts.
  */
 
-// classifyFailure reads only `failures` and `attempts`; the node is inert here.
+// classifyFailure reads `failures` and `attempts` here; the node carries no
+// envelope, so the escape-proportion rule cannot fire and these exercise the
+// round-counting heuristic on its own.
 const node = { id: "part", kind: "part" } as unknown as NodeRecord;
+const emptyGraph = { nodes: {} } as unknown as GraphDoc;
 
 function classify(
   failures: { stage: string; report: string }[],
   attempts: number,
   backend = new CadBackend(),
 ) {
-  return backend.classifyFailure({ node, failures, attempts });
+  return backend.classifyFailure({ graph: emptyGraph, node, failures, attempts });
 }
 
 const g4 = (n: number) =>
@@ -65,5 +68,64 @@ describe("CadBackend.classifyFailure", () => {
   it("treats unrelated gate failures as the generator's problem", () => {
     const syntax = Array.from({ length: 5 }, () => ({ stage: "G1", report: "SyntaxError" }));
     expect(classify(syntax, 5)).toBe("code-invalid");
+  });
+});
+
+describe("a large G4 escape is the architect's on the first failure", () => {
+  /** A one-node graph whose envelope dims are T1 EXPRESSIONS, which is what real
+   *  contracts contain. An earlier version of this suite hardcoded numbers, so it
+   *  passed while the feature did nothing on every project on disk. */
+  const sphereGraph = (diameter: number, vol?: unknown) =>
+    ({
+      nodes: {
+        ball: {
+          id: "ball",
+          kind: "part",
+          params: { diameter },
+          contract: {
+            params: [{ type: "number", name: "diameter", default: diameter, description: "" }],
+            payload: {
+              envelope: {
+                volumes: [
+                  vol ?? { kind: "cylinder", d: "param(ball.diameter)", h: "param(ball.diameter)" },
+                ],
+              },
+            },
+          },
+        },
+      },
+    }) as unknown as GraphDoc;
+
+  const ball = (g: GraphDoc) => (g as unknown as { nodes: Record<string, NodeRecord> }).nodes.ball!;
+
+  const g4at = (worst: number) => [{
+    stage: "G4",
+    report: `240 mesh vertices escape the declared envelope (worst ${worst.toFixed(2)} mm past the 0.5 mm tolerance, near [0.0, 0.0, 2.5])`,
+  }];
+
+  const verdict = (worst: number, diameter = 5, vol?: unknown) => {
+    const g = sphereGraph(diameter, vol);
+    return new CadBackend().classifyFailure({ graph: g, node: ball(g), failures: g4at(worst), attempts: 5 });
+  };
+
+  it("escalates on ONE failure through a T1 expression, which is the real shape", () => {
+    // 5mm-sphere/ball: a Ø5 envelope for a sphere its spec says is centred on
+    // the origin, so 2.5mm is outside by construction. It spent five calls and
+    // died `cancelled` proving that.
+    expect(verdict(2.5)).toBe("contract-infeasible");
+  });
+
+  it("leaves a small escape to the generator", () => {
+    expect(verdict(0.4)).toBe("code-invalid");
+  });
+
+  it("scales with the envelope rather than a fixed millimetre count", () => {
+    expect(verdict(3, 5), "3mm out of a 5mm box").toBe("contract-infeasible");
+    expect(verdict(3, 200), "3mm out of a 200mm box").toBe("code-invalid");
+  });
+
+  it("falls back to round-counting when no dim resolves", () => {
+    const broken = { kind: "cylinder", d: "param(nope.missing)", h: "param(nope.missing)" };
+    expect(verdict(2.5, 5, broken)).toBe("code-invalid");
   });
 });
