@@ -54,6 +54,11 @@ geometry nothing measured.** Two unprobed port types are in live use, and the
 plan had assumed neither existed: `LIP` (6 ports, two projects) and `SHAFT` (14
 ports, both staff imports, the pegs whose sockets alone get measured).
 
+It reports `nothing to judge` rather than `verified` for a graph that declares no
+geometry, because three of the four projects that first came back clean were
+web-code graphs with zero ports. A pass over a graph the scorer cannot judge is
+the same defect one level up, so the verdict has to name which one it is.
+
 ## Writing a case
 
 Cases are JSON in `cases/`. They assert **structurally, never by node id**,
@@ -68,7 +73,9 @@ graph there is one CLEARANCE_HOLE measuring 6mm" survives a rename that
 | `noSkippedPorts` | no port reports `skipped`. Default on. See above. |
 | `ports[]` | `{type, count \| minCount, diameter \| width, tol}`, matched against any node's probes. |
 | `bboxSize` | `{value, tol, axes?}` against the largest node by volume. `axes` limits it when only some dimensions are pinned by the prompt. |
-| `volumeFraction` | `{max, min}` on measured volume over bounding-box volume. The only check that separates a hollow or cut part from the solid block of the same size, so it is what a "with cutouts" prompt asserts. |
+| `requireProbedPorts` | every port a ready node declares appears in its probe list, with measurements present and current. Default on. Separate from `noSkippedPorts` on purpose: one flag disabling both let a case drop this by turning off skipped-port reporting. |
+| `volumeFraction` | `{max, min}` on measured volume over bounding-box volume, judged on the largest node. Separates a hollow or cut part from the solid block of the same size. Scale-free, but it reads an axis-aligned box, so a diagonal or organic part fills little of its box while being solid. |
+| `volume` | `{max, min}` on absolute mm3 summed over the graph. Fails differently from the ratio, and covers the diagonal case the ratio cannot. A `Box(75,75,95)` is 534,375 mm3; the real pen cup measured 47,232. |
 | `zeroLlmKinds` | these kinds must cost 0 model calls. Registry hardware that touches a model is a defect. |
 | `assemblyProblems` | expected count from `solveScene`. |
 

@@ -40,6 +40,17 @@ type CaseExpect = {
   nodes?: { min?: number; max?: number };
   allReady?: boolean;
   noSkippedPorts?: boolean;
+  /** Every port a ready node declares must appear in its probe list, with
+   *  measurements that are present and current. Separate from noSkippedPorts:
+   *  they answer different questions, and one flag disabling both meant a case
+   *  could drop the contract-vs-probe check by turning off skipped-port
+   *  reporting. */
+  requireProbedPorts?: boolean;
+  /** Absolute measured material, summed over the graph. Fails differently from
+   *  volumeFraction, which is scale-free but reads an axis-aligned box: a
+   *  diagonal or organic part legitimately fills little of its box while being
+   *  solid, and this catches that where the ratio cannot. */
+  volume?: { max?: number; min?: number };
   ports?: PortExpect[];
   bboxSize?: { value: number[]; tol: number; axes?: number[] };
   /** measured volume / bbox volume. The only thing that distinguishes a hollow
@@ -118,6 +129,9 @@ function score(c: EvalCase, store: GraphStore, problems: unknown[]): { misses: M
           skipped.map((p) => `${p["node"]}.${p.key}(${p.type}): ${p.skipped}`).join("; "),
       );
 
+  }
+
+  if (e.requireProbedPorts !== false) {
     // A SKIPPED PORT IS ONLY THE VISIBLE HALF. `skipped` fires on a port that
     // reached the probe list and reported that no probe exists. A port declared
     // and never probed at all is simply absent, and a part that declares no
@@ -143,6 +157,16 @@ function score(c: EvalCase, store: GraphStore, problems: unknown[]): { misses: M
       if (n.measurements && n.measurements.version !== n.version)
         misses.push(`${n.id} scored on v${n.measurements.version} measurements at v${n.version} (stale)`);
     }
+  }
+
+  if (e.volume) {
+    const total = nodes.reduce(
+      (sum, n) => sum + (((n.measurements?.data ?? null) as Measured | null)?.volume_mm3 ?? 0), 0);
+    if (!total) misses.push("no volume measured anywhere, so the material claim is unchecked");
+    if (e.volume.max != null && total > e.volume.max)
+      misses.push(`${total.toFixed(0)} mm3 of material, expected under ${e.volume.max} (a solid block, not a cup)`);
+    if (e.volume.min != null && total && total < e.volume.min)
+      misses.push(`only ${total.toFixed(0)} mm3 of material, expected at least ${e.volume.min}`);
   }
 
   for (const want of e.ports ?? []) misses.push(...checkPorts(probes, want));
@@ -173,9 +197,13 @@ function score(c: EvalCase, store: GraphStore, problems: unknown[]): { misses: M
     // port nothing measured, but a part that declares no port at all has
     // nothing to compare, and that is the shape the pen-cup brick actually had.
     // Removed material is measurable, so a prompt asking for cutouts asserts it.
+    // The largest node by volume, as bboxSize does. Judging every node would
+    // fail a thin gasket beside a solid body on a min it should never see.
     const all = nodes
       .map((n) => (n.measurements?.data ?? null) as Measured | null)
-      .filter((d): d is Measured => typeof d?.volume_mm3 === "number" && !!d.bbox?.size);
+      .filter((d): d is Measured => typeof d?.volume_mm3 === "number" && !!d.bbox?.size)
+      .sort((a, b) => (b.volume_mm3 ?? 0) - (a.volume_mm3 ?? 0))
+      .slice(0, 1);
     if (!all.length) misses.push("no volume measured, so the material claim is unchecked");
     for (const d of all) {
       const size = d.bbox!.size!;
@@ -325,6 +353,36 @@ function selfTest(): void {
       mk({ p: withPorts({ status: "planned" }) }), []).misses,
     "quiet");
 
+  // The two volume forms fail differently, so both are proven both ways.
+  const vol: EvalCase = { id: "t", prompt: "p", expect: { volume: { max: 200000 } } };
+  expect("a solid box fails the absolute ceiling",
+    score(vol, mk({ p: node("p", {}, { volume_mm3: 534375, bbox: { size: [75, 75, 95] }, ports: [] }) }), []).misses,
+    "fire", "a solid block, not a cup");
+  expect("the real cup passes the absolute ceiling",
+    score(vol, mk({ p: node("p", {}, { volume_mm3: 47231.67, bbox: { size: [75, 75, 95] }, ports: [] }) }), []).misses,
+    "quiet");
+  // The ratio reads an axis-aligned box, so a diagonal part fills little of it
+  // while being solid. That is the case the absolute ceiling exists to cover.
+  expect("a diagonal solid slips past the RATIO",
+    score({ id: "t", prompt: "p", expect: { volumeFraction: { max: 0.45 } } },
+      mk({ p: node("p", {}, { volume_mm3: 100000, bbox: { size: [75, 75, 95] }, ports: [] }) }), []).misses,
+    "quiet");
+  expect("and the absolute ceiling catches it",
+    score({ id: "t", prompt: "p", expect: { volume: { max: 60000 } } },
+      mk({ p: node("p", {}, { volume_mm3: 100000, bbox: { size: [75, 75, 95] }, ports: [] }) }), []).misses,
+    "fire", "mm3 of material");
+  // Turning off skipped-port reporting must NOT also turn off contract-vs-probe.
+  const declOnly = mk({ p: node("p", {
+    contract: { name: "p", summary: "", params: [], provides: [], requires: [],
+                payload: { ports: [{ name: "g", type: "GROOVE" }] } },
+  }, { volume_mm3: 1, bbox: { size: [1, 1, 1] }, ports: [] }) });
+  expect("noSkippedPorts:false must not disable contract-vs-probe",
+    score({ id: "t", prompt: "p", expect: { noSkippedPorts: false } }, declOnly, []).misses,
+    "fire", "declared but never probed");
+  expect("requireProbedPorts:false disables only its own check",
+    score({ id: "t", prompt: "p", expect: { noSkippedPorts: false, requireProbedPorts: false } }, declOnly, []).misses,
+    "quiet");
+
   const caseBolt: EvalCase = {
     id: "b", prompt: "p",
     expect: { nodes: { min: 1 }, allReady: true, zeroLlmKinds: ["fastener"], assemblyProblems: 0 },
@@ -362,6 +420,7 @@ function scoreProjects(): void {
   // is the claim the whole project rests on. No prompt-specific expectations.
   const generic: EvalCase = { id: "verified", prompt: "", expect: { allReady: false, noSkippedPorts: true } };
   let unverified = 0;
+  let vacuous = 0;
   for (const d of dirs) {
     const doc = JSON.parse(fs.readFileSync(path.join(root, d, "patchcad.json"), "utf8"));
     let store: GraphStore;
@@ -373,13 +432,24 @@ function scoreProjects(): void {
     }
     const nodes = Object.values(store.doc.nodes);
     const ready = nodes.filter((n) => n.status === "ready").length;
+    const declared = nodes.reduce(
+      (sum, n) => sum + (((n.contract.payload as { ports?: unknown[] } | null)?.ports)?.length ?? 0), 0);
     const { misses } = score(generic, store, []);
-    console.log(`  ${misses.length ? "UNVERIFIED" : "clean      "}  ${d}  (${ready}/${nodes.length} ready)`);
+    // "clean" over a graph with nothing to judge is the same defect one level
+    // up: three of the four projects that first reported clean were web-code
+    // graphs declaring no ports, so the verdict was vacuous rather than earned.
+    // Say which it is.
+    const verdict = misses.length ? "UNVERIFIED" : declared ? "verified  " : "nothing to judge";
+    console.log(`  ${verdict.padEnd(16)} ${d}  (${ready}/${nodes.length} ready, ${declared} declared port(s), backend ${store.doc.backend})`);
     for (const m of misses.slice(0, 6)) console.log(`      ${m}`);
     if (misses.length > 6) console.log(`      ...and ${misses.length - 6} more`);
     if (misses.length) unverified++;
+    else if (!declared) vacuous++;
   }
-  console.log(`\n${unverified}/${dirs.length} project(s) carry a ready node whose declared geometry nothing measured.`);
+  console.log(
+    `\n${unverified}/${dirs.length} project(s) carry a ready node whose declared geometry nothing measured. ` +
+      `${vacuous} declared no geometry to judge, so their pass is not evidence of anything.`,
+  );
 }
 
 async function runCase(c: EvalCase) {
@@ -486,6 +556,8 @@ async function main() {
         e.noSkippedPorts !== false && "NO port verified by nothing",
         ...(e.ports ?? []).map((p) => `${p.type} ${p.diameter ?? p.width ?? ""}`.trim()),
         e.bboxSize && `bbox ${e.bboxSize.value.join("x")} +/-${e.bboxSize.tol}`,
+        e.volume && `material ${e.volume.min != null ? `>=${e.volume.min}` : ""}${e.volume.max != null ? `<=${e.volume.max}` : ""} mm3`,
+        e.requireProbedPorts !== false && "every declared port probed, current",
         e.volumeFraction && `fills ${e.volumeFraction.min != null ? `>=${e.volumeFraction.min * 100}%` : ""}${e.volumeFraction.max != null ? `<=${e.volumeFraction.max * 100}%` : ""} of its bbox`,
         e.zeroLlmKinds && `zero LLM: ${e.zeroLlmKinds.join(",")}`,
         e.assemblyProblems != null && `assembly problems == ${e.assemblyProblems}`,

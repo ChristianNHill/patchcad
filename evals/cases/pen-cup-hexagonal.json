@@ -23,6 +23,9 @@
     },
     "volumeFraction": {
       "max": 0.45
+    },
+    "volume": {
+      "max": 200000
     }
   }
 }
