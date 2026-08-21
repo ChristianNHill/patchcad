@@ -26,12 +26,12 @@ So the load-bearing assertion here is `noSkippedPorts`, and it defaults to on. A
 port the kernel cannot probe reports `skipped` and passes, and a case that
 tolerates one is measuring nothing.
 
-`skipped` is only the visible half. A port declared and never probed is simply
-absent from the list, and a part declaring no port has nothing to skip: both
-passed the first version of this scorer, which means it certified the brick it
-was written to catch. `noSkippedPorts` now also requires that every port a ready
-node declares appears in its probe list, that a ready node with declared ports
-has measurements at all, and that those measurements match the node's current
+`skipped` is only the visible half. A port declared and never probed is
+absent from the list, and a part declaring no port has nothing to skip. Both
+passed the first version of this scorer, so it certified the brick it exists to
+catch. `noSkippedPorts` now also requires that every port a ready
+node declares appears in its probe list. A ready node with declared ports must
+have measurements at all, and those measurements must match the node's current
 version. Bookkeeping still cannot reach a part that declares nothing, which is
 what `volumeFraction` is for: a solid box fills 100% of its bounding box and the
 real pen cup fills 8.8%.
@@ -42,11 +42,11 @@ real pen cup fills 8.8%.
 pnpm exec tsx src/eval.ts --score-projects       # every project, 0 LLM calls
 ```
 
-Asks one question of every `ready` node in `projects/`: does anything actually
+Asks one question of every `ready` node in `projects/`: does anything
 measure the geometry it declares. It costs nothing and it is the sharpest tool
-here, because every hole review found in this scorer was an **absence** rather
-than a wrong value, and a self-test built from synthetic defects cannot model a
-graph that carries nothing. One read of a real payload found what nineteen
+here. Every hole review found in this scorer was an **absence** instead of a
+wrong value, and a self-test built from synthetic defects cannot model a graph
+that carries nothing. One read of a real payload found what nineteen
 fixtures could not.
 
 Current answer: **6 of 10 projects on disk carry a ready node whose declared
@@ -90,6 +90,44 @@ costs alone understates every case by the largest single output in the system.
 
 Baseline to beat, from the audit: **6/11 first-try, 3 nodes needing 4+ rounds, 2
 never converging.**
+
+## Measured, 2026-08-21
+
+All three cases pass. $0.70 for the ladder, four of four model nodes first-try,
+zero dead, zero repair rounds.
+
+| case | nodes | first-try | calls | cost | cook |
+|---|---|---|---|---|---|
+| single-plate | 1 | 1/1 | 4 | $0.198 | 26.4s |
+| two-plate-bolted | 4 (2 registry) | 2/2 | 4 | $0.304 | 3.7s |
+| pen-cup-hexagonal | 1 | 1/1 | 2 | $0.194 | 88.1s |
+
+Each of those numbers is a second or third attempt, and the ladder earned its
+cost in what the first attempts found rather than in the green line:
+
+- **single-plate**, twice, $0.82. The architect declared a `BORE` and a
+  `FLAT_FACE` at the same origin, which no geometry satisfies. Run one spent 5
+  calls and died `error_contract`, correctly attributed. Run two spent 4 and
+  "succeeded" by bridging the bore with a 0.35mm web, reporting a hole that does
+  not pass through. `cadFaceHoleConflictLint` came out of that.
+- **two-plate-bolted**, twice, $1.03 then a failed plan. A clearance hole coaxial
+  with a mating face on the FAR side (the same defect one face over), and two
+  edges naming ports that registry hardware did not declare. Fixing the second
+  produced a lint that deadlocked against `cad-fastener-justified`, so for one
+  commit no plan containing a fastener existed at all.
+- **pen-cup-hexagonal**, twice, $0.19 wasted. The architect's reply failed to
+  parse and the error carried nothing but a position, which is why the adapter
+  now reports length, stop reason and a window.
+
+The pen-cup case is the one that prompted this whole plan. `msw95gq7` shipped four
+nodes green with two ports verified by nothing and a solid box would have passed.
+It now cooks one node, one port probed, 38,820 mm³ in a 534,375 mm³ box, a
+fraction of 0.073, with real hexagonal prisms subtracted around the
+circumference.
+
+What `volumeFraction` still cannot do: it proves material was **removed**, not
+what was removed. This passed because the model built real hexagons, not
+because the assertion can tell a hexagon from a bucket.
 
 Results land in `results/` as timestamped JSON, which is gitignored: they are
 run artifacts, not fixtures.

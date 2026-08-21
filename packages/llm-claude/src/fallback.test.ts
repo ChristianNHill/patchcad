@@ -114,6 +114,24 @@ describe("parse failures say enough to diagnose without a second paid call", () 
     expect(out.error).not.toContain("TRUNCATED");
   });
 
+  // The position V8 reports is an offset into the matched object, not the whole
+  // reply, so a reply with prose before the brace must report both lengths or
+  // the reader compares position against the wrong one.
+  it("distinguishes the JSON's length from the reply's when they differ", () => {
+    const bad = '{"a": "x" "b": 2}';
+    const out = call(`Here is the plan you asked for:\n\n${bad}`, "end_turn");
+    expect(out.success).toBe(false);
+    expect(out.error).toContain(`${bad.length} chars of JSON`);
+    expect(out.error).toContain("char reply");
+  });
+
+  it("reports one length when the reply IS the JSON", () => {
+    const bad = '{"a": "x" "b": 2}';
+    const out = call(bad, "end_turn");
+    expect(out.error).toContain(`${bad.length} chars,`);
+    expect(out.error).not.toContain("chars of JSON");
+  });
+
   it("still reports the raw head when no JSON object is present at all", () => {
     const out = call("I cannot help with that.", "end_turn");
     expect(out.success).toBe(false);

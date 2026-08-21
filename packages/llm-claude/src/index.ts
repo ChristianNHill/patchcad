@@ -293,10 +293,20 @@ export class ClaudeProvider implements LlmProvider {
       const window = Number.isFinite(at)
         ? ` around it: ${JSON.stringify(match[0].slice(Math.max(0, at - 120), at + 120))}`
         : ` head: ${JSON.stringify(match[0].slice(0, 200))}`;
+      // TWO LENGTHS, because the position is an offset into the MATCHED object
+      // while raw covers the whole reply. Reporting only raw.length invited the
+      // reader to compare position against the wrong number: a reply with prose
+      // before the brace said "position 10, 50 chars" when the JSON itself was
+      // 17. On a truncation that discrepancy is the difference between "the
+      // object is complete" and "the object is cut off".
+      const sizes =
+        match[0].length === raw.length
+          ? `${raw.length} chars`
+          : `${match[0].length} chars of JSON in a ${raw.length}-char reply`;
       return {
         success: false,
         error:
-          `invalid JSON: ${message} (${raw.length} chars, stop: ${stop ?? "unknown"}` +
+          `invalid JSON: ${message} (${sizes}, stop: ${stop ?? "unknown"}` +
           `${stop === "max_tokens" ? " — TRUNCATED, so raise maxTokens rather than blaming the JSON" : ""})${window}`,
       };
     }
