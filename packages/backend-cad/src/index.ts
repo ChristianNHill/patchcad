@@ -351,7 +351,66 @@ const PROBED_PORT_TYPES = new Set([
   // what the kernel can defend, so it must never run ahead of gates.py.
   "GROOVE",
   "SLOT",
+  // A peg standing out of a mating face, measured by _probe_shaft: diameter as
+  // the median over 8 outward rays at the peg's true mid-height, plus the tip.
+  // Added because --score-projects found 14 SHAFT ports live on disk, all
+  // reporting "no probe for this type yet". They got there without the
+  // architect: main.ts emits SHAFT directly for every peg joint on the IMPORT
+  // path, which never runs this lint, so the peg side of a peg joint was
+  // unverifiable by construction while its socket (a BORE) was measured.
+  "SHAFT",
 ]);
+
+/** A FLAT_FACE cannot be solid where a hole passes through it.
+ *
+ *  Found by paying for it. The eval harness ran "a 60mm square plate 5mm thick
+ *  with a 6mm hole in the middle" twice, $0.82 total, and both runs failed. The
+ *  architect declared a BORE and a FLAT_FACE at the SAME origin, and those two
+ *  probes want opposite things at that point: the face probe samples material
+ *  across the face including its centre, and the bore removes exactly that
+ *  material. The first run spent 5 generator calls and landed in error_contract,
+ *  which was the CORRECT attribution. The second spent 4 and "succeeded" by
+ *  bridging the bore with a 0.35mm web to satisfy the face, so the part reported
+ *  a Ø6 bore that does not go through.
+ *
+ *  Nothing detected the contradiction, so the cost was paid in generator calls
+ *  instead of a lint round. A FLAT_FACE means "this whole disc is material", so
+ *  it must not share its origin with a hole. Offsetting the face, shrinking its
+ *  size, or dropping one of the two all resolve it, and the architect can do any
+ *  of them for free at plan time.
+ */
+export const cadFaceHoleConflictLint = {
+  id: "cad-face-hole-conflict",
+  run(graph: GraphDoc): string[] {
+    const problems: string[] = [];
+    const HOLE_LIKE = new Set(["CLEARANCE_HOLE", "BORE", "SCREW_SEAT"]);
+    for (const n of Object.values(graph.nodes)) {
+      if (REGISTRY_HARDWARE.has(n.kind)) continue;
+      const ports = (n.contract.payload as CadContractPayload | undefined)?.ports ?? [];
+      const faces = ports.filter((p) => p.type === "FLAT_FACE");
+      const holes = ports.filter((p) => HOLE_LIKE.has(p.type));
+      for (const f of faces) {
+        for (const h of holes) {
+          // Only a SHARED origin is a certain conflict. A hole elsewhere under
+          // the same face may or may not fall inside the probed disc, and this
+          // lint must not fire on a plate with a face and an offset hole, which
+          // is an ordinary and satisfiable part.
+          const same =
+            ["0", "1", "2"].every(
+              (i) => String(f.pose.origin[Number(i)]) === String(h.pose.origin[Number(i)]),
+            ) && String(f.pose.zAxis) === String(h.pose.zAxis);
+          if (same)
+            problems.push(
+              `${n.id}: port "${f.name}" (FLAT_FACE) and port "${h.name}" (${h.type}) share an origin, ` +
+                `so no geometry satisfies both: the face probe requires material at that point and the ` +
+                `hole removes it. Offset the face, shrink its size below the hole, or drop one of them.`,
+            );
+        }
+      }
+    }
+    return problems;
+  },
+};
 
 export const cadProbedPortsLint = {
   id: "cad-probed-ports",
@@ -467,6 +526,7 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       cadEnvelopeCoherentLint,
       cadFlatFaceSizeLint,
       cadProbedPortsLint,
+      cadFaceHoleConflictLint,
     ],
     architectGuidance: [
       "ONE PART IS A COMPLETE ANSWER. Decomposing is a cost, not a virtue: every",

@@ -223,7 +223,8 @@ def _in_material(shape: Any, p: tuple[float, float, float]) -> bool:
     return bool(shape.is_inside(p))
 
 
-def _march(shape: Any, frame, du: float, dv: float, w: float, max_r: float) -> float | None:
+def _march(shape: Any, frame, du: float, dv: float, w: float, max_r: float,
+           find: str = "material") -> float | None:
     """Distance along (du, dv) at depth w to the first change of state, or None
     if it never changes within max_r. Outward step then 12 bisections, so the
     answer is good to max_r/2**12 regardless of the step.
@@ -233,22 +234,27 @@ def _march(shape: Any, frame, du: float, dv: float, w: float, max_r: float) -> f
     it, which meant a rectangular feature — a slot with a width and a length —
     could not be measured at all without reimplementing march and bisect.
 
-    Finds the void→material crossing: a hole wall from inside the hole, a channel
-    wall from inside the channel. A polarity flag lived here briefly with no
-    caller and no test — dead flexibility in the oracle is worse than none.
+    Default finds the void→material crossing: a hole wall from inside the hole, a
+    channel wall from inside the channel. `find="void"` inverts it, which is what
+    a SHAFT needs: a peg is solid at its axis and the measurement wanted is where
+    the material ENDS. A polarity flag lived here once with no caller and no
+    test, and was removed for it — dead flexibility in the oracle is worse than
+    none. This one has both.
     """
     o, x, y, z = frame
     step = 0.25
-    # The start must be void, or there is no crossing to find.
-    # Without this the bisection collapses toward zero and reports a ~0 distance
-    # — which a caller reads as "the wall is right here", i.e. a zero width. Both
-    # current callers check the origin themselves before marching, so this guards
-    # the next one; the module self-check pins it.
-    if _in_material(shape, _at(o, x, y, z, 0.0, 0.0, w)):
+    want_material = find == "material"
+    # The start must be the OPPOSITE of what is being sought, or there is no
+    # crossing to find. Without this the bisection collapses toward zero and
+    # reports a ~0 distance, which a caller reads as "the wall is right here",
+    # i.e. a zero width or a zero-diameter shaft. Every caller checks the origin
+    # itself before marching, so this guards the next one; the self-check pins
+    # both polarities.
+    if _in_material(shape, _at(o, x, y, z, 0.0, 0.0, w)) == want_material:
         return None
     lo, crossing, r = 0.0, None, step
     while r <= max_r:
-        if _in_material(shape, _at(o, x, y, z, du * r, dv * r, w)):
+        if _in_material(shape, _at(o, x, y, z, du * r, dv * r, w)) == want_material:
             crossing = r
             break
         lo = r
@@ -258,7 +264,10 @@ def _march(shape: Any, frame, du: float, dv: float, w: float, max_r: float) -> f
     hi = crossing
     for _ in range(12):
         mid = (lo + hi) / 2
-        if _in_material(shape, _at(o, x, y, z, du * mid, dv * mid, w)):
+        # Polarity applies to the bisection too. Testing raw material here would
+        # converge on the wrong side of the boundary for find="void", returning
+        # the last void sample instead of the last solid one.
+        if _in_material(shape, _at(o, x, y, z, du * mid, dv * mid, w)) == want_material:
             hi = mid
         else:
             lo = mid
@@ -463,6 +472,91 @@ def _probe_boss(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
             raise GateError("G3", f'port "{port["key"]}" (SCREW_BOSS): expected pilot Ø{pilot:g}, measured Ø{measured:.2f}',
                             f"change the pilot hole to Ø{pilot:g} as pinned in the contract")
         result["measured_pilot"] = round(measured, 3)
+    return result
+
+
+LENGTH_TOL_MM = 0.5  # a peg is a slip fit; half a millimetre short still seats
+DIAMETER_KEYS = ("diameter", "dia", "shaftDiameter", "shaft_diameter", "pegDiameter", "peg_diameter")
+LENGTH_KEYS = ("length", "len", "shaftLength", "shaft_length", "pegLength", "peg_length")
+
+
+def _probe_shaft(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
+    """SHAFT: a peg standing OUT of the mating face, the inverse of a hole.
+
+    Emitted by the import path for every peg joint (main.ts), which never passes
+    through the plan-time probed-ports lint, so until now the peg side of a peg
+    joint was unverifiable by construction while its socket (a BORE) was
+    measured. --score-projects found 14 of these on disk, all reporting "no
+    probe for this type yet".
+
+    Measured the same way as a hole and in the opposite direction: the axis is
+    SOLID here, so the marches look for where material ends. Diameter is the
+    median over 8 rays, which tolerates a chamfered or filleted tip the way the
+    hole probe tolerates one at a mouth.
+    """
+    key = port.get("key", "?")
+    d = _port_dim(port, DIAMETER_KEYS, f'port "{key}" (SHAFT): no diameter declared',
+                  "declare params.diameter for a SHAFT port")
+    declared_len = _port_dim_opt(port, LENGTH_KEYS)
+    frame = _frame(port["pose"])
+    o, x, y, z = frame
+
+    # +z points OUT of the mating face, so the peg body is at POSITIVE w.
+    # Existence is checked just clear of the face, NOT at mid-declared-length:
+    # a peg shorter than declared put that sample past the tip and reported "no
+    # peg" for a peg that is simply short, which is a misleading message on a
+    # real defect. The self-check pins that case.
+    near = 0.25
+    if not _in_material(shape, _at(o, x, y, z, 0.0, 0.0, near)):
+        raise GateError(
+            "G3",
+            f'port "{key}" (SHAFT): no material {near}mm out from the pose, so there is no peg',
+            f"grow a Ø{d:g} peg standing out of the mating face at the contract pose",
+        )
+
+    # The tip first, so the diameter is measured at the middle of the ACTUAL peg
+    # rather than wherever the declaration guessed.
+    reach = (declared_len * 2 + 4.0) if declared_len else (d * 4 + 20.0)
+    tip, step, t = None, 0.25, near
+    while t <= reach:
+        if not _in_material(shape, _at(o, x, y, z, 0.0, 0.0, t)):
+            tip = t
+            break
+        t += step
+    w = (tip / 2) if tip else max(near, (declared_len / 2) if declared_len else PROBE_DEPTH_MM)
+
+    radii = []
+    for k in range(8):
+        theta = 2 * math.pi * k / 8
+        r = _march(shape, frame, math.cos(theta), math.sin(theta), w, max_r=d * 2 + 4.0, find="void")
+        if r is not None:
+            radii.append(r)
+    if len(radii) < 5:
+        raise GateError(
+            "G3",
+            f'port "{key}" (SHAFT): could not measure a diameter, {len(radii)}/8 rays found an edge within {d * 2 + 4:.1f}mm',
+            "the peg must be a bounded solid standing proud of the face, not a merged mass",
+        )
+    radii.sort()
+    measured = 2 * radii[len(radii) // 2]
+    if abs(measured - d) > DIAMETER_TOL_MM:
+        raise GateError(
+            "G3",
+            f'port "{key}" (SHAFT): expected Ø{d:g}, measured Ø{measured:.2f}',
+            f"resize the peg to Ø{d:g} as pinned in the contract",
+        )
+
+    result: dict[str, Any] = {"key": key, "type": port["type"], "measured_diameter": round(measured, 3)}
+    if tip is not None:
+        result["measured_length"] = round(tip, 3)
+    # A peg shorter than declared cannot reach its socket, which a slip-fit joint
+    # shows as a gap. Only enforced against a declaration.
+    if declared_len and tip is not None and tip + LENGTH_TOL_MM < declared_len:
+        raise GateError(
+            "G3",
+            f'port "{key}" (SHAFT): expected length {declared_len:g}mm, material ends at {tip:.2f}mm',
+            f"extend the peg to {declared_len:g}mm so it reaches its socket",
+        )
     return result
 
 
@@ -766,6 +860,8 @@ def g3_ports(shape: Any, ports: list[dict[str, Any]]) -> list[dict[str, Any]]:
             report.append(_probe_flat_face(shape, port))
         elif ptype == "SCREW_BOSS":
             report.append(_probe_boss(shape, port))
+        elif ptype == "SHAFT":
+            report.append(_probe_shaft(shape, port))
         elif ptype in CHANNEL_LIKE:
             report.append(_probe_channel(shape, port))
         else:
@@ -860,7 +956,7 @@ def _raise_selfcheck(msg: str) -> None:
 # directly against shapes built here, so a bad radius or a flipped polarity
 # fails in a second with a line number. There is no pytest in this package.
 if __name__ == "__main__":  # pragma: no cover
-    from build123d import Axis, Box, BuildPart, Cylinder, Locations, Mode, chamfer
+    from build123d import Axis, Box, BuildPart, Cylinder, Locations, Mode, Pos, chamfer
 
     fails: list[str] = []
 
@@ -957,6 +1053,46 @@ if __name__ == "__main__":  # pragma: no cover
     expect("a garbage depth does not shadow a valid alias",
            lambda: _probe_channel(grooved4, {"key": "g", "type": "GROOVE", "pose": pose((0, 0, 5)), "params": {"width": 3.0, "depth": "abc", "slotDepth": 99.0}}),
            "expected depth 99")
+
+    print("SHAFT — a peg standing out of the mating face")
+    # Algebra mode, so the peg's extent is arithmetic rather than an alignment
+    # enum: plate spans z -3..3, peg spans 3..15, so the face is z=3.
+    pegged = Box(30, 30, 6) + Pos(0, 0, 9) * Cylinder(2.5, 12)
+    # The face is z=3 (top of the box) and +z points out of it, so the peg body
+    # is at positive w exactly as the probe assumes.
+    peg_pose = pose((0, 0, 3))
+    expect("a Ø5 x 12 peg measures Ø5",
+           lambda: _probe_shaft(pegged, {"key": "p", "type": "SHAFT", "pose": peg_pose,
+                                         "params": {"diameter": 5.0, "length": 12}}))
+    expect("a Ø5 peg declared Ø8 is caught",
+           lambda: _probe_shaft(pegged, {"key": "p", "type": "SHAFT", "pose": peg_pose,
+                                         "params": {"diameter": 8.0, "length": 12}}),
+           "expected Ø8, measured Ø5")
+    expect("a declared peg that is not there is caught",
+           lambda: _probe_shaft(pegged, {"key": "p", "type": "SHAFT", "pose": pose((10, 10, 3)),
+                                         "params": {"diameter": 5.0, "length": 12}}),
+           "there is no peg")
+    expect("a peg shorter than declared is caught",
+           lambda: _probe_shaft(pegged, {"key": "p", "type": "SHAFT", "pose": peg_pose,
+                                         "params": {"diameter": 5.0, "length": 25}}),
+           "material ends at")
+    expect("a peg with no declared length still measures its diameter",
+           lambda: _probe_shaft(pegged, {"key": "p", "type": "SHAFT", "pose": peg_pose,
+                                         "params": {"diameter": 5.0}}))
+    expect("a diameter alias is read",
+           lambda: _probe_shaft(pegged, {"key": "p", "type": "SHAFT", "pose": peg_pose,
+                                         "params": {"peg_diameter": 5.0, "length": 12}}))
+    expect("no diameter at all fails with a repairable hint",
+           lambda: _probe_shaft(pegged, {"key": "p", "type": "SHAFT", "pose": peg_pose,
+                                         "params": {"length": 12}}),
+           "no diameter declared")
+    # A SHAFT pose pointing INTO the solid has no peg out front. Without this the
+    # probe would read the box itself as an enormous peg.
+    expect("a pose facing into the block reports no peg",
+           lambda: _probe_shaft(pegged, {"key": "p", "type": "SHAFT",
+                                         "pose": {"origin": [0, 0, -3], "zAxis": [0, 0, -1], "xAxis": [1, 0, 0]},
+                                         "params": {"diameter": 5.0, "length": 12}}),
+           "there is no peg")
 
     print("_march — the shared directional primitive")
     frame = _frame(pose((0, 0, 5)))

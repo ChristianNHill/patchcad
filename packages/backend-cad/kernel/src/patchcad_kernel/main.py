@@ -65,7 +65,10 @@ executor = ThreadPoolExecutor(max_workers=POOL_SIZE)
 # undo-then-re-split reuses the same key: same node ids, same filenames, same
 # code, same params, same ports, new holes. The cache is on disk and outlives
 # the restart, which is precisely when it would serve the stale verdict.
-GATES_VERSION = 7
+# 7 -> 8: SHAFT is probed instead of skipped. Every peg joint on disk holds a
+# cached pass whose port report says "no probe for this type yet", and those are
+# exactly the verdicts this overturns.
+GATES_VERSION = 8
 
 
 def job_hash(*parts: Any) -> str:

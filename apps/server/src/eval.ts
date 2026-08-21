@@ -29,7 +29,15 @@ const casesDir = path.join(repoRoot, "evals", "cases");
 const resultsDir = path.join(repoRoot, "evals", "results");
 
 type PortExpect = {
-  type: string;
+  /** One exact type. Prefer anyType when the prompt pins geometry rather than
+   *  vocabulary: the floor case failed a CORRECT plate because the architect
+   *  called its through-hole a BORE and the case demanded CLEARANCE_HOLE. */
+  type?: string;
+  /** Any of these types satisfies it. */
+  anyType?: string[];
+  /** The hole must pass through, which is the fact "a hole in the middle"
+   *  actually asserts. A bore bridged by a web reports through:false. */
+  through?: boolean;
   count?: number;
   minCount?: number;
   diameter?: number;
@@ -92,20 +100,29 @@ type Miss = string;
 
 function checkPorts(probes: Probe[], want: PortExpect): Miss[] {
   const misses: Miss[] = [];
-  const of = probes.filter((p) => p.type === want.type);
+  const types = want.anyType ?? (want.type ? [want.type] : []);
+  const label = types.join(" or ");
+  const of = probes.filter((p) => types.includes(String(p.type)));
   if (want.count != null && of.length !== want.count)
-    misses.push(`expected ${want.count} ${want.type} port(s), graph has ${of.length}`);
+    misses.push(`expected ${want.count} ${label} port(s), graph has ${of.length}`);
   if (want.minCount != null && of.length < want.minCount)
-    misses.push(`expected at least ${want.minCount} ${want.type} port(s), graph has ${of.length}`);
+    misses.push(`expected at least ${want.minCount} ${label} port(s), graph has ${of.length}`);
+  if (want.through) {
+    const holed = of.filter((p) => p["through"] === true);
+    if (of.length && !holed.length)
+      misses.push(
+        `no ${label} passes through; measured ${of.map((p) => `${p.key}(through=${p["through"]}, depth=${p["measured_depth"]})`).join(", ")}`,
+      );
+  }
   for (const [key, want_v] of [["measured_diameter", want.diameter], ["measured_width", want.width]] as const) {
     if (want_v == null) continue;
     const tol = want.tol ?? 0.2;
     // ANY port of this type may satisfy it: the architect picks which node
     // carries which hole, and the case must not care.
     const got = of.map((p) => p[key]).filter((v): v is number => typeof v === "number");
-    if (!got.length) misses.push(`no ${want.type} reported ${key} (measured by nothing)`);
+    if (!got.length) misses.push(`no ${label} reported ${key} (measured by nothing)`);
     else if (!got.some((v) => Math.abs(v - want_v) <= tol))
-      misses.push(`no ${want.type} ${key} within ${tol} of ${want_v}; measured ${got.map((v) => v.toFixed(2)).join(", ")}`);
+      misses.push(`no ${label} ${key} within ${tol} of ${want_v}; measured ${got.map((v) => v.toFixed(2)).join(", ")}`);
   }
   return misses;
 }
@@ -401,6 +418,26 @@ function selfTest(): void {
     score({ id: "t", prompt: "p", expect: { noSkippedPorts: false, requireProbedPorts: false } }, declOnly, []).misses,
     "quiet");
 
+  // anyType and through, both added because a CORRECT plate failed this scorer:
+  // the architect called its through-hole a BORE where the case said
+  // CLEARANCE_HOLE, and the run that "passed" had bridged the bore with a web.
+  const holed: EvalCase = {
+    id: "t", prompt: "p",
+    expect: { ports: [{ anyType: ["CLEARANCE_HOLE", "BORE"], minCount: 1, diameter: 6.0, tol: 0.3, through: true }] },
+  };
+  const withHole = (over: Record<string, unknown>) =>
+    mk({ p: node("p", {}, { volume_mm3: 1, bbox: { size: [60, 60, 5] },
+                            ports: [{ key: "h", type: "BORE", measured_diameter: 6.0, ...over }] }) });
+  expect("a BORE satisfies a hole asserted by geometry",
+    score(holed, withHole({ through: true }), []).misses, "quiet");
+  expect("a bore bridged by a web is not a hole",
+    score(holed, withHole({ through: false, measured_depth: 0 }), []).misses,
+    "fire", "passes through");
+  expect("a type outside anyType does not satisfy it",
+    score(holed, mk({ p: node("p", {}, { volume_mm3: 1, bbox: { size: [1, 1, 1] },
+                                         ports: [{ key: "g", type: "GROOVE", measured_width: 6 }] }) }), []).misses,
+    "fire", "expected at least 1");
+
   const caseBolt: EvalCase = {
     id: "b", prompt: "p",
     expect: { nodes: { min: 1 }, allReady: true, zeroLlmKinds: ["fastener"], assemblyProblems: 0 },
@@ -569,9 +606,14 @@ async function main() {
   for (const c of cases) {
     if (c.expect.ports && c.expect.ports.length === 0)
       vacuous.push(`${c.id}: "ports": [] asserts nothing, remove the key or fill it`);
-    for (const pe of c.expect.ports ?? [])
-      if (pe.diameter == null && pe.width == null)
-        vacuous.push(`${c.id}: ${pe.type} expectation has no diameter or width, so it only counts probes`);
+    for (const pe of c.expect.ports ?? []) {
+      if (!pe.type && !pe.anyType)
+        vacuous.push(`${c.id}: a port expectation names no type`);
+      if (pe.diameter == null && pe.width == null && !pe.through)
+        vacuous.push(
+          `${c.id}: ${pe.anyType?.join("|") ?? pe.type} expectation has no diameter, width or through, so it only counts probes`,
+        );
+    }
   }
   if (vacuous.length) {
     for (const v of vacuous) console.error(`INVALID CASE: ${v}`);
@@ -586,7 +628,8 @@ async function main() {
         e.nodes && `nodes ${e.nodes.min ?? 0}..${e.nodes.max ?? "inf"}`,
         e.allReady !== false && "all nodes ready",
         e.noSkippedPorts !== false && "NO port verified by nothing",
-        ...(e.ports ?? []).map((p) => `${p.type} ${p.diameter ?? p.width ?? ""}`.trim()),
+        ...(e.ports ?? []).map((p) =>
+          `${p.anyType?.join("|") ?? p.type} ${p.diameter ?? p.width ?? ""}${p.through ? " through" : ""}`.trim()),
         e.bboxSize && `bbox ${e.bboxSize.value.join("x")} +/-${e.bboxSize.tol}`,
         e.volume && `material ${e.volume.min != null ? `>=${e.volume.min}` : ""}${e.volume.max != null ? `<=${e.volume.max}` : ""} mm3`,
         e.requireProbedPorts !== false && "every declared port probed, current",

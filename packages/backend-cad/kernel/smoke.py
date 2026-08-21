@@ -61,6 +61,14 @@ def structural() -> None:
     check("kernel source has no duplicate or unbound names", ok, "" if ok else detail)
 
 
+PEG = """
+from build123d import *
+
+def build(p):
+    return Box(30, 30, 6) + Pos(0, 0, 9) * Cylinder(p.peg_d / 2, 12)
+"""
+
+
 def main() -> None:
     structural()
     client = httpx.Client(base_url=BASE, timeout=60)
@@ -623,6 +631,38 @@ def build(p):
           r18e.status_code == 200, r18e.json().get("error", ""))
 
     print()
+    # SHAFT, the peg side of every imported peg joint. Nonce in params so each
+    # assertion is cache-cold: /execute serves a cached 200 before a worker runs,
+    # so a pass-asserting check can otherwise be green with the probe deleted.
+    print("G3 SHAFT — the peg side of a peg joint")
+    nonce = int(time.time())
+    def shaft(peg_d, dia, length, n):
+        return {
+            "code": PEG,
+            "params": {"peg_d": peg_d, "nonce": nonce + n},
+            "ports": [{"key": "peg", "type": "SHAFT",
+                       "pose": {"origin": [0, 0, 3], "zAxis": [0, 0, 1], "xAxis": [1, 0, 0]},
+                       "params": {"diameter": dia, "length": length}}],
+        }
+    r = client.post("/execute", json=shaft(5.0, 5.0, 12, 0))
+    ok = r.status_code == 200
+    ports = (r.json().get("measurements") or {}).get("ports", []) if ok else []
+    measured = ports[0].get("measured_diameter") if ports else None
+    check("G3 measures a true Ø5 peg in the mesh", ok and abs((measured or 0) - 5.0) < 0.1,
+          f"measured Ø{measured}" if ok else r.text[:120])
+    r = client.post("/execute", json=shaft(5.0, 8.0, 12, 1))
+    check("G3 catches a peg thinner than declared", r.status_code == 422 and "measured Ø5" in r.text,
+          r.text[:140])
+    r = client.post("/execute", json=shaft(5.0, 5.0, 25, 2))
+    check("G3 catches a peg shorter than declared", r.status_code == 422 and "material ends at" in r.text,
+          r.text[:140])
+    r = client.post("/execute", json={**shaft(5.0, 5.0, 12, 3),
+                                      "ports": [{"key": "peg", "type": "SHAFT",
+                                                 "pose": {"origin": [10, 10, 3], "zAxis": [0, 0, 1], "xAxis": [1, 0, 0]},
+                                                 "params": {"diameter": 5.0, "length": 12}}]})
+    check("G3 catches a declared peg that was never built", r.status_code == 422 and "no peg" in r.text,
+          r.text[:140])
+
     if failures:
         print(f"{len(failures)} FAILURE(S): {failures}")
         sys.exit(1)

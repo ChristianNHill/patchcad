@@ -5,6 +5,7 @@ import {
   cadFastenerJustifiedLint,
   cadFlatFaceSizeLint,
   cadProbedPortsLint,
+  cadFaceHoleConflictLint,
 } from "./index.js";
 
 /** Plan-time lint: pure graph → problems. No kernel, no LLM, no I/O. */
@@ -221,8 +222,8 @@ describe("cadProbedPortsLint", () => {
   // This set is a claim about gates.py. If a type is listed here with no probe
   // behind it, a node built from it passes verify as a featureless block.
   it("lists exactly the types gates.py dispatches a probe for", () => {
-    const probed = ["BORE", "CLEARANCE_HOLE", "FLAT_FACE", "GROOVE", "SCREW_BOSS", "SCREW_SEAT", "SLOT"];
-    const rejected = ["SHAFT", "SNAP_HOOK", "SNAP_RECESS", "LIP", "HOLE_PATTERN", "BOSS_PATTERN"];
+    const probed = ["BORE", "CLEARANCE_HOLE", "FLAT_FACE", "GROOVE", "SCREW_BOSS", "SCREW_SEAT", "SHAFT", "SLOT"];
+    const rejected = ["SNAP_HOOK", "SNAP_RECESS", "LIP", "HOLE_PATTERN", "BOSS_PATTERN"];
     for (const type of probed) {
       expect(cadProbedPortsLint.run(graph([node("p", "part", [{ name: "i", type }])], [])), type).toEqual([]);
     }
@@ -233,7 +234,7 @@ describe("cadProbedPortsLint", () => {
 
   it("names every unprobed port, not just the first", () => {
     const g = graph(
-      [node("wall", "part", [{ name: "a", type: "SHAFT" }, { name: "b", type: "LIP" }])],
+      [node("wall", "part", [{ name: "a", type: "SNAP_HOOK" }, { name: "b", type: "LIP" }])],
       [],
     );
     expect(cadProbedPortsLint.run(g)).toHaveLength(2);
@@ -242,7 +243,70 @@ describe("cadProbedPortsLint", () => {
   // Registry hardware declares no ports and is exact by construction; the other
   // four lints skip it the same way.
   it("skips registry hardware", () => {
-    const g = graph([node("m4", "fastener", [{ name: "x", type: "SHAFT" }])], []);
+    const g = graph([node("m4", "fastener", [{ name: "x", type: "LIP" }])], []);
     expect(cadProbedPortsLint.run(g)).toEqual([]);
+  });
+});
+
+describe("cadFaceHoleConflictLint", () => {
+  const at = (name: string, type: string, origin: (number | string)[], zAxis = [0, 0, 1]) => ({
+    name, type, pose: { origin, zAxis, xAxis: [1, 0, 0] }, params: {},
+  });
+
+  // The shared `node()` helper REPLACES every port's pose with one fixed pose,
+  // so it cannot express this lint's subject at all: under it every pair shares
+  // an origin and the "real contract" test below passed no matter what the lint
+  // did. This builder keeps the poses it is given.
+  const posed = (id: string, kind: string, ports: ReturnType<typeof at>[]) => {
+    const n = node(id, kind, []) as unknown as { contract: { payload: { ports: unknown[] } } };
+    n.contract.payload.ports = ports;
+    return n as unknown as ReturnType<typeof node>;
+  };
+
+  // THE ACTUAL CONTRACT THAT COST $0.82, copied from the eval run that failed
+  // twice on it: a BORE and a FLAT_FACE on the same expression-valued origin.
+  it("rejects the real plate contract the architect emitted", () => {
+    const z = "param(square-plate.thickness) / 2";
+    const g = graph([posed("square-plate", "part", [
+      at("center_bore", "BORE", [0, 0, z]),
+      at("top_face", "FLAT_FACE", [0, 0, z]),
+    ])], []);
+    const out = cadFaceHoleConflictLint.run(g);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toContain("share an origin");
+    expect(out[0]).toContain("center_bore");
+    expect(out[0]).toContain("top_face");
+  });
+
+  it("allows a face with an OFFSET hole, which is an ordinary plate", () => {
+    const g = graph([posed("p", "part", [
+      at("top_face", "FLAT_FACE", [0, 0, 2.5]),
+      at("bolt", "CLEARANCE_HOLE", [20, 0, 2.5]),
+    ])], []);
+    expect(cadFaceHoleConflictLint.run(g)).toEqual([]);
+  });
+
+  it("allows a face and a hole on OPPOSITE faces", () => {
+    const g = graph([posed("p", "part", [
+      at("top_face", "FLAT_FACE", [0, 0, 2.5]),
+      at("b", "BORE", [0, 0, 2.5], [0, 0, -1]),
+    ])], []);
+    expect(cadFaceHoleConflictLint.run(g)).toEqual([]);
+  });
+
+  it("names every conflicting pair", () => {
+    const g = graph([posed("p", "part", [
+      at("f", "FLAT_FACE", [0, 0, 1]),
+      at("h1", "BORE", [0, 0, 1]),
+      at("h2", "SCREW_SEAT", [0, 0, 1]),
+    ])], []);
+    expect(cadFaceHoleConflictLint.run(g)).toHaveLength(2);
+  });
+
+  it("skips registry hardware", () => {
+    const g = graph([posed("m4", "fastener", [
+      at("f", "FLAT_FACE", [0, 0, 0]), at("h", "BORE", [0, 0, 0]),
+    ])], []);
+    expect(cadFaceHoleConflictLint.run(g)).toEqual([]);
   });
 });
