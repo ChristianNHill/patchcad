@@ -9,6 +9,7 @@ from __future__ import annotations
 import multiprocessing as mp
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from .worker import worker_main
@@ -35,11 +36,23 @@ class Worker:
         self.process = SPAWN.Process(target=worker_main, args=(child_conn,), daemon=True)
         self.process.start()
         child_conn.close()
-        if not self.parent_conn.poll(BOOT_TIMEOUT_S):
-            raise RuntimeError("kernel worker failed to become ready (build123d import hang?)")
-        ready = self.parent_conn.recv()
-        if not ready.get("ready"):
-            raise RuntimeError(f"kernel worker sent unexpected boot message: {ready}")
+        # The child is already running by here, so a boot failure has to reap it:
+        # the constructor throws, no caller holds the half-built Worker, and
+        # daemon=True only covers a clean interpreter exit — leaving an orphan
+        # holding a live OCP interpreter.
+        try:
+            if not self.parent_conn.poll(BOOT_TIMEOUT_S):
+                raise RuntimeError("kernel worker failed to become ready (build123d import hang?)")
+            ready = self.parent_conn.recv()
+            if not ready.get("ready"):
+                raise RuntimeError(f"kernel worker sent unexpected boot message: {ready}")
+        except BaseException:
+            try:
+                self.process.kill()
+                self.process.join(5)
+            except Exception:  # noqa: BLE001
+                pass
+            raise
 
     def request(self, job: dict[str, Any], timeout_s: float) -> dict[str, Any]:
         """Blocking send+recv. Raises WorkerTimeout / WorkerCrash; either way
@@ -85,7 +98,29 @@ class Worker:
 class WorkerPool:
     def __init__(self, size: int = 2) -> None:
         self.size = size
-        self.workers = [Worker() for _ in range(size)]
+        # Boot the workers CONCURRENTLY. Worker() blocks until its child has
+        # imported build123d, so a list comprehension made startup linear in
+        # pool size — the reason the pool stayed at 2 was that widening it made
+        # the first cook wait proportionally longer. The imports happen in child
+        # processes and the parent only waits on a pipe, so threads are enough.
+        # If one worker fails to boot, the others have already started and must
+        # be reaped: the executor waits for every submitted task before the
+        # exception surfaces, and `self.workers` would never be assigned, so
+        # nothing would hold a reference to shut them down. daemon=True only
+        # covers a clean interpreter exit, and each orphan pins ~200MB of OCP.
+        with ThreadPoolExecutor(max_workers=size) as boot:
+            futures = [boot.submit(Worker) for _ in range(size)]
+        started, failure = [], None
+        for f in futures:
+            try:
+                started.append(f.result())
+            except Exception as err:  # noqa: BLE001
+                failure = failure or err
+        if failure is not None:
+            for w in started:
+                w.shutdown()
+            raise failure
+        self.workers = started
         self._free: list[Worker] = list(self.workers)
         self._lock = threading.Lock()
         self._available = threading.Semaphore(size)

@@ -245,6 +245,59 @@ def build(p):
     body14 = r14.json()
     check("G3 catches wrong pilot", r14.status_code == 422 and "pilot" in body14.get("error", ""), body14.get("error", ""))
 
+    # 15. FLAT_FACE on a ROUND face. The probe used to sample a square grid whose
+    # corners sat at size*0.707 — off any disc or hexagon of that width — so a
+    # truthful `size` could not pass and only an understated one could. Then the
+    # first fix used a FRACTIONAL inset, which accepted an 11% overstatement and
+    # got worse in absolute terms as parts grew. Both directions are pinned here:
+    # truth passes, and an overstatement beyond the absolute standoff fails, at
+    # two sizes an order of magnitude apart so a fractional regression shows up.
+    round_code = (
+        "from build123d import *\n"
+        "def build(p):\n"
+        "    with BuildPart() as bp:\n"
+        "        Cylinder(radius=p['r'], height=10)\n"
+        "    return bp.part\n"
+    )
+
+    def face(size, r):
+        port = {
+            "key": "seat", "type": "FLAT_FACE",
+            "pose": {"origin": [0, 0, 5], "zAxis": [0, 0, 1], "xAxis": [1, 0, 0]},
+            "params": {"size": size},
+        }
+        return client.post("/execute", json={"code": round_code, "params": {"r": r}, "ports": [port]})
+
+    check("G3 accepts a truthful round face", face(50.0, 25).status_code == 200,
+          "a Ø50 top declared as size 50 must pass")
+    check("G3 rejects an 11% overstated face", face(55.5, 25).status_code == 422,
+          "a Ø50 top declared as size 55.5 must fail")
+    # The same relative overstatement on a 4x larger part. A fractional inset
+    # passes this; an absolute one does not.
+    check("G3 face tolerance does not scale with the part", face(202.4, 100).status_code == 422,
+          "a Ø200 top declared as size 202.4 (+1.2%) must fail")
+    check("G3 still accepts the truth on a large face", face(200.0, 100).status_code == 200,
+          "a Ø200 top declared as size 200 must pass")
+
+    # Two rings, not one: a single sampling radius is satisfied by spokes.
+    spoke_code = (
+        "from build123d import *\n"
+        "def build(p):\n"
+        "    with BuildPart() as bp:\n"
+        "        Cylinder(radius=4, height=10)\n"
+        "        with PolarLocations(22, 8):\n"
+        "            Box(14, 5, 10)\n"
+        "    return bp.part\n"
+    )
+    spoke_port = {
+        "key": "seat", "type": "FLAT_FACE",
+        "pose": {"origin": [0, 0, 5], "zAxis": [0, 0, 1], "xAxis": [1, 0, 0]},
+        "params": {"size": 50.0},
+    }
+    r15 = client.post("/execute", json={"code": spoke_code, "params": {}, "ports": [spoke_port]})
+    check("G3 rejects a spoked face that only spans one radius", r15.status_code == 422,
+          "8 spokes reaching r=29 must not satisfy a solid 50mm seat")
+
     print()
     if failures:
         print(f"{len(failures)} FAILURE(S): {failures}")

@@ -186,6 +186,7 @@ PROBE_DEPTH_MM = 0.6      # how far below the surface hole probes sample
 PROBE_EPS_MM = 0.2        # how far above/below a face the face probes sample
 DIAMETER_TOL_MM = 0.25    # measurement resolution + acceptable modeling slop
 PROBE_DIRECTIONS = 8
+PROBE_INSET_MM = 0.3      # standoff from a declared edge; absolute, never a fraction
 
 HOLE_LIKE = {"CLEARANCE_HOLE", "BORE", "SCREW_SEAT"}
 
@@ -333,8 +334,31 @@ def _probe_flat_face(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
             samples = [(0.0, 0.0)]
             probed = {"probed_size": 0.0}
         else:
-            s = size / 2
-            samples = [(u, v) for u in (-s, 0.0, s) for v in (-s, 0.0, s)]
+            # A DISC, NOT A SQUARE GRID. The grid put its four corners at
+            # size*0.707 from the centre — outside any round or hexagonal face
+            # of that width — so a truthful `size` could never pass and the only
+            # way through the gate was to understate the face. A 75mm-wide hex
+            # cup burned its whole repair budget on this, and a 5mm sphere's
+            # bottom chord died the same way: the check was unsatisfiable, not
+            # the geometry.
+            #
+            # The inset is ABSOLUTE, matching _probe_boss's `od / 2 - 0.3`. A
+            # fractional inset (0.45 * size) looks equivalent and is not: it
+            # asserts material only out to 90% of the declared radius, so it
+            # accepts an 11% overstatement — and being fractional, the absolute
+            # error grows with the part. A Ø50 face passed a declared 55.5, and
+            # `probed_size` echoes the DECLARED number, so the inspector then
+            # reported 55.5 mm as though it had been measured. Two rings, not
+            # one: a single radius can be satisfied by spokes, and the old grid
+            # had exactly one.
+            outer = size / 2 - PROBE_INSET_MM
+            samples = [(0.0, 0.0)]
+            for r in (outer / 2, outer):
+                samples += [
+                    (r * math.cos(2 * math.pi * k / PROBE_DIRECTIONS),
+                     r * math.sin(2 * math.pi * k / PROBE_DIRECTIONS))
+                    for k in range(PROBE_DIRECTIONS)
+                ]
             probed = {"probed_size": size}
     for u, v in samples:
         above = _at(o, x, y, z, u, v, PROBE_EPS_MM)
@@ -344,7 +368,9 @@ def _probe_flat_face(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
                             "the face must be exposed surface at the contract pose with +z pointing out of the material")
         if not _in_material(shape, below):
             raise GateError("G3", f'port "{port["key"]}" (FLAT_FACE): no material just below the declared face',
-                            "the surface must exist (flat, at least the declared size) exactly at the contract pose")
+                            "the surface must exist (flat, at least the declared size) exactly at the contract "
+                            "pose. If the edge is chamfered or filleted, declare the width of the FLAT that is "
+                            "left, not the outer dimension — a Ø50 face with a 1mm chamfer has a 48mm flat.")
     return {"key": port["key"], "type": port["type"], **probed}
 
 

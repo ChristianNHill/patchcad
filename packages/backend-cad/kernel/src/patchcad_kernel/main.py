@@ -20,11 +20,32 @@ from pydantic import BaseModel, Field
 
 PORT = int(os.environ.get("PATCHCAD_KERNEL_PORT", "8621"))
 TIMEOUT_S = float(os.environ.get("PATCHCAD_KERNEL_TIMEOUT", "20"))
-POOL_SIZE = int(os.environ.get("PATCHCAD_KERNEL_WORKERS", "2"))
+def _default_pool_size() -> int:
+    """Warm workers to keep. Two left a cook wave serialising on geometry: eight
+    parts in parallel took 4.5s of wall for 7.5s of work, a 1.7x speedup against
+    a 2x ceiling, while twelve cores sat idle. Scaled to the machine rather than
+    pinned at a flat number, because each worker holds a live OCP interpreter
+    (~200MB) and this default also lands on other people's laptops."""
+    cpus = os.cpu_count() or 2
+    return max(2, min(8, cpus - 2))
+
+
+POOL_SIZE = int(os.environ.get("PATCHCAD_KERNEL_WORKERS") or _default_pool_size())
 CACHE_ROOT = Path(os.environ.get("PATCHCAD_KERNEL_CACHE", str(Path.home() / ".patchcad" / "kernel-cache")))
 
 pool = None  # set at startup; parent process stays OCP-free
 executor = ThreadPoolExecutor(max_workers=POOL_SIZE)
+
+
+# The cache is keyed on the JOB, but a cached entry is really a claim about what
+# the GATES said — and only passes are stored, so tightening a gate left every
+# part already in the cache holding its old, laxer verdict. A FLAT_FACE probe
+# was corrected from accepting an 11% overstated face to 0.6mm, and the parts the
+# correction existed for kept passing on a cache hit; the fix applied only to
+# geometry nobody had built yet. BUMP THIS WHENEVER GATE LOGIC CHANGES — it costs
+# one re-execute per part and is the difference between a gate fix that ships and
+# one that only appears to.
+GATES_VERSION = 2
 
 
 def job_hash(*parts: Any) -> str:
@@ -108,7 +129,7 @@ async def health():
 
 @app.post("/execute")
 async def execute(body: ExecuteBody):
-    digest = job_hash(body.code, body.params, body.ports, body.envelope, body.import_dir)
+    digest = job_hash(GATES_VERSION, body.code, body.params, body.ports, body.envelope, body.import_dir)
     out_dir = CACHE_ROOT / digest
     meas_file = out_dir / "measurements.json"
     glb_file = out_dir / "mesh.glb"
