@@ -86,6 +86,11 @@ def main() -> None:
     # 0.16s and 0.07s for everything after. So the check failed whenever the pool
     # was new, which a GATES_VERSION bump guarantees, and it was reporting import
     # latency as geometry latency. The budget is about the geometry.
+    # The DIMENSIONS are what keep this independent of check 2, not the nonce:
+    # both nonces are int(time.time()) on back-to-back calls, so they are usually
+    # the same second and contribute nothing. Check 2 re-posts the timed body to
+    # assert a cache hit, so making this warm-up use the same plate to "simplify"
+    # would let that check pass for the wrong reason.
     warm = {"width": 10, "depth": 10, "thickness": 2, "hole_diameter": 2, "nonce": int(time.time())}
     cold_started = time.monotonic()
     client.post("/execute", json={"code": PLATE, "params": warm})
