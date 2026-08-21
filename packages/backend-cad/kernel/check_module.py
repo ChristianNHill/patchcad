@@ -16,8 +16,16 @@ only caught two of them. Scope of the binding check is per function with its
 enclosing chain, because one flat module-wide set of names let a local variable
 stand in for a module constant that had been deleted.
 
+Every bug this file has had is one bug: which scope does this name actually
+live in. It has been wrong in both directions at every level of nesting, once
+per level, so a change here is worth testing against a legal example AND an
+illegal one before believing it.
+
 Known blind spots, so the claim stays bounded, and each is checked rather than
-assumed. A `def` DUPLICATED where one copy sits inside a module-level `if` or
+assumed. A lambda's parameters bind into the ENCLOSING scope here, because the
+arg branch does not treat a lambda as its own scope, so a lambda parameter can
+vouch for a module constant of that name that has been deleted. That is
+miss-direction, never noise, which is why it stands. A `def` DUPLICATED where one copy sits inside a module-level `if` or
 `try` is missed, because those bodies are deliberately not treated as module
 bindings: that is what keeps a legitimate `try: import ujson as json / except:
 import json` from failing, so it is a trade rather than an oversight. Such a
@@ -217,6 +225,14 @@ for path in modules:
 
         def handle_def(stmt: ast.stmt) -> None:
             own = local_binds(stmt.body)
+            # PEP 695 `def first[T](...) -> T` binds T on the definition itself.
+            # It is a binding, not a load, so the names are excluded rather than
+            # scanned: treating them as loads reported every generic unbound.
+            # They are in scope for the SIGNATURE too, which is why they are
+            # added to both sets below and not to `own` alone: T appears in the
+            # annotations of the very def that binds it.
+            tparams = {t.name for t in getattr(stmt, "type_params", [])}
+            own |= tparams
             inner = for_defs | own
             if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 a = stmt.args
@@ -224,7 +240,7 @@ for path in modules:
                 inner |= {x.arg for x in (a.vararg, a.kwarg) if x}
             # The signature evaluates OUT here, so it sees for_stmts.
             for nm in sig_loads(stmt):
-                if nm not in for_stmts and nm not in module_bound:
+                if nm not in for_stmts and nm not in tparams and nm not in module_bound:
                     missing.add(nm)
             body: set[str] = set()
             for sub in stmt.body:
