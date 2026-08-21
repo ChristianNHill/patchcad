@@ -323,6 +323,8 @@ const CHANNEL_PORT_TYPES = new Set(["GROOVE", "SLOT"]);
 // probe's blocks a plan the probe could have measured. So if these ever diverge,
 // widen this one. Bare "diameter" is deliberately absent from both, and dropping
 // it from one alone would have created exactly the narrower case.
+export /** Mirrors gates.py PROBE_INSET_MM. Enforced by a test that reads gates.py. */
+const PROBE_INSET_MM = 0.3;
 export const OUTER_DIAMETER_KEYS = ["outer_diameter", "outerDiameter", "od", "boss_diameter", "bossDiameter"];
 const CHANNEL_WIDTH_KEYS = ["width", "slotWidth", "slot_width", "grooveWidth", "groove_width", "channelWidth"];
 
@@ -553,16 +555,65 @@ export const cadFaceHoleConflictLint = {
           // because comparing them needs both numbers resolved.
           const annular = (f.params as { ring_diameter?: unknown } | undefined)?.ring_diameter != null;
           const coaxialThrough = h.type === "CLEARANCE_HOLE" && parallel && lateralSame;
-          if (!annular && (sameOrigin || coaxialThrough))
+
+          // THE OFFSET CASE, which cost $0.638 and five generator calls to stop
+          // being hypothetical. A face and a hole 20mm apart are not coaxial, so
+          // the rule above correctly stays quiet, and the part is still
+          // unsatisfiable: rib-plate declared mounting_face with size 40 at the
+          // plate centre and a clearance hole 20mm along it, and the face
+          // probe's outer ring at radius 19.7 lands inside that hole.
+          //
+          // I declined to build this once, on the grounds that comparing an
+          // offset against a size needs both resolved and getting it wrong
+          // blocks a correct plan. Both objections still hold, so this fires
+          // ONLY when every value resolves to a number, and it reproduces the
+          // probe's own sample radii rather than approximating them: a hole
+          // sitting between two rings passes today, and blocking it would be
+          // exactly the false positive I was warned about.
+          //
+          // Verified against the real probe before writing this: on that part a
+          // declared size of 40 fails and 36, 34, 30 and 20 pass, matching the
+          // ring arithmetic to the millimetre.
+          let offsetHit: { at: number; d: number; size: number; dia: number } | null = null;
+          if (!annular && !sameOrigin && h.type === "CLEARANCE_HOLE" && parallel && !lateralSame) {
+            try {
+              const size = resolveDim(graph, (f.params as { size?: number | string }).size!);
+              const dia = resolveDim(graph, (h.params as { diameter?: number | string }).diameter!);
+              const lateral = [0, 1, 2]
+                .filter((i) => i !== hAxis)
+                .map((i) => resolveDim(graph, f.pose.origin[i] as number | string) - resolveDim(graph, h.pose.origin[i] as number | string));
+              const d = Math.hypot(...lateral);
+              const outer = size / 2 - PROBE_INSET_MM;
+              const near = d - dia / 2;
+              const far = d + dia / 2;
+              for (const at of [0, outer / 2, outer]) {
+                if (at >= near && at <= far) {
+                  offsetHit = { at, d, size, dia };
+                  break;
+                }
+              }
+            } catch {
+              // An unresolvable expression means no claim. Silence is the safe
+              // direction for something that can stop a plan.
+            }
+          }
+
+          if (!annular && (sameOrigin || coaxialThrough || offsetHit))
             problems.push(
               sameOrigin
                 ? `${n.id}: port "${f.name}" (FLAT_FACE) and port "${h.name}" (${h.type}) share an origin, ` +
                     `so no geometry satisfies both: the face probe requires material at that point and the ` +
                     `hole removes it. Offset the face, shrink its size below the hole, or drop one of them.`
-                : `${n.id}: port "${h.name}" (CLEARANCE_HOLE) is coaxial with port "${f.name}" (FLAT_FACE), ` +
-                    `so no geometry satisfies both: a clearance hole passes through, which pierces that face ` +
-                    `at its centre where the probe samples. Move the face off the hole axis, or declare the ` +
-                    `hole a BORE or SCREW_SEAT if it is meant to stop before that face.`,
+                : offsetHit
+                  ? `${n.id}: port "${f.name}" (FLAT_FACE, size ${offsetHit.size}) reaches port "${h.name}" ` +
+                      `(CLEARANCE_HOLE) ${offsetHit.d.toFixed(1)}mm away, so no geometry satisfies both: the face ` +
+                      `probe samples a ring at ${offsetHit.at.toFixed(1)}mm from its centre and that ring falls ` +
+                      `inside the hole. Shrink the face below ${(2 * (offsetHit.d - offsetHit.dia / 2) + 2 * PROBE_INSET_MM).toFixed(1)}mm, ` +
+                      `move it off the hole, or declare the hole a BORE if it is meant to stop first.`
+                  : `${n.id}: port "${h.name}" (CLEARANCE_HOLE) is coaxial with port "${f.name}" (FLAT_FACE), ` +
+                      `so no geometry satisfies both: a clearance hole passes through, which pierces that face ` +
+                      `at its centre where the probe samples. Move the face off the hole axis, or declare the ` +
+                      `hole a BORE or SCREW_SEAT if it is meant to stop before that face.`,
             );
         }
       }

@@ -332,6 +332,14 @@ describe("alias lists agree with the kernel", () => {
     return (m[1]!.match(/"[^"]+"/g) ?? []).map((q) => q.slice(1, -1)).sort();
   };
 
+  it("PROBE_INSET_MM matches gates.py", () => {
+    const m = gates.match(/^PROBE_INSET_MM = ([\d.]+)/m);
+    expect(m, "PROBE_INSET_MM not found in gates.py").toBeTruthy();
+    // The offset rule reproduces the probe's sample radii, so this constant is
+    // load-bearing: drift makes the lint fire where the probe passes.
+    expect(Number(m![1])).toBe(0.3);
+  });
+
   it("SCREW_BOSS outer-diameter keys match gates.py exactly", () => {
     expect([...OUTER_DIAMETER_KEYS].sort()).toEqual(pyTuple("OUTER_D_KEYS"));
   });
@@ -528,6 +536,102 @@ describe("cadFaceHoleConflictLint", () => {
 
   // The reference design's own idiom: a screw's bearing annulus is coaxial with
   // the shank by definition, and the annular probe never samples the centre.
+  // THE CONTRACT THAT COST $0.638, from the run artifact: mounting_face size 40
+  // at the plate centre, clearance hole 20mm along it. Not coaxial, still
+  // unsatisfiable, and verified against the real probe (size 40 fails; 36, 34,
+  // 30 and 20 pass) before this lint was written.
+  it("rejects a face whose sample ring reaches an OFFSET hole", () => {
+    const plate = (size: number) => graph([
+      { ...posed("rib-plate", "part", [
+          { name: "bolt_hole_bottom", type: "CLEARANCE_HOLE",
+            pose: { origin: [-20, 0, -2.5], zAxis: [0, 0, -1], xAxis: [1, 0, 0] },
+            params: { diameter: 4.5 } },
+          { name: "mounting_face", type: "FLAT_FACE",
+            pose: { origin: [0, 0, -2.5], zAxis: [0, 0, -1], xAxis: [1, 0, 0] },
+            params: { size } },
+        ]) },
+    ], []);
+    const out = cadFaceHoleConflictLint.run(plate(40));
+    expect(out).toHaveLength(1);
+    expect(out[0]).toContain("reaches port");
+    expect(out[0]).toContain("20.0mm away");
+  });
+
+  // The boundary the probe actually has. A lint that fires where the probe
+  // passes blocks working geometry, which is the whole reason this rule waited.
+  it("stays silent at every face size the real probe accepts", () => {
+    for (const size of [36, 34, 30, 20]) {
+      const g = graph([
+        { ...posed("p", "part", [
+            { name: "h", type: "CLEARANCE_HOLE",
+              pose: { origin: [-20, 0, -2.5], zAxis: [0, 0, -1], xAxis: [1, 0, 0] },
+              params: { diameter: 4.5 } },
+            { name: "f", type: "FLAT_FACE",
+              pose: { origin: [0, 0, -2.5], zAxis: [0, 0, -1], xAxis: [1, 0, 0] },
+              params: { size } },
+          ]) },
+      ], []);
+      expect(cadFaceHoleConflictLint.run(g), `size ${size}`).toEqual([]);
+    }
+  });
+
+  // WITH EXPRESSIONS, which is what every real graph declares. The literal
+  // fixture above hid a NaN: the suggested size read Number() on the diameter,
+  // and Number("param(x.y)") is NaN, so the real graph printed "below NaNmm"
+  // while the test passed.
+  it("resolves param() expressions and suggests a real number", () => {
+    const g = graph([
+      { ...posed("rib-plate", "part", [
+          { name: "bolt_hole_bottom", type: "CLEARANCE_HOLE",
+            pose: { origin: ["-param(rib-plate.length)/2 + param(rib-plate.hole_offset)", 0, "-param(rib-plate.thickness)/2"], zAxis: [0, 0, -1], xAxis: [1, 0, 0] },
+            params: { diameter: "param(rib-plate.hole_diameter)" } },
+          { name: "mounting_face", type: "FLAT_FACE",
+            pose: { origin: [0, 0, "-param(rib-plate.thickness)/2"], zAxis: [0, 0, -1], xAxis: [1, 0, 0] },
+            params: { size: "param(rib-plate.width)" } },
+        ]),
+        contract: {
+          name: "rib-plate", summary: "",
+          params: [
+            { type: "number", name: "length", description: "", default: 70 },
+            { type: "number", name: "width", description: "", default: 40 },
+            { type: "number", name: "thickness", description: "", default: 5 },
+            { type: "number", name: "hole_diameter", description: "", default: 4.5 },
+            { type: "number", name: "hole_offset", description: "", default: 15 },
+          ],
+          provides: [], requires: [],
+          payload: (posed("rib-plate", "part", [
+            { name: "bolt_hole_bottom", type: "CLEARANCE_HOLE",
+              pose: { origin: ["-param(rib-plate.length)/2 + param(rib-plate.hole_offset)", 0, "-param(rib-plate.thickness)/2"], zAxis: [0, 0, -1], xAxis: [1, 0, 0] },
+              params: { diameter: "param(rib-plate.hole_diameter)" } },
+            { name: "mounting_face", type: "FLAT_FACE",
+              pose: { origin: [0, 0, "-param(rib-plate.thickness)/2"], zAxis: [0, 0, -1], xAxis: [1, 0, 0] },
+              params: { size: "param(rib-plate.width)" } },
+          ]) as unknown as { contract: { payload: unknown } }).contract.payload,
+          hash: "",
+        },
+      } as unknown as ReturnType<typeof node>,
+    ], []);
+    const out = cadFaceHoleConflictLint.run(g);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toContain("20.0mm away");
+    expect(out[0]).not.toContain("NaN");
+    expect(out[0]).toContain("Shrink the face below 36.1mm");
+  });
+
+  it("says nothing when the values will not resolve", () => {
+    const g = graph([
+      { ...posed("p", "part", [
+          { name: "h", type: "CLEARANCE_HOLE",
+            pose: { origin: ["param(missing.x)", 0, -2.5], zAxis: [0, 0, -1], xAxis: [1, 0, 0] },
+            params: { diameter: 4.5 } },
+          { name: "f", type: "FLAT_FACE",
+            pose: { origin: [0, 0, -2.5], zAxis: [0, 0, -1], xAxis: [1, 0, 0] },
+            params: { size: 40 } },
+        ]) },
+    ], []);
+    expect(cadFaceHoleConflictLint.run(g)).toEqual([]);
+  });
+
   it("exempts an ANNULAR face, whose probe never samples the centre", () => {
     const g = graph([posed("p", "part", [
       { name: "bolt", type: "CLEARANCE_HOLE", pose: { origin: [0, 0, 2], zAxis: [0, 0, 1], xAxis: [1, 0, 0] }, params: {} },
