@@ -42,6 +42,11 @@ type PortExpect = {
   minCount?: number;
   diameter?: number;
   width?: number;
+  /** A SCREW_BOSS reports `measured_pilot`, never `measured_diameter`: the probe
+   *  verifies the wall by a ring-hit count and measures only the pilot bore. A
+   *  case asserting `diameter` on a boss therefore fails as "measured by
+   *  nothing", which is a defect in the case rather than the part. */
+  pilot?: number;
   tol?: number;
 };
 type CaseExpect = {
@@ -114,7 +119,11 @@ function checkPorts(probes: Probe[], want: PortExpect): Miss[] {
         `no ${label} passes through; measured ${of.map((p) => `${p.key}(through=${p["through"]}, depth=${p["measured_depth"]})`).join(", ")}`,
       );
   }
-  for (const [key, want_v] of [["measured_diameter", want.diameter], ["measured_width", want.width]] as const) {
+  for (const [key, want_v] of [
+    ["measured_diameter", want.diameter],
+    ["measured_width", want.width],
+    ["measured_pilot", want.pilot],
+  ] as const) {
     if (want_v == null) continue;
     const tol = want.tol ?? 0.2;
     // ANY port of this type may satisfy it: the architect picks which node
@@ -438,6 +447,26 @@ function selfTest(): void {
                                          ports: [{ key: "g", type: "GROOVE", measured_width: 6 }] }) }), []).misses,
     "fire", "expected at least 1");
 
+  // A boss reports measured_pilot and never measured_diameter, so a case that
+  // asserts `diameter` on one fails as "measured by nothing" — a defect in the
+  // case, not the part. Found while writing the fourth ladder case, before it
+  // cost anything.
+  const bossCase: EvalCase = {
+    id: "t", prompt: "p",
+    expect: { ports: [{ type: "SCREW_BOSS", minCount: 1, pilot: 5.6, tol: 0.6 }] },
+  };
+  const bossNode = (probe: Record<string, unknown>) =>
+    mk({ p: node("p", {}, { volume_mm3: 1, bbox: { size: [1, 1, 1] }, ports: [probe] }) });
+  expect("a boss satisfies a pilot assertion",
+    score(bossCase, bossNode({ key: "b", type: "SCREW_BOSS", ring_hits: 8, measured_pilot: 5.6 }), []).misses,
+    "quiet");
+  expect("a boss with the wrong pilot is caught",
+    score(bossCase, bossNode({ key: "b", type: "SCREW_BOSS", ring_hits: 8, measured_pilot: 3.3 }), []).misses,
+    "fire", "within 0.6 of 5.6");
+  expect("a boss reporting no pilot at all is caught",
+    score(bossCase, bossNode({ key: "b", type: "SCREW_BOSS", ring_hits: 8 }), []).misses,
+    "fire", "measured by nothing");
+
   const caseBolt: EvalCase = {
     id: "b", prompt: "p",
     expect: { nodes: { min: 1 }, allReady: true, zeroLlmKinds: ["fastener"], assemblyProblems: 0 },
@@ -609,9 +638,9 @@ async function main() {
     for (const pe of c.expect.ports ?? []) {
       if (!pe.type && !pe.anyType)
         vacuous.push(`${c.id}: a port expectation names no type`);
-      if (pe.diameter == null && pe.width == null && !pe.through)
+      if (pe.diameter == null && pe.width == null && pe.pilot == null && !pe.through)
         vacuous.push(
-          `${c.id}: ${pe.anyType?.join("|") ?? pe.type} expectation has no diameter, width or through, so it only counts probes`,
+          `${c.id}: ${pe.anyType?.join("|") ?? pe.type} expectation has no diameter, width, pilot or through, so it only counts probes`,
         );
     }
   }
@@ -629,7 +658,7 @@ async function main() {
         e.allReady !== false && "all nodes ready",
         e.noSkippedPorts !== false && "NO port verified by nothing",
         ...(e.ports ?? []).map((p) =>
-          `${p.anyType?.join("|") ?? p.type} ${p.diameter ?? p.width ?? ""}${p.through ? " through" : ""}`.trim()),
+          `${p.anyType?.join("|") ?? p.type} ${p.diameter ?? p.width ?? p.pilot ?? ""}${p.through ? " through" : ""}`.trim()),
         e.bboxSize && `bbox ${e.bboxSize.value.join("x")} +/-${e.bboxSize.tol}`,
         e.volume && `material ${e.volume.min != null ? `>=${e.volume.min}` : ""}${e.volume.max != null ? `<=${e.volume.max}` : ""} mm3`,
         e.requireProbedPorts !== false && "every declared port probed, current",
