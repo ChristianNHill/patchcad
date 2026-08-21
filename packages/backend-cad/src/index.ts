@@ -293,6 +293,8 @@ export const cadEnvelopeCoherentLint = {
 const HOLE_PORT_TYPES = new Set(["CLEARANCE_HOLE", "SCREW_SEAT", "BORE", "HOLE_PATTERN"]);
 const DIAMETER_KEYS = ["diameter", "dia", "holeDia", "hole_diameter", "d", "boreDia"];
 const FACE_SIZE_KEYS = ["size", "faceSize", "face_size", "width", "flatWidth", "flat_width"];
+const CHANNEL_PORT_TYPES = new Set(["GROOVE", "SLOT"]);
+const CHANNEL_WIDTH_KEYS = ["width", "slotWidth", "slot_width", "grooveWidth", "groove_width", "channelWidth"];
 
 export const cadFlatFaceSizeLint = {
   id: "cad-port-params",
@@ -314,6 +316,12 @@ export const cadFlatFaceSizeLint = {
               `${n.id}: ${p.type} port "${p.name}" declares no diameter (params: ${JSON.stringify(keys)}). Add params.diameter in mm — probes measure the hole against it.`,
             );
           }
+        } else if (CHANNEL_PORT_TYPES.has(p.type)) {
+          if (!keys.some((k) => CHANNEL_WIDTH_KEYS.includes(k))) {
+            problems.push(
+              `${n.id}: ${p.type} port "${p.name}" declares no width (params: ${JSON.stringify(keys)}). Add params.width in mm — the gap a mating tongue sits in, which the probe measures against.`,
+            );
+          }
         }
       }
     }
@@ -328,16 +336,21 @@ export const cadFlatFaceSizeLint = {
  * brick satisfies it, which is exactly how a 75x75x95 block once passed as a pen
  * cup holder with hexagonal cutouts.
  *
- * So the taxonomy is narrowed to what the gates can defend. This is deliberately
- * a capability restriction: tongue-and-groove joinery is unavailable until
- * _probe_groove/_probe_slot exist. Widen this set in the same commit that adds a
- * probe, never before it. */
+ * So the taxonomy is narrowed to what the gates can defend. Widen this set in
+ * the same commit that adds a probe, NEVER before it — a type listed here with
+ * nothing behind it re-opens the hole silently. */
 const PROBED_PORT_TYPES = new Set([
   "CLEARANCE_HOLE",
   "BORE",
   "SCREW_SEAT",
   "SCREW_BOSS",
   "FLAT_FACE",
+  // Channel types, measured by _probe_channel: void at the pose, walls found by
+  // marching out to each side, width compared against the declaration. Added
+  // here in the same change that added the probe — this set is a claim about
+  // what the kernel can defend, so it must never run ahead of gates.py.
+  "GROOVE",
+  "SLOT",
 ]);
 
 export const cadProbedPortsLint = {
@@ -476,19 +489,30 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       "A cup, a vase, a bracket, a knob, a tray, an enclosure lid — each of these",
       "is ONE part. Splitting a printable object into a base, a wall and a rim",
       "joined by tongues and grooves is a WORSE answer than modeling it whole:",
-      "it invents joinery the user never asked for and cannot verify.",
+      "it invents joinery the user never asked for, and every joint is a fit the",
+      "user has to assemble and a tolerance that can be wrong.",
       "",
       "FRAME CONVENTION (critical): every part is modeled in its OWN LOCAL frame,",
       "roughly centered on the origin — the assembly places parts later via port",
       "mates. Never author ports or envelopes in assembly/world coordinates.",
       "Port poses: +z points OUT of the part's mating surface (out of material).",
       "",
-      "ONLY FIVE PORT TYPES MAY BE USED: CLEARANCE_HOLE, BORE, SCREW_SEAT,",
-      "SCREW_BOSS, FLAT_FACE. These are the ones the gates can measure against the",
-      "real solid. Any other type is rejected at plan time, because a port nothing",
-      "can probe makes the whole node unverifiable. If an interface wants a groove,",
-      "a slot, a lip or a snap, either express it as a hole plus a flat face, or",
-      "model both sides as ONE part and declare no port at all.",
+      "ONLY THESE PORT TYPES MAY BE USED: CLEARANCE_HOLE, BORE, SCREW_SEAT,",
+      "SCREW_BOSS, FLAT_FACE, GROOVE, SLOT. These are the ones the gates can",
+      "measure against the real solid. Any other type is rejected at plan time,",
+      "because a port nothing can probe makes the whole node unverifiable. If an",
+      "interface wants a lip or a snap, express it with the types above, or model",
+      "both sides as ONE part and declare no port at all.",
+      "GROOVE and SLOT ports MUST carry params: {\"width\": <mm>} — the gap a",
+      "  mating tongue or plate sits in, which is the number the other part is cut",
+      "  to. Add params.depth only for a channel with a floor; omit it for a cut",
+      "  that passes through, or the probe will look for a floor that is not there.",
+      "  The channel RUNS ALONG the port's xAxis and its width is measured across.",
+      "  The declared width is the NARROWEST gap over the channel's depth, since",
+      "  that is what a mating tongue must pass, so keep channels prismatic — a",
+      "  chamfered or drafted mouth is fine, a V-groove declared at its mouth is",
+      "  not. Channels must also be at least 1.2mm deep to be probed at all;",
+      "  anything shallower is a FLAT_FACE, not a channel.",
       "",
       "Hole-like ports (CLEARANCE_HOLE, BORE, SCREW_SEAT) MUST carry",
       '  params: {"diameter": <mm>} — that exact key; probes measure against it.',

@@ -18,6 +18,8 @@ interface PortMeasurement {
   ring_diameter?: number;
   ring_hits?: number;
   measured_pilot?: number;
+  measured_width?: number;
+  measured_depth?: number;
   skipped?: string;
 }
 
@@ -39,6 +41,10 @@ function portLine(p: PortMeasurement): string {
   if (p.ring_diameter !== undefined) return `ring Ø${mm(p.ring_diameter)} mm`;
   if (p.probed_size !== undefined) {
     return p.probed_size > 0 ? `${mm(p.probed_size)} mm flat` : "flat (center probe)";
+  }
+  if (p.measured_width !== undefined) {
+    const w = `${mm(p.measured_width)} mm wide`;
+    return p.measured_depth !== undefined ? `${w} × ${mm(p.measured_depth)} mm deep` : w;
   }
   const boss = [
     p.ring_hits !== undefined ? `${p.ring_hits} wall hits` : "",

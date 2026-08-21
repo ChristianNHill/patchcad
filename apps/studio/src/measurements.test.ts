@@ -66,3 +66,24 @@ describe("MeasurementsSection", () => {
     expect(render(measured({ volume_mm3: 1 }, { t: 5 }))).not.toContain("params have changed");
   });
 });
+
+describe("channel ports", () => {
+  it("shows the width a mating tongue is cut to, and the depth when there is a floor", () => {
+    const html = render(
+      measured({
+        ports: [
+          { key: "wall_seat", type: "GROOVE", measured_width: 3, measured_depth: 4 },
+          { key: "divider", type: "SLOT", measured_width: 2.4 },
+        ],
+      }),
+    );
+    expect(html).toContain("wall_seat");
+    expect(html).toContain("3 mm wide × 4 mm deep");
+    expect(html).toContain("2.4 mm wide");
+  });
+
+  it("says nothing about depth for a through-cut", () => {
+    const html = render(measured({ ports: [{ key: "s", type: "SLOT", measured_width: 2.4 }] }));
+    expect(html).not.toContain("deep");
+  });
+});

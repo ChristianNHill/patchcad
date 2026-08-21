@@ -45,7 +45,14 @@ executor = ThreadPoolExecutor(max_workers=POOL_SIZE)
 # geometry nobody had built yet. BUMP THIS WHENEVER GATE LOGIC CHANGES — it costs
 # one re-execute per part and is the difference between a gate fix that ships and
 # one that only appears to.
-GATES_VERSION = 2
+# 2 -> 3: GROOVE and SLOT gained a probe. Under 2 they were recorded "skipped"
+# and the job passed, and those passes are in the cache — so without this bump a
+# node whose ports are all channels keeps its unverified verdict, which is the
+# exact grandfathering this constant was introduced for one commit ago.
+# 3 -> 4: channel width became the NARROWEST gap over several depths, and the
+# floor is measured rather than echoed. Both change verdicts, and a chamfered
+# channel that passed under 3 as "3.00" may have been 2.2mm wide.
+GATES_VERSION = 4
 
 
 def job_hash(*parts: Any) -> str:

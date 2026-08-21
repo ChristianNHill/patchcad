@@ -187,6 +187,7 @@ PROBE_EPS_MM = 0.2        # how far above/below a face the face probes sample
 DIAMETER_TOL_MM = 0.25    # measurement resolution + acceptable modeling slop
 PROBE_DIRECTIONS = 8
 PROBE_INSET_MM = 0.3      # standoff from a declared edge; absolute, never a fraction
+DEPTH_TOL_MM = 0.25       # channel floor tolerance; its own axis, its own number
 
 HOLE_LIKE = {"CLEARANCE_HOLE", "BORE", "SCREW_SEAT"}
 
@@ -222,36 +223,58 @@ def _in_material(shape: Any, p: tuple[float, float, float]) -> bool:
     return bool(shape.is_inside(p))
 
 
-def _measure_hole_radius(shape: Any, frame, max_r: float, w: float) -> float:
-    """Median over directions of the NEAREST void→material crossing. An
-    outward march (then bisection) finds the hole wall itself; directions
-    where the probe leaves the part entirely (hole near an edge) see no
-    crossing and are excluded rather than skewing the measurement."""
+def _march(shape: Any, frame, du: float, dv: float, w: float, max_r: float) -> float | None:
+    """Distance along (du, dv) at depth w to the first change of state, or None
+    if it never changes within max_r. Outward step then 12 bisections, so the
+    answer is good to max_r/2**12 regardless of the step.
+
+    This is the one directional measurement primitive. It was inlined in
+    _measure_hole_radius with the median-over-8-rays aggregation baked around
+    it, which meant a rectangular feature — a slot with a width and a length —
+    could not be measured at all without reimplementing march and bisect.
+
+    Finds the void→material crossing: a hole wall from inside the hole, a channel
+    wall from inside the channel. A polarity flag lived here briefly with no
+    caller and no test — dead flexibility in the oracle is worse than none.
+    """
     o, x, y, z = frame
     step = 0.25
+    # The start must be void, or there is no crossing to find.
+    # Without this the bisection collapses toward zero and reports a ~0 distance
+    # — which a caller reads as "the wall is right here", i.e. a zero width. Both
+    # current callers check the origin themselves before marching, so this guards
+    # the next one; the module self-check pins it.
+    if _in_material(shape, _at(o, x, y, z, 0.0, 0.0, w)):
+        return None
+    lo, crossing, r = 0.0, None, step
+    while r <= max_r:
+        if _in_material(shape, _at(o, x, y, z, du * r, dv * r, w)):
+            crossing = r
+            break
+        lo = r
+        r += step
+    if crossing is None:
+        return None
+    hi = crossing
+    for _ in range(12):
+        mid = (lo + hi) / 2
+        if _in_material(shape, _at(o, x, y, z, du * mid, dv * mid, w)):
+            hi = mid
+        else:
+            lo = mid
+    return (lo + hi) / 2
+
+
+def _measure_hole_radius(shape: Any, frame, max_r: float, w: float) -> float:
+    """Median over directions of the NEAREST void→material crossing. Directions
+    where the probe leaves the part entirely (hole near an edge) see no crossing
+    and are excluded rather than skewing the measurement."""
     radii: list[float] = []
     for k in range(PROBE_DIRECTIONS):
         theta = 2 * math.pi * k / PROBE_DIRECTIONS
-        du, dv = math.cos(theta), math.sin(theta)
-        lo = 0.0
-        crossing: float | None = None
-        r = step
-        while r <= max_r:
-            if _in_material(shape, _at(o, x, y, z, du * r, dv * r, w)):
-                crossing = r
-                break
-            lo = r
-            r += step
-        if crossing is None:
-            continue  # probe exited the part — this direction sees the rim, not the wall
-        hi = crossing
-        for _ in range(12):
-            mid = (lo + hi) / 2
-            if _in_material(shape, _at(o, x, y, z, du * mid, dv * mid, w)):
-                hi = mid
-            else:
-                lo = mid
-        radii.append((lo + hi) / 2)
+        hit = _march(shape, frame, math.cos(theta), math.sin(theta), w, max_r)
+        if hit is not None:
+            radii.append(hit)
     if len(radii) < 3:
         return max_r  # unmeasurable — surfaces as an implausible diameter
     radii.sort()
@@ -405,6 +428,244 @@ def _probe_boss(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+CHANNEL_LIKE = {"GROOVE", "SLOT"}
+WIDTH_KEYS = ("width", "slotWidth", "slot_width", "grooveWidth", "groove_width", "channelWidth")
+DEPTH_KEYS = ("depth", "slotDepth", "slot_depth", "grooveDepth", "groove_depth")
+
+
+def _port_dim(port: dict[str, Any], keys: tuple[str, ...], label: str, hint: str) -> float:
+    """Alias-tolerant numeric param, following _port_diameter. Deliberately NOT
+    raw params["x"]: _probe_boss does that for outer_diameter and a missing key
+    surfaces as an unexpected KeyError under stage G1 instead of a repairable G3."""
+    params = port.get("params", {})
+    for k in keys:
+        v = params.get(k)
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, str):
+            try:
+                return float(v)
+            except ValueError:
+                break
+    raise GateError(
+        "G3",
+        f'port "{port.get("key", "?")}" ({port.get("type", "?")}) declares no numeric {label} (params: {sorted(params)})',
+        hint,
+    )
+
+
+def _port_dim_opt(port: dict[str, Any], keys: tuple[str, ...]) -> float | None:
+    """Alias-tolerant optional numeric param. DEPTH_KEYS existed but nothing read
+    it — the probe indexed params["depth"] directly, so a model writing slotDepth
+    got its floor check silently skipped, which is the unverified-port outcome
+    this probe exists to close. A declared 99mm floor on a 10mm plate passed."""
+    params = port.get("params", {})
+    for k in keys:
+        v = params.get(k)
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, str):
+            try:
+                return float(v)
+            except ValueError:
+                continue  # a garbage value must not shadow a valid alias, nor
+                          # silently skip the check the caller is about to make
+    return None
+
+
+def _march_depth(shape: Any, frame, max_d: float) -> float | None:
+    """Distance straight down -z from the port origin to the floor, or None if
+    the cut passes through. Same march-then-bisect as _march, along the axis
+    rather than in-plane."""
+    o, x, y, z = frame
+    step = 0.25
+    lo, crossing, d = 0.0, None, step
+    while d <= max_d:
+        if _in_material(shape, _at(o, x, y, z, 0.0, 0.0, -d)):
+            crossing = d
+            break
+        lo = d
+        d += step
+    if crossing is None:
+        return None
+    hi = crossing
+    for _ in range(12):
+        mid = (lo + hi) / 2
+        if _in_material(shape, _at(o, x, y, z, 0.0, 0.0, -mid)):
+            hi = mid
+        else:
+            lo = mid
+    return (lo + hi) / 2
+
+
+def _probe_channel(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
+    """GROOVE / SLOT: a channel cut into the mating face, receiving a tongue or
+    a plate. Both are used the same way by real contracts, so both are measured
+    the same way — and the width is what a mating part actually depends on.
+
+    Frame convention: +z out of the mating face, and the channel RUNS ALONG the
+    port's xAxis, so its width is measured across the frame's y axis.
+
+    Width is the NARROWEST gap, sampled at several depths. A single slice at one
+    fixed depth graded whatever happened to sit at that plane and broke in both
+    directions: a print-friendly chamfered mouth read WIDER than the channel and
+    false-failed, while a channel genuinely too narrow but chamfered read exactly
+    right and PASSED — a 2.2mm gap certified as 3.0mm, which the old hint
+    ("change the channel to 3mm across") actively drove a repair toward.
+
+    Depth is checked only when declared: a SLOT is often cut straight through,
+    and demanding a floor there would fail correct geometry — the mistake the
+    FLAT_FACE square grid made.
+    """
+    key, ptype = port["key"], port["type"]
+    width = _port_dim(port, WIDTH_KEYS, "width",
+                      "channel ports must carry params.width in mm — the gap a tongue sits in")
+    frame = _frame(port["pose"])
+    o, x, y, z = frame
+    declared_depth = _port_dim_opt(port, DEPTH_KEYS)
+
+    # Inside the channel there must be void. Material here means it was never
+    # cut — or that the channel is shallower than this probe reaches, which is a
+    # different problem and must not be reported as the first one.
+    if _in_material(shape, _at(o, x, y, z, 0, 0, -PROBE_DEPTH_MM)):
+        if not _in_material(shape, _at(o, x, y, z, 0, 0, -PROBE_EPS_MM)):
+            raise GateError("G3", f'port "{key}" ({ptype}): the channel is shallower than the {PROBE_DEPTH_MM}mm this probe measures at',
+                            f"cut the channel at least {PROBE_DEPTH_MM * 2:g}mm deep, or express a feature this shallow as a FLAT_FACE rather than a channel")
+        raise GateError("G3", f'port "{key}" ({ptype}): no channel at the declared origin — material found where the gap should be',
+                        f"cut a {width:g}mm-wide channel centred exactly on the contract pose, running along the port's xAxis")
+
+    # The floor first, because it bounds where width may be sampled. A declared
+    # depth deeper than the part used to send the width probe below the solid
+    # into open air, where it found no wall and reported THAT — a true failure
+    # with a misleading message, which in a repair loop is worse than a slow one.
+    # The search depth must NOT derive from the declaration it is checking. A
+    # channel truly 4mm deep declared as 0.5mm searched only 3mm, missed the
+    # floor, and reported "cuts straight through" with a hint to drop
+    # params.depth — which makes it pass. Bound it by the part instead, so a
+    # wrong declaration reads as "deeper than declared" either way round.
+    bbox = shape.bounding_box()
+    reach_down = max(float(bbox.size.X), float(bbox.size.Y), float(bbox.size.Z)) + 2.0
+    floor = _march_depth(shape, frame, reach_down)
+
+    if declared_depth and declared_depth > 0:
+        # MEASURE the floor, never echo the declaration. Handing back the
+        # declared number as `measured_depth` is the defect this file already
+        # records for probed_size: the inspector renders it as a measurement, so
+        # a channel truly 4.2mm deep read back "4 mm deep" because that is what
+        # the contract said. Its own tolerance — a different axis, and
+        # PROBE_EPS_MM is a sampling standoff, not an engineering tolerance.
+        if floor is None:
+            raise GateError("G3", f'port "{key}" ({ptype}): declares a {declared_depth:g}mm floor but the channel cuts straight through',
+                            f"either stop the cut at {declared_depth:g}mm, or drop params.depth — a through-cut declares no depth")
+        if abs(floor - declared_depth) > DEPTH_TOL_MM:
+            direction = "deeper" if floor > declared_depth else "shallower"
+            raise GateError("G3", f'port "{key}" ({ptype}): expected depth {declared_depth:g}, measured {floor:.2f} ({direction} than declared)',
+                            f"cut the channel floor {declared_depth:g}mm from the face; a mating part seats on this number")
+
+    # SAMPLING, NOT A BOUND. Three depths cannot see a constriction that falls
+    # between them: a 3mm channel pinched to 2.4mm over a 0.5mm band still
+    # passes. No finite sample set closes that, and one slice was strictly
+    # worse — but the failure hint says "make the channel 3mm at its tightest
+    # point", which is more than the gate can actually verify.
+    reach = width * 3 + 2.0
+    span_to = (floor - PROBE_EPS_MM) if floor is not None else PROBE_DEPTH_MM * 3
+    depths = sorted({PROBE_DEPTH_MM, max(PROBE_DEPTH_MM, span_to / 2), max(PROBE_DEPTH_MM, span_to)})
+    measured: float | None = None
+    at_depth: float | None = None
+    for probe_w in depths:
+        if _in_material(shape, _at(o, x, y, z, 0, 0, -probe_w)):
+            continue  # past the floor or into a rib — not a slice of this channel
+        left = _march(shape, frame, 0.0, 1.0, -probe_w, reach)
+        right = _march(shape, frame, 0.0, -1.0, -probe_w, reach)
+        if left is None or right is None:
+            raise GateError("G3", f'port "{key}" ({ptype}): no wall within {reach:.1f}mm at {probe_w:.1f}mm depth — the channel is open, not a {width:g}mm gap',
+                            "the channel must be bounded on both sides across its width; check the pose's xAxis points ALONG the channel, not across it")
+        span = left + right
+        if measured is None or span < measured:
+            measured, at_depth = span, probe_w
+
+    if measured is None or at_depth is None:
+        raise GateError("G3", f'port "{key}" ({ptype}): no open channel below the declared face',
+                        f"cut a {width:g}mm-wide channel centred on the contract pose")
+
+    if abs(measured - width) > DIAMETER_TOL_MM:
+        raise GateError("G3", f'port "{key}" ({ptype}): expected width {width:g}, narrowest measured {measured:.2f} (at {at_depth:g}mm depth)',
+                        f"the declared width is the NARROWEST gap, because that is what a mating tongue must fit through — make the channel {width:g}mm at its tightest point. A chamfered or drafted mouth is fine and is not what gets measured, so do not widen the channel to compensate for one.")
+
+    result: dict[str, Any] = {"key": key, "type": ptype, "measured_width": round(measured, 3)}
+    if floor is not None:
+        result["measured_depth"] = round(floor, 3)
+    return result
+
+CHANNEL_LIKE = {"GROOVE", "SLOT"}
+WIDTH_KEYS = ("width", "slotWidth", "slot_width", "grooveWidth", "groove_width", "channelWidth")
+DEPTH_KEYS = ("depth", "slotDepth", "slot_depth", "grooveDepth", "groove_depth")
+
+
+def _port_dim(port: dict[str, Any], keys: tuple[str, ...], label: str, hint: str) -> float:
+    """Alias-tolerant numeric param, following _port_diameter. Deliberately NOT
+    raw params["x"]: _probe_boss does that for outer_diameter and a missing key
+    surfaces as an unexpected KeyError under stage G1 instead of a repairable G3."""
+    params = port.get("params", {})
+    for k in keys:
+        v = params.get(k)
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, str):
+            try:
+                return float(v)
+            except ValueError:
+                break
+    raise GateError(
+        "G3",
+        f'port "{port.get("key", "?")}" ({port.get("type", "?")}) declares no numeric {label} (params: {sorted(params)})',
+        hint,
+    )
+
+
+def _port_dim_opt(port: dict[str, Any], keys: tuple[str, ...]) -> float | None:
+    """Alias-tolerant optional numeric param. DEPTH_KEYS existed but nothing read
+    it — the probe indexed params["depth"] directly, so a model writing slotDepth
+    got its floor check silently skipped, which is the unverified-port outcome
+    this probe exists to close. A declared 99mm floor on a 10mm plate passed."""
+    params = port.get("params", {})
+    for k in keys:
+        v = params.get(k)
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, str):
+            try:
+                return float(v)
+            except ValueError:
+                return None
+    return None
+
+
+def _march_depth(shape: Any, frame, max_d: float) -> float | None:
+    """Distance straight down -z from the port origin to the floor, or None if
+    the cut passes through. Same march-then-bisect as _march, along the axis
+    rather than in-plane."""
+    o, x, y, z = frame
+    step = 0.25
+    lo, crossing, d = 0.0, None, step
+    while d <= max_d:
+        if _in_material(shape, _at(o, x, y, z, 0.0, 0.0, -d)):
+            crossing = d
+            break
+        lo = d
+        d += step
+    if crossing is None:
+        return None
+    hi = crossing
+    for _ in range(12):
+        mid = (lo + hi) / 2
+        if _in_material(shape, _at(o, x, y, z, 0.0, 0.0, -mid)):
+            hi = mid
+        else:
+            lo = mid
+    return (lo + hi) / 2
+
+
 def g3_ports(shape: Any, ports: list[dict[str, Any]]) -> list[dict[str, Any]]:
     report: list[dict[str, Any]] = []
     for port in ports:
@@ -415,6 +676,8 @@ def g3_ports(shape: Any, ports: list[dict[str, Any]]) -> list[dict[str, Any]]:
             report.append(_probe_flat_face(shape, port))
         elif ptype == "SCREW_BOSS":
             report.append(_probe_boss(shape, port))
+        elif ptype in CHANNEL_LIKE:
+            report.append(_probe_channel(shape, port))
         else:
             report.append({"key": port.get("key", "?"), "type": ptype, "skipped": "no probe for this type yet"})
     return report
@@ -493,3 +756,121 @@ def g4_envelope(shape: Any, envelope: list[dict[str, Any]]) -> dict[str, Any]:
             "shrink the offending feature to fit the envelope, or request an envelope expansion from the architect",
         )
     return {"vertices_checked": len(vertices), "violations": 0}
+
+
+def _raise_selfcheck(msg: str) -> None:
+    raise GateError("self-check", msg, "")
+
+# ---------------------------------------------------------------------------
+# Self-check: `uv run python -m patchcad_kernel.gates`
+#
+# The probes are the oracle, and the only test they had was smoke.py — which
+# needs a running service, goes over HTTP, and tells you a call 422'd without
+# telling you the sampling maths is wrong. This runs the probe functions
+# directly against shapes built here, so a bad radius or a flipped polarity
+# fails in a second with a line number. There is no pytest in this package.
+if __name__ == "__main__":  # pragma: no cover
+    from build123d import Axis, Box, BuildPart, Cylinder, Locations, Mode, chamfer
+
+    fails: list[str] = []
+
+    def expect(label: str, fn, want_error: str | None = None) -> None:
+        try:
+            fn()
+            ok, detail = want_error is None, "passed"
+        except GateError as err:
+            ok = want_error is not None and want_error in err.error
+            detail = f"{err.stage}: {err.error}"
+        print(f"  {'PASS' if ok else 'FAIL'}  {label}" + ("" if ok else f"  <- {detail}"))
+        if not ok:
+            fails.append(label)
+
+    def pose(origin, z=(0, 0, 1), x=(1, 0, 0)):
+        return {"origin": list(origin), "zAxis": list(z), "xAxis": list(x)}
+
+    with BuildPart() as plate:
+        Box(60, 40, 10)
+        with Locations((0, 0, 3)):
+            Box(70, 3, 4, mode=Mode.SUBTRACT)
+    grooved = plate.part
+
+    with BuildPart() as disc:
+        Cylinder(radius=25, height=10)
+    round_top = disc.part
+
+    print("FLAT_FACE — an absolute inset, so tolerance must not scale")
+    for size, want in ((50.0, None), (50.4, None), (55.5, "no material"), (200.0, "no material")):
+        expect(f"Ø50 top, size={size}",
+               lambda s=size: _probe_flat_face(round_top, {"key": "f", "type": "FLAT_FACE", "pose": pose((0, 0, 5)), "params": {"size": s}}),
+               want)
+
+    print("GROOVE / SLOT — width across the frame's y axis")
+    expect("3mm groove declared 3.0",
+           lambda: _probe_channel(grooved, {"key": "g", "type": "GROOVE", "pose": pose((0, 0, 5)), "params": {"width": 3.0}}))
+    expect("3mm groove declared 5.0", 
+           lambda: _probe_channel(grooved, {"key": "g", "type": "GROOVE", "pose": pose((0, 0, 5)), "params": {"width": 5.0}}),
+           "measured 3.00")
+    expect("groove on a solid disc",
+           lambda: _probe_channel(round_top, {"key": "g", "type": "GROOVE", "pose": pose((0, 0, 5)), "params": {"width": 3.0}}),
+           "no channel at the declared origin")
+    expect("groove probed across its length",
+           lambda: _probe_channel(grooved, {"key": "g", "type": "GROOVE", "pose": pose((0, 0, 5), x=(0, 1, 0)), "params": {"width": 3.0}}),
+           "no wall")
+    expect("groove with no width",
+           lambda: _probe_channel(grooved, {"key": "g", "type": "GROOVE", "pose": pose((0, 0, 5)), "params": {}}),
+           "no numeric width")
+
+    print("_march_depth — the floor, measured not echoed")
+    for true_d, declared, want in ((4.0, 4.0, None), (4.5, 4.0, "deeper than declared"),
+                                   (3.5, 4.0, "shallower than declared"),
+                                   (4.0, 0.5, "deeper than declared"),
+                                   (4.0, 99.0, "shallower than declared")):
+        with BuildPart() as bp:
+            Box(60, 40, 10)
+            with Locations((0, 0, 5 - true_d / 2)):
+                Box(70, 3, true_d, mode=Mode.SUBTRACT)
+        expect(f"true {true_d}mm floor declared {declared}mm",
+               lambda sh=bp.part, dd=declared: _probe_channel(sh, {"key": "g", "type": "GROOVE", "pose": pose((0, 0, 5)), "params": {"width": 3.0, "depth": dd}}),
+               want)
+
+    print("width is the NARROWEST gap, so a chamfered mouth is not the measurement")
+    with BuildPart() as cbp:
+        Box(60, 40, 10)
+        with Locations((0, 0, 3)):
+            Box(70, 3.0, 4, mode=Mode.SUBTRACT)
+        chamfer(cbp.edges().group_by(Axis.Z)[-1], length=1.0)
+    wide_mouth = cbp.part
+    with BuildPart() as nbp:
+        Box(60, 40, 10)
+        with Locations((0, 0, 3)):
+            Box(70, 2.2, 4, mode=Mode.SUBTRACT)
+        chamfer(nbp.edges().group_by(Axis.Z)[-1], length=1.0)
+    narrow_mouth = nbp.part
+    expect("3.0 channel with a 1mm chamfer declared 3.0",
+           lambda: _probe_channel(wide_mouth, {"key": "g", "type": "GROOVE", "pose": pose((0, 0, 5)), "params": {"width": 3.0}}))
+    expect("2.2 channel with a 1mm chamfer declared 3.0",
+           lambda: _probe_channel(narrow_mouth, {"key": "g", "type": "GROOVE", "pose": pose((0, 0, 5)), "params": {"width": 3.0}}),
+           "narrowest measured 2.20")
+
+    print("_port_dim_opt — every alias, and garbage must not shadow a valid one")
+    grooved4 = grooved
+    for k in ("depth", "slotDepth", "slot_depth", "grooveDepth", "groove_depth"):
+        expect(f"depth alias {k}",
+               lambda kk=k: _probe_channel(grooved4, {"key": "g", "type": "GROOVE", "pose": pose((0, 0, 5)), "params": {"width": 3.0, kk: 4.0}}))
+    expect("a garbage depth does not shadow a valid alias",
+           lambda: _probe_channel(grooved4, {"key": "g", "type": "GROOVE", "pose": pose((0, 0, 5)), "params": {"width": 3.0, "depth": "abc", "slotDepth": 4.0}}))
+
+    print("_march — the shared directional primitive")
+    frame = _frame(pose((0, 0, 5)))
+    half = _march(grooved, frame, 0.0, 1.0, -PROBE_DEPTH_MM, 12.0)
+    expect(f"half-width of a 3mm groove measures {half}",
+           lambda: None if half and abs(half - 1.5) < 0.01 else _raise_selfcheck(f"expected 1.5, got {half}"))
+    none_case = _march(round_top, frame, 0.0, 1.0, -PROBE_DEPTH_MM, 5.0)
+    expect("a start already in material returns None, not a ~0 distance",
+           lambda: None if none_case is None else _raise_selfcheck(f"expected None, got {none_case}"))
+
+    print()
+    if fails:
+        print(f"{len(fails)} FAILURE(S): {fails}")
+        raise SystemExit(1)
+    print("gates self-check passed")

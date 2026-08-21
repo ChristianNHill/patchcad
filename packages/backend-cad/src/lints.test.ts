@@ -182,30 +182,58 @@ describe("cad-port-params lint", () => {
   });
 
   it("leaves port types it has no probe for alone", () => {
-    const g = graph([envNode("p", [cyl(0, 20, 10)], [{ name: "s", type: "SLOT", params: {} }])], []);
+    // SLOT used to sit here. It has a probe now, and therefore a required
+    // width, so the type had to change for the assertion to still mean
+    // "params are only demanded where something measures them".
+    const g = graph([envNode("p", [cyl(0, 20, 10)], [{ name: "s", type: "SHAFT", params: {} }])], []);
     expect(cadFlatFaceSizeLint.run(g)).toEqual([]);
+  });
+
+  it("flags a channel with no width", () => {
+    const g = graph([envNode("p", [cyl(0, 20, 10)], [{ name: "g", type: "GROOVE", params: {} }])], []);
+    expect(cadFlatFaceSizeLint.run(g)[0]).toContain("declares no width");
+  });
+
+  it("accepts a channel width under any of its aliases", () => {
+    for (const k of ["width", "slotWidth", "grooveWidth"]) {
+      const g = graph([envNode("p", [cyl(0, 20, 10)], [{ name: "g", type: "SLOT", params: { [k]: 3 } }])], []);
+      expect(cadFlatFaceSizeLint.run(g), k).toEqual([]);
+    }
   });
 });
 
 describe("cadProbedPortsLint", () => {
   it("rejects a port type no gate can measure", () => {
-    const g = graph([node("wall", "part", [{ name: "tongue", type: "GROOVE" }])], []);
+    const g = graph([node("wall", "part", [{ name: "hook", type: "SNAP_HOOK" }])], []);
     const problems = cadProbedPortsLint.run(g);
     expect(problems).toHaveLength(1);
-    expect(problems[0]).toContain("GROOVE");
+    expect(problems[0]).toContain("SNAP_HOOK");
     expect(problems[0]).toContain("featureless block");
   });
 
   it("accepts every port type the kernel probes", () => {
-    for (const type of ["CLEARANCE_HOLE", "BORE", "SCREW_SEAT", "SCREW_BOSS", "FLAT_FACE"]) {
+    for (const type of ["CLEARANCE_HOLE", "BORE", "SCREW_SEAT", "SCREW_BOSS", "FLAT_FACE", "GROOVE", "SLOT"]) {
       const g = graph([node("p", "part", [{ name: "i", type }])], []);
       expect(cadProbedPortsLint.run(g), type).toEqual([]);
     }
   });
 
+  // This set is a claim about gates.py. If a type is listed here with no probe
+  // behind it, a node built from it passes verify as a featureless block.
+  it("lists exactly the types gates.py dispatches a probe for", () => {
+    const probed = ["BORE", "CLEARANCE_HOLE", "FLAT_FACE", "GROOVE", "SCREW_BOSS", "SCREW_SEAT", "SLOT"];
+    const rejected = ["SHAFT", "SNAP_HOOK", "SNAP_RECESS", "LIP", "HOLE_PATTERN", "BOSS_PATTERN"];
+    for (const type of probed) {
+      expect(cadProbedPortsLint.run(graph([node("p", "part", [{ name: "i", type }])], [])), type).toEqual([]);
+    }
+    for (const type of rejected) {
+      expect(cadProbedPortsLint.run(graph([node("p", "part", [{ name: "i", type }])], [])), type).toHaveLength(1);
+    }
+  });
+
   it("names every unprobed port, not just the first", () => {
     const g = graph(
-      [node("wall", "part", [{ name: "a", type: "SLOT" }, { name: "b", type: "LIP" }])],
+      [node("wall", "part", [{ name: "a", type: "SHAFT" }, { name: "b", type: "LIP" }])],
       [],
     );
     expect(cadProbedPortsLint.run(g)).toHaveLength(2);

@@ -29,6 +29,12 @@ export interface PortMeasurement {
   ring_hits?: number;
   /** SCREW_BOSS with a declared pilot. */
   measured_pilot?: number;
+  /** GROOVE / SLOT: the gap actually cut, measured across the channel. This is
+   *  the number a mating tongue is cut to, so it is the one worth surfacing. */
+  measured_width?: number;
+  /** GROOVE / SLOT declared with a depth: the floor found at that depth.
+   *  Absent for a through-cut, which declares no depth. */
+  measured_depth?: number;
   /** Port type with no probe implemented yet. */
   skipped?: string;
 }

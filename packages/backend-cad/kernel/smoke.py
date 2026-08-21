@@ -144,7 +144,16 @@ def main() -> None:
     )
 
     # 5. G2: zero-volume result caught with a hint.
-    gone = PLATE.replace("return plate - hole", "return plate - Box(p.width*2, p.depth*2, p.thickness*2)")
+    # Spelled out rather than patched out of PLATE: a fixture derived from
+    # another fixture's source stops testing anything the moment that source is
+    # edited, silently. One of the channel checks below was found doing exactly
+    # that — its replacement had quietly become a no-op.
+    gone = """from build123d import *
+
+def build(p):
+    plate = Box(p.width, p.depth, p.thickness)
+    return plate - Box(p.width * 2, p.depth * 2, p.thickness * 2)
+"""
     r5 = client.post("/execute", json={"code": gone, "params": params})
     body5 = r5.json()
     check("G2 catches empty boolean", r5.status_code == 422 and body5.get("stage") == "G2", body5.get("error", ""))
@@ -297,6 +306,125 @@ def build(p):
     r15 = client.post("/execute", json={"code": spoke_code, "params": {}, "ports": [spoke_port]})
     check("G3 rejects a spoked face that only spans one radius", r15.status_code == 422,
           "8 spokes reaching r=29 must not satisfy a solid 50mm seat")
+
+    # 16. GROOVE / SLOT. These had no probe at all: g3_ports recorded them
+    # "skipped" and returned ok, so a node whose ports were all channels passed
+    # verify as a featureless block. A real shipped project did exactly that.
+    groove_code = (
+        "from build123d import *\n"
+        "def build(p):\n"
+        "    _ = p['nonce']\n"
+        "    with BuildPart() as bp:\n"
+        "        Box(60, 40, 10)\n"
+        "        with Locations((0, 0, 5 - p['d'] / 2)):\n"
+        "            Box(70, p['w'], p['d'], mode=Mode.SUBTRACT)\n"
+        "    return bp.part\n"
+    )
+    top = {"origin": [0, 0, 5], "zAxis": [0, 0, 1], "xAxis": [1, 0, 0]}
+
+    def channel(ptype, params, w=3.0, code=groove_code, pose=None, d=4.0):
+        # THE NONCE IS LOAD-BEARING. /execute serves cached 200s before a worker
+        # runs, so an assertion on a 200 can be satisfied by an entry written
+        # under an earlier gate version — the check goes green with the probe
+        # deleted. Failures are never cached, so the 422 assertions below are
+        # self-verifying without it; the passing ones are not. Two checks in this
+        # file were already found decorative for exactly this reason.
+        port = {"key": "seat", "type": ptype, "pose": pose or top, "params": params}
+        params_in = {"w": w, "d": d, "nonce": int(time.time())}
+        return client.post("/execute", json={"code": code, "params": params_in, "ports": [port]})
+
+    r16 = channel("GROOVE", {"width": 3.0})
+    check("G3 measures a groove width", r16.status_code == 200,
+          str(r16.json().get("measurements", {}).get("ports")))
+    r16b = channel("GROOVE", {"width": 5.0})
+    body16b = r16b.json()
+    check("G3 catches a wrong groove width",
+          r16b.status_code == 422 and "measured 3.00" in body16b.get("error", ""),
+          body16b.get("error", ""))
+    # THE CASE THAT USED TO PASS: the channel was never cut.
+    # Spelled out, not derived from groove_code by string replacement: that
+    # replacement silently stopped matching when groove_code was edited, so the
+    # groove was still cut and this check asserted 422 against a part that
+    # legitimately passed. A fixture built by patching another fixture's source
+    # is a fixture that can quietly stop testing anything.
+    solid = (
+        "from build123d import *\n"
+        "def build(p):\n"
+        "    _ = (p['nonce'], p['w'], p['d'])\n"
+        "    with BuildPart() as bp:\n"
+        "        Box(60, 40, 10)\n"
+        "    return bp.part\n"
+    )
+    r16c = channel("GROOVE", {"width": 3.0}, code=solid)
+    check("G3 catches a channel that was never cut",
+          r16c.status_code == 422 and "no channel at the declared origin" in r16c.json().get("error", ""),
+          r16c.json().get("error", ""))
+    # A missing width must be a repairable G3, not a KeyError surfacing as G1.
+    r16d = channel("SLOT", {})
+    body16d = r16d.json()
+    check("G3 names a missing channel width instead of raising",
+          r16d.status_code == 422 and body16d.get("stage") == "G3"
+          and "no numeric width" in body16d.get("error", ""),
+          f'{body16d.get("stage")}: {body16d.get("error", "")}')
+    # A channel measured across instead of along has no wall to find.
+    across = {"origin": [0, 0, 5], "zAxis": [0, 0, 1], "xAxis": [0, 1, 0]}
+    r16e = channel("GROOVE", {"width": 3.0}, pose=across)
+    check("G3 catches a channel probed across its length",
+          r16e.status_code == 422 and "no wall" in r16e.json().get("error", ""),
+          r16e.json().get("error", ""))
+    # Depth is optional: demanding a floor on a through-cut would fail correct
+    # geometry, which is the mistake the FLAT_FACE grid made.
+    through = (
+        "from build123d import *\n"
+        "def build(p):\n"
+        "    _ = (p['nonce'], p['d'])\n"
+        "    with BuildPart() as bp:\n"
+        "        Box(60, 40, 10)\n"
+        "        Box(70, p['w'], 20, mode=Mode.SUBTRACT)\n"
+        "    return bp.part\n"
+    )
+    r16f = channel("SLOT", {"width": 3.0}, code=through)
+    check("G3 accepts a through-cut slot with no declared depth", r16f.status_code == 200,
+          r16f.json().get("error", ""))
+    r16g = channel("SLOT", {"width": 3.0, "depth": 4.0}, code=through)
+    check("G3 catches a declared depth on a through-cut",
+          r16g.status_code == 422 and "cuts straight through" in r16g.json().get("error", ""),
+          r16g.json().get("error", ""))
+
+    # Depth had only failure coverage. These two are the positive cases, and the
+    # second is the one that catches `measured_depth` going back to echoing the
+    # declared number instead of measuring the floor.
+    r16h = channel("GROOVE", {"width": 3.0, "depth": 4.0}, d=4.0)
+    check("G3 accepts a truthful channel depth", r16h.status_code == 200,
+          str(r16h.json().get("measurements", {}).get("ports")))
+    ports16h = r16h.json().get("measurements", {}).get("ports") or [{}]
+    check("G3 reports the depth it measured, not the one declared",
+          abs((ports16h[0].get("measured_depth") or 0) - 4.0) < 0.05,
+          str(ports16h[0]))
+    r16i = channel("GROOVE", {"width": 3.0, "depth": 4.0}, d=4.5)
+    check("G3 catches a channel cut deeper than declared",
+          r16i.status_code == 422 and "deeper than declared" in r16i.json().get("error", ""),
+          r16i.json().get("error", ""))
+    # A chamfered mouth is print-normal and must not read as a wider channel;
+    # the same measurement must still reject a channel that is actually narrow.
+    chamfered = (
+        "from build123d import *\n"
+        "def build(p):\n"
+        "    _ = p['nonce']\n"
+        "    with BuildPart() as bp:\n"
+        "        Box(60, 40, 10)\n"
+        "        with Locations((0, 0, 5 - p['d'] / 2)):\n"
+        "            Box(70, p['w'], p['d'], mode=Mode.SUBTRACT)\n"
+        "        chamfer(bp.edges().group_by(Axis.Z)[-1], length=1.0)\n"
+        "    return bp.part\n"
+    )
+    r16j = channel("GROOVE", {"width": 3.0}, w=3.0, code=chamfered)
+    check("G3 accepts a 3mm channel with a 1mm chamfered mouth", r16j.status_code == 200,
+          r16j.json().get("error", ""))
+    r16k = channel("GROOVE", {"width": 3.0}, w=2.2, code=chamfered)
+    check("G3 still rejects a narrow channel hidden by a chamfer",
+          r16k.status_code == 422 and "narrowest measured 2.2" in r16k.json().get("error", ""),
+          r16k.json().get("error", ""))
 
     print()
     if failures:
