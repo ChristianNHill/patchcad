@@ -97,18 +97,34 @@ async function main() {
    */
   let cookAbort = new AbortController();
 
+  /** The live cook signal, minting a fresh controller when the last one was
+   *  aborted. An aborted AbortController stays aborted, so whoever reads it
+   *  first has to reset it — this used to live inside cookDeps, which meant a
+   *  second reader (planning) inherited a dead signal after any /cook/cancel and
+   *  every plan failed until some other endpoint happened to reset it. */
+  const cookSignal = (): AbortSignal => {
+    if (cookAbort.signal.aborted) cookAbort = new AbortController();
+    return cookAbort.signal;
+  };
+
+  /** Should a cook look at what it made? Cheap relative to the cook (a cached
+   *  render is ~2ms, a cold one ~440ms, and the verdict never fails a node), and
+   *  for cad it is the only thing that catches "measurably correct, wrong
+   *  object" while port types outnumber probes. One definition so every entry
+   *  point agrees. */
+  const defaultInspect = () => active.store.doc.backend === "cad";
+
   /** The one place cook dependencies are assembled. Six call sites used to
    *  spell this out identically, which is how `signal` came to be supported by
    *  the engine and passed by nobody. */
   function cookDeps(provider: LlmProvider, opts: { inspect?: boolean } = {}): CookDeps {
-    if (cookAbort.signal.aborted) cookAbort = new AbortController();
     return {
       store: active.store,
       backend: active.backend,
       provider,
       workspace: active.workspace,
       library,
-      signal: cookAbort.signal,
+      signal: cookSignal(),
       inspect: opts.inspect,
     };
   }
@@ -498,6 +514,9 @@ async function main() {
         backend: backends[body.data.backend]!,
         projectId: slug,
         goal: body.data.goal,
+        // The architect is the longest single call in the system and was the one
+        // thing /cook/cancel could not reach.
+        signal: cookSignal(),
       });
       pendingPlan = { graph: result.graph, rationale: result.rationale, goal: body.data.goal };
       return {
@@ -524,8 +543,11 @@ async function main() {
     await writeFile(path.join(dir, "patchcad.json"), JSON.stringify(approved.graph, null, 2), "utf8");
     active = await activateProject(dir);
 
+    // The FIRST cook of a project is the one that forms the user's impression,
+    // and it used to be the one cook that never looked at what it made.
+    const inspect = defaultInspect();
     void trackCook(dir, cookNodes(
-      cookDeps(resolved.provider),
+      cookDeps(resolved.provider, { inspect }),
       Object.keys(active.store.doc.nodes),
     )).then((summary) => {
       console.log(
@@ -1141,12 +1163,22 @@ async function main() {
     return { ok: true, restored: top.label, depth: active.undo.length };
   });
 
-  const CookDirtyBody = z.object({ inspect: z.boolean().default(false) });
+  const CookDirtyBody = z.object({ inspect: z.boolean().optional() });
   app.post("/api/project/cook-dirty", async (req, reply) => {
     if (!resolved) return reply.code(503).send({ error: NO_PROVIDER_HELP });
-    // Opt-in: looking at each part costs a render plus a vision call, and the
-    // gates already catch everything measurable.
-    const inspect = CookDirtyBody.safeParse(req.body ?? {}).data?.inspect ?? false;
+    // Whether to look at each part is the SERVER's call, not the caller's,
+    // because the server knows the backend. It used to default false here and
+    // (after the approve path gained it) true there, so the same cook inspected
+    // or didn't depending on which endpoint reached it — and the studio's
+    // cookDirty() sends no body, so every re-cook a user triggered got the
+    // no-look path. An explicit `inspect` in the body still overrides, for
+    // scripts that want to opt out of the cost.
+    const cookBody = CookDirtyBody.safeParse(req.body ?? {});
+    // A malformed body used to fall through to the default, silently discarding
+    // an explicit opt-out — the same "invalid input becomes a default" shape as
+    // the disagreement this endpoint just stopped having.
+    if (!cookBody.success) return reply.code(400).send({ error: "inspect must be a boolean" });
+    const inspect = cookBody.data.inspect ?? defaultInspect();
     const stale = Object.values(active.store.doc.nodes)
       .filter((n) => ["planned", "dirty", "error_code", "error_contract", "cancelled"].includes(n.status))
       .map((n) => n.id);

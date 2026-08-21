@@ -51,7 +51,11 @@ export async function inspectNode(opts: {
   signal?: AbortSignal;
 }): Promise<NodeInspection> {
   const result = await opts.provider.complete({
-    role: "repair",
+    // The GENERATOR role, not repair. This is a triage look ("is this plainly
+    // the wrong object") returning a tiny verdict, and it now runs on every
+    // node that passes — routing it to the model the user pointed at hard
+    // problems meant an opus vision call per part to answer a yes/no.
+    role: "generator",
     system: SYSTEM,
     label: `inspect:${opts.node.title}`,
     schema: NodeInspection,
