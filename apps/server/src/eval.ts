@@ -53,9 +53,20 @@ type CaseExpect = {
   volume?: { max?: number; min?: number };
   ports?: PortExpect[];
   bboxSize?: { value: number[]; tol: number; axes?: number[] };
-  /** measured volume / bbox volume. The only thing that distinguishes a hollow
-   *  or cut part from the solid block of the same size, and a contract declaring
-   *  no ports gives the port checks nothing to bite on. */
+  /** measured volume / bbox volume, on the largest node.
+   *
+   *  READ THIS BEFORE TRUSTING IT: this proves material was removed. It does NOT
+   *  verify WHAT was removed. A plain open bucket with no cutouts at all is
+   *  0.288 (outer 75x75x95 minus a 65x65x90 cavity), so it sails through a max
+   *  of 0.45 while having zero hexagonal anything, and hollowing is the normal
+   *  way to be wrong here rather than an exotic one. No max can separate
+   *  "correctly cut" from "diagonal and solid" either: a legitimate hex-wall on
+   *  disk measures 0.050 and a divider 0.079.
+   *
+   *  It earns its place anyway, because it is the only assertion that reaches a
+   *  part declaring no ports, and it fails the solid block that actually
+   *  shipped. Verifying the cutouts themselves needs a probe for the port type
+   *  that describes them. */
   volumeFraction?: { max?: number; min?: number };
   zeroLlmKinds?: string[];
   assemblyProblems?: number;
@@ -256,6 +267,10 @@ function selfTest(): void {
     ...over,
   });
 
+  // A QUIET CASE CANNOT PROVE A CHECK EXISTS. Asserting misses.length === 0 is
+  // satisfied just as well by deleting the check under test, so the quiet cases
+  // guard against false positives and nothing more. Every check needs its own
+  // firing case to prove it is wired at all.
   let failures = 0;
   const expect = (name: string, misses: Miss[], want: "fire" | "quiet", needle?: string) => {
     const fired = misses.length > 0;
@@ -325,7 +340,10 @@ function selfTest(): void {
   const bare: EvalCase = { id: "t", prompt: "p", expect: { nodes: { min: 1, max: 1 }, noSkippedPorts: true } };
   // THE BRICK, and the shape that passed before review: a solid box declaring
   // no port at all. Nothing to skip, so nothing fired.
-  expect("a part declaring no ports passes the bookkeeping checks",
+  // NOT A TEST: this documents a known hole, that no port assertion can reach a
+  // part which declares nothing. It is the reason volumeFraction exists, so
+  // deleting it as redundant would lose the record.
+  expect("(documented hole) a part declaring no ports passes the bookkeeping checks",
     score(bare, mk({ p: node("p", {}, { volume_mm3: 1, bbox: { size: [75, 75, 95] }, ports: [] }) }), []).misses,
     "quiet");
   // THE ACTUAL BRICK, and the reason volumeFraction exists: the shape review
@@ -508,9 +526,23 @@ async function runCase(c: EvalCase) {
     architect: { usd: arch.usd, inTok: arch.inputTokens, outTok: arch.outputTokens, repaired: plan.repaired },
     planMs, cookMs, probes: probes.length,
     skipped: probes.filter((p) => p.skipped).length,
+    // A FAIL THAT CANNOT BE DIAGNOSED COSTS A SECOND FULL RUN, which is the
+    // "pay twice" this harness exists to avoid. The first real run landed a node
+    // in error_contract and recorded nothing about why, so everything needed to
+    // read the failure without calling a model again is captured here: the gate
+    // verdict, the attribution, what each attempt was blamed on, and the code.
     perNode: nodes.map((n) => ({
       id: n.id, kind: n.kind, status: n.status, calls: n.cost.calls, usd: n.cost.usd,
+      version: n.version,
+      detail: n.statusDetail ?? null,
+      causes: n.history.map((h) => h.cause),
+      declaredPorts: (((n.contract.payload as { ports?: { name?: string; type?: string }[] } | null)?.ports) ?? [])
+        .map((pt) => `${pt.name}:${pt.type}`),
+      measurements: n.measurements?.data ?? null,
+      spec: n.spec,
+      code: n.artifact?.code ?? null,
     })),
+    graph: store.doc,
   };
 }
 
@@ -593,6 +625,13 @@ async function main() {
         `plan ${(r.planMs / 1000).toFixed(1)}s cook ${(r.cookMs / 1000).toFixed(1)}s`,
     );
     for (const m of r.misses) console.log(`    MISS: ${m}`);
+    for (const n of r.perNode) {
+      if (!n.status.startsWith("error") && n.status === "ready") continue;
+      const d = n.detail as { stage?: string; message?: string; attribution?: string } | null;
+      console.log(`    ${n.id}: ${n.status} after ${n.calls} call(s), causes=[${n.causes.join(",")}]`);
+      if (n.declaredPorts.length) console.log(`      declared: ${n.declaredPorts.join(", ")}`);
+      if (d) console.log(`      ${d.stage} (${d.attribution}): ${(d.message ?? "").slice(0, 400)}`);
+    }
   }
 
   fs.mkdirSync(resultsDir, { recursive: true });
