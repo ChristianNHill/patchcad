@@ -658,9 +658,29 @@ async function main() {
       break;
     }
     console.log(`\n=== ${c.id} ===\n  ${c.prompt}`);
-    const r = await runCase(c);
+    let r: Awaited<ReturnType<typeof runCase>> | { id: string; pass: false; error: string; usd: number; misses: string[]; perNode: never[] };
+    try {
+      r = await runCase(c);
+    } catch (err) {
+      // A RUN THAT THROWS RECORDED NOTHING. pen-cup-hexagonal died in the
+      // architect on a JSON parse failure, and because the result file is only
+      // written on the success path there was no artifact at all: no cost, no
+      // error text, nothing to read afterwards. That is the same pay-twice this
+      // harness exists to avoid, one level up from the failure capture inside
+      // runCase. A thrown call still billed, and LlmCallError carries what it
+      // billed, so the ledger stays honest.
+      const billed = (err as { usage?: { usd: number } }).usage?.usd ?? 0;
+      r = {
+        id: c.id, pass: false, error: String(err instanceof Error ? err.message : err),
+        usd: billed, misses: [`threw before scoring: ${String(err instanceof Error ? err.message : err)}`],
+        perNode: [],
+      };
+      console.log(`  THREW  $${billed.toFixed(3)} billed before the throw`);
+      console.log(`    ${r.error.slice(0, 400)}`);
+    }
     spent += r.usd;
     results.push(r);
+    if ("error" in r) continue; // already reported above, and there is no run to summarise
     console.log(
       `  ${r.pass ? "PASS" : "FAIL"}  ${r.nodes} nodes (${r.deterministic} deterministic), ` +
         `${r.firstTry}/${r.modelNodes} first-try, ${r.dead} dead, ${r.calls} calls, ` +

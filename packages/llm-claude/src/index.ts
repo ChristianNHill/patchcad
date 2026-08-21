@@ -83,6 +83,24 @@ function sanitizeSchema(schema: unknown): unknown {
  *  any tokens generate so the retry is free, while the post-generation throws
  *  are plain Errors, and BadRequestError, RateLimitError and InternalServerError
  *  are siblings under APIError. */
+/** A provider failure that still cost money.
+ *
+ *  The adapter accumulates usage before every throw, on purpose — the API bills
+ *  a refusal, and returning zero for it puts spend in the ledger nobody can see.
+ *  But the accumulator was local to the call, so a throw discarded it and the
+ *  spend vanished anyway. A failed architect call cost two requests and reported
+ *  $0.00, because the harness only records cost on the success path.
+ */
+export class LlmCallError extends Error {
+  constructor(
+    message: string,
+    readonly usage: { inputTokens: number; outputTokens: number; usd: number },
+  ) {
+    super(message);
+    this.name = "LlmCallError";
+  }
+}
+
 export function isGrammarRejection(err: unknown): boolean {
   return err instanceof Anthropic.BadRequestError && /compiled grammar/i.test(err.message);
 }
@@ -114,7 +132,9 @@ export class ClaudeProvider implements LlmProvider {
     /** Set when the API refuses to compile this schema into a grammar. */
     let promptSchema = false;
 
-    const attempt = async (extra?: { assistant: string; user: string }): Promise<string> => {
+    const attempt = async (
+      extra?: { assistant: string; user: string },
+    ): Promise<{ text: string; stop: string | null }> => {
       // A message with images becomes a content array; without, it stays a
       // plain string so every existing call is byte-identical on the wire.
       const toContent = (m: (typeof req.messages)[number]) =>
@@ -203,10 +223,14 @@ export class ClaudeProvider implements LlmProvider {
       if (!text || text.type !== "text") {
         throw new Error(`no text block in response for "${req.label}" (stop: ${response.stop_reason})`);
       }
-      return text.text;
+      // The stop reason rides out with the text. A truncated response and a
+      // malformed one are different failures with different fixes — raise the
+      // ceiling versus fix the prompt — and reporting a parse position for the
+      // first sends you looking at the model's JSON when the budget ran out.
+      return { text: text.text, stop: response.stop_reason };
     };
 
-    let raw: string;
+    let raw: { text: string; stop: string | null };
     try {
       raw = await attempt();
     } catch (err) {
@@ -214,15 +238,18 @@ export class ClaudeProvider implements LlmProvider {
       promptSchema = true;
       raw = await attempt();
     }
-    let parsed = this.tryParse(req, raw);
+    let parsed = this.tryParse(req, raw.text, raw.stop);
     if (!parsed.success) {
       raw = await attempt({
-        assistant: raw,
+        assistant: raw.text,
         user: `Your response failed validation:\n${parsed.error}\nRespond again with ONLY the corrected JSON.`,
       });
-      parsed = this.tryParse(req, raw);
+      parsed = this.tryParse(req, raw.text, raw.stop);
       if (!parsed.success) {
-        throw new Error(`schema validation failed twice for "${req.label}": ${parsed.error}`);
+        throw new LlmCallError(
+          `schema validation failed twice for "${req.label}": ${parsed.error}`,
+          { ...usage },
+        );
       }
     }
 
@@ -232,6 +259,7 @@ export class ClaudeProvider implements LlmProvider {
   private tryParse<T>(
     req: LlmRequest<T>,
     raw: string,
+    stop: string | null = null,
   ): { success: true; data: T } | { success: false; error: string } {
     // Tolerate a fenced or prose-wrapped reply, matching the OpenAI-compat
     // adapter. Structured outputs returns bare JSON, so this never mattered
@@ -254,7 +282,23 @@ export class ClaudeProvider implements LlmProvider {
         error: result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
       };
     } catch (err) {
-      return { success: false, error: `invalid JSON: ${(err as Error).message}` };
+      const message = (err as Error).message;
+      // A PARSE POSITION ALONE IS NOT A DIAGNOSIS. This reported only the
+      // position, so a failed architect call said "Expected ',' or '}' at
+      // position 3082" and nothing else: no length, no stop reason, not one
+      // character of the text. Truncation and malformed JSON look identical
+      // from there, and telling them apart cost a second paid call. The
+      // sibling no-JSON-found branch above has always included the raw head.
+      const at = Number(/position (\d+)/.exec(message)?.[1] ?? NaN);
+      const window = Number.isFinite(at)
+        ? ` around it: ${JSON.stringify(match[0].slice(Math.max(0, at - 120), at + 120))}`
+        : ` head: ${JSON.stringify(match[0].slice(0, 200))}`;
+      return {
+        success: false,
+        error:
+          `invalid JSON: ${message} (${raw.length} chars, stop: ${stop ?? "unknown"}` +
+          `${stop === "max_tokens" ? " — TRUNCATED, so raise maxTokens rather than blaming the JSON" : ""})${window}`,
+      };
     }
   }
 }

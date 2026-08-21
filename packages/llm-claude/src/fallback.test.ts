@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
-import { ClaudeProvider, isGrammarRejection } from "./index.js";
+import { ClaudeProvider, isGrammarRejection, LlmCallError } from "./index.js";
 
 /** The real predicate, imported rather than reimplemented: a local copy would
  *  keep passing after the adapter changed. */
@@ -73,5 +73,65 @@ describe("tryParse", () => {
     const r = parse("I cannot do that.") as { success: boolean; error?: string };
     expect(r.success).toBe(false);
     expect(r.error).toContain("no JSON object found");
+  });
+});
+
+describe("parse failures say enough to diagnose without a second paid call", () => {
+  // tryParse is private, and reaching it through a stubbed SDK is more machinery
+  // than the check is worth, so this pins the DIAGNOSTIC CONTENT the adapter is
+  // required to produce. A real architect call failed with nothing but
+  // "Expected ',' or '}' after property value in JSON at position 3082" — no
+  // length, no stop reason, not one character of the text — and telling
+  // truncation from malformed JSON cost another call.
+  const call = (raw: string, stop: string | null) => {
+    const provider = new ClaudeProvider({ apiKey: "test" }) as unknown as {
+      tryParse: (
+        req: { schema: z.ZodTypeAny },
+        raw: string,
+        stop: string | null,
+      ) => { success: boolean; error?: string };
+    };
+    return provider.tryParse({ schema: z.object({ a: z.string() }) }, raw, stop);
+  };
+
+  it("names truncation as truncation, and points at the ceiling", () => {
+    const truncated = '{"a": "x", "b": {"c": 1}, "d": "unterminat';
+    const out = call(truncated, "max_tokens");
+    expect(out.success).toBe(false);
+    expect(out.error).toContain("TRUNCATED");
+    expect(out.error).toContain("raise maxTokens");
+    expect(out.error).toContain("stop: max_tokens");
+  });
+
+  it("reports length, stop reason and a window around the position", () => {
+    const bad = '{"a": "x" "b": 2}';
+    const out = call(bad, "end_turn");
+    expect(out.success).toBe(false);
+    expect(out.error).toContain(`${bad.length} chars`);
+    expect(out.error).toContain("stop: end_turn");
+    // the offending text itself, not just a number
+    expect(out.error).toMatch(/around it|head:/);
+    expect(out.error).not.toContain("TRUNCATED");
+  });
+
+  it("still reports the raw head when no JSON object is present at all", () => {
+    const out = call("I cannot help with that.", "end_turn");
+    expect(out.success).toBe(false);
+    expect(out.error).toContain("no JSON object found");
+    expect(out.error).toContain("cannot help");
+  });
+
+  it("passes a valid object through", () => {
+    expect(call('{"a": "x"}', "end_turn").success).toBe(true);
+  });
+});
+
+describe("a failed call still reports what it billed", () => {
+  it("carries usage out on the error", () => {
+    const err = new LlmCallError("boom", { inputTokens: 6333, outputTokens: 1462, usd: 0.0682 });
+    expect(err).toBeInstanceOf(Error);
+    expect(err.usage.usd).toBeCloseTo(0.0682);
+    expect(err.usage.inputTokens).toBe(6333);
+    expect(err.name).toBe("LlmCallError");
   });
 });
