@@ -132,21 +132,28 @@ export const cadPortConsistencyLint = {
       if (from && !REGISTRY_HARDWARE.has(from.kind) && !payloadNames.get(e.from)?.has(e.fromPort)) {
         problems.push(`edge ${e.from}.${e.fromPort} → ${e.to}: "${e.fromPort}" is not a payload port name of ${e.from}`);
       }
-      // Registry hardware is exempt from the contract-vs-payload check above,
-      // because it declares no geometric ports. An EDGE naming one is a
-      // different matter: it names something that cannot exist, and the skip
-      // here let two of them through a whole cook. The assembly then reported
-      // "mate plate-a.screw_hole → screw-m4.hole: missing port" and left the
-      // screw at the origin, which is the CAD-M4 fastener-mate gap arriving as
-      // a solver complaint instead of a plan-time repair.
-      if (to && REGISTRY_HARDWARE.has(to.kind) && (payloadNames.get(e.to)?.size ?? 0) === 0) {
+      // HARDWARE IS NOT EXEMPT FROM THE EDGE CHECK, only from the
+      // contract-vs-payload one above. examples/cad-clamp's m4-screw declares a
+      // real `head_seat` payload port and its edge names it, so hardware does
+      // carry ports and an edge naming one that is absent is simply wrong.
+      //
+      // This exemption let plate-a.screw_hole → screw-m4.hole through a whole
+      // cook against a screw declaring NO ports, and the assembly reported
+      // "missing port" with both fasteners left at the origin.
+      //
+      // My first attempt at this rejected every edge to hardware instead, which
+      // deadlocked against cad-fastener-justified: that lint requires a fastener
+      // to be wired to something, so a fastener could be neither wired nor
+      // unwired and no plan containing one was possible. The architect burned
+      // three repair rounds and planning failed outright. Requiring the NAME to
+      // exist leaves both lints satisfiable together, which is the whole point.
+      if (to && !payloadNames.get(e.to)?.has(e.toPort)) {
         problems.push(
-          `edge ${e.from}.${e.fromPort} → ${e.to}.${e.toPort}: ${e.to} is registry hardware and declares no ports, ` +
-            `so "${e.toPort}" cannot exist and the mate will not solve. Drop the edge: a fastener is placed by its ` +
-            `own seat geometry, not by a mate to a port it does not have.`,
+          `edge ${e.from} → ${e.to}.${e.toPort}: "${e.toPort}" is not a payload port name of ${e.to}` +
+            (REGISTRY_HARDWARE.has(to.kind)
+              ? `. ${e.to} is ${to.kind}: give it the seat port the edge names (examples/cad-clamp's screw declares head_seat), or wire to a different node.`
+              : ""),
         );
-      } else if (to && !REGISTRY_HARDWARE.has(to.kind) && !payloadNames.get(e.to)?.has(e.toPort)) {
-        problems.push(`edge ${e.from} → ${e.to}.${e.toPort}: "${e.toPort}" is not a payload port name of ${e.to}`);
       }
     }
     return problems;
@@ -459,7 +466,16 @@ export const cadFaceHoleConflictLint = {
           const sameOrigin = ["0", "1", "2"].every(
             (i) => String(f.pose.origin[Number(i)]) === String(h.pose.origin[Number(i)]),
           );
-          const coaxialThrough = h.type === "CLEARANCE_HOLE" && parallel && lateralSame;
+          // AN ANNULAR FACE IS EXEMPT. `ring_diameter` switches the probe to a
+          // ring of samples and it never touches the centre, so a hole up the
+          // middle is not merely tolerable, it is the point: examples/cad-clamp's
+          // m4-screw declares head_seat as a FLAT_FACE with ring_diameter 5.5,
+          // which is a screw's bearing annulus around its own shank. Without
+          // this, the widening below would reject the reference design's own
+          // idiom the moment a seat and its clearance hole shared a part.
+          const annular = (f.params as { ring_diameter?: unknown } | undefined)?.ring_diameter != null;
+          const coaxialThrough =
+            !annular && h.type === "CLEARANCE_HOLE" && parallel && lateralSame;
           if (sameOrigin || coaxialThrough)
             problems.push(
               sameOrigin
@@ -673,8 +689,15 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       "nodes. Do not add a screw to satisfy the taxonomy; most designs need none.",
       "",
       "HARDWARE NODES (fastener | nut | insert) are resolved from a registry —",
-      "standards-exact, never generated. Declare NO geometric ports on them",
-      "(probes don't apply) and a small cylinder envelope around the origin.",
+      "standards-exact, never generated. Give each ONE port: the seat face where",
+      "it bears on the part, a FLAT_FACE with params.ring_diameter (an annulus",
+      "around its own shank, not a solid disc). The edge that wires the fastener",
+      "MUST name that port, so it has to exist — an edge naming a port the node",
+      "does not declare fails the port-consistency lint, and the mate will not",
+      "solve. examples/cad-clamp is the pattern: m4-screw declares head_seat as a",
+      "FLAT_FACE with ring_diameter 5.5, and the edge reads",
+      "base-plate.back_right_hole -> m4-screw.head_seat. Declare no OTHER ports,",
+      "and a small cylinder envelope around the origin.",
       "Emit one node per hardware ROLE, not per physical piece — counts and",
       "patterns belong to the consuming part's HOLE_PATTERN port params.",
       "  fastener      SHCS, head base at origin, shank hanging -z.",

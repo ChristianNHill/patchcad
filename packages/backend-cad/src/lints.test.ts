@@ -346,7 +346,7 @@ describe("cadPortConsistencyLint · edges to hardware", () => {
   // plate-b.nut_hole -> nut-m4.hole. Registry hardware declares no ports, so
   // both named something that cannot exist, and the edge check skipped them for
   // being hardware. The cook finished and the assembly reported "missing port".
-  it("rejects an edge naming a port on registry hardware", () => {
+  it("rejects an edge naming a port the hardware does not declare", () => {
     const g = graph(
       [node("plate-a", "part", [{ name: "screw_hole", type: "CLEARANCE_HOLE" }]),
        node("screw-m4", "fastener", [])],
@@ -354,8 +354,34 @@ describe("cadPortConsistencyLint · edges to hardware", () => {
     );
     const out = cadPortConsistencyLint.run(g);
     expect(out).toHaveLength(1);
-    expect(out[0]).toContain("declares no ports");
-    expect(out[0]).toContain("will not solve");
+    expect(out[0]).toContain("not a payload port name");
+    expect(out[0]).toContain("head_seat");
+  });
+
+  // THE HAND-AUTHORED REFERENCE MUST PASS. examples/cad-clamp wires
+  // base-plate.back_right_hole -> m4-screw.head_seat, and the screw declares
+  // head_seat. A lint that rejects the reference design is wrong by definition,
+  // and my first version of this check rejected it.
+  it("allows the cad-clamp wiring, where the screw declares its seat", () => {
+    const g = graph(
+      [node("base-plate", "part", [{ name: "back_right_hole", type: "CLEARANCE_HOLE" }]),
+       node("m4-screw", "fastener", [{ name: "head_seat", type: "FLAT_FACE" }])],
+      [{ from: "base-plate", fromPort: "back_right_hole", to: "m4-screw", toPort: "head_seat" }],
+    );
+    expect(cadPortConsistencyLint.run(g)).toEqual([]);
+  });
+
+  // The deadlock my first attempt created: cad-fastener-justified requires a
+  // fastener to be wired, so rejecting every edge to hardware made a fastener
+  // impossible to satisfy either way. Both lints must be satisfiable at once.
+  it("leaves a wired, seat-declaring fastener clean under BOTH lints", () => {
+    const g = graph(
+      [node("plate", "part", [{ name: "bolt_hole", type: "CLEARANCE_HOLE" }]),
+       node("m4", "fastener", [{ name: "head_seat", type: "FLAT_FACE" }])],
+      [{ from: "plate", fromPort: "bolt_hole", to: "m4", toPort: "head_seat" }],
+    );
+    expect(cadPortConsistencyLint.run(g)).toEqual([]);
+    expect(cadFastenerJustifiedLint.run(g)).toEqual([]);
   });
 
   it("still allows an edge between two real parts", () => {
@@ -409,6 +435,24 @@ describe("cadFaceHoleConflictLint", () => {
     expect(out).toHaveLength(1);
     expect(out[0]).toContain("coaxial");
     expect(out[0]).toContain("screw_hole");
+  });
+
+  // The reference design's own idiom: a screw's bearing annulus is coaxial with
+  // the shank by definition, and the annular probe never samples the centre.
+  it("exempts an ANNULAR face, whose probe never samples the centre", () => {
+    const g = graph([posed("p", "part", [
+      { name: "bolt", type: "CLEARANCE_HOLE", pose: { origin: [0, 0, 2], zAxis: [0, 0, 1], xAxis: [1, 0, 0] }, params: {} },
+      { name: "seat", type: "FLAT_FACE", pose: { origin: [0, 0, -2], zAxis: [0, 0, -1], xAxis: [1, 0, 0] }, params: { ring_diameter: 5.5 } },
+    ])], []);
+    expect(cadFaceHoleConflictLint.run(g)).toEqual([]);
+  });
+
+  it("still rejects a SOLID face coaxial with the same hole", () => {
+    const g = graph([posed("p", "part", [
+      { name: "bolt", type: "CLEARANCE_HOLE", pose: { origin: [0, 0, 2], zAxis: [0, 0, 1], xAxis: [1, 0, 0] }, params: {} },
+      { name: "seat", type: "FLAT_FACE", pose: { origin: [0, 0, -2], zAxis: [0, 0, -1], xAxis: [1, 0, 0] }, params: { size: 20 } },
+    ])], []);
+    expect(cadFaceHoleConflictLint.run(g)).toHaveLength(1);
   });
 
   it("exempts a BLIND bore, which stops before the far face", () => {
