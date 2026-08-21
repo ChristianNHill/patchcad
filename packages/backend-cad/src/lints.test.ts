@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { GraphDoc } from "@patchcad/shared";
 import {
@@ -6,6 +7,7 @@ import {
   cadFlatFaceSizeLint,
   cadProbedPortsLint,
   cadFaceHoleConflictLint,
+  OUTER_DIAMETER_KEYS,
 } from "./index.js";
 
 /** Plan-time lint: pure graph → problems. No kernel, no LLM, no I/O. */
@@ -255,6 +257,9 @@ describe("cadFlatFaceSizeLint · SHAFT", () => {
     expect(out).toHaveLength(1);
     expect(out[0]).toContain("SCREW_BOSS");
     expect(out[0]).toContain("no outer diameter");
+    // A bare `diameter` is NOT an alias: ambiguous between wall and pilot.
+    const ambiguous = graph([envNode("p", [cyl(0, 20, 10)], [{ name: "b", type: "SCREW_BOSS", params: { diameter: 10 } }])], []);
+    expect(cadFlatFaceSizeLint.run(ambiguous)).toHaveLength(1);
     for (const key of ["outer_diameter", "od", "bossDiameter"]) {
       const ok = graph([envNode("p", [cyl(0, 20, 10)], [{ name: "b", type: "SCREW_BOSS", params: { [key]: 10 } }])], []);
       expect(cadFlatFaceSizeLint.run(ok), key).toEqual([]);
@@ -264,6 +269,11 @@ describe("cadFlatFaceSizeLint · SHAFT", () => {
   // Guard against the next probed type arriving with no branch. This lint's
   // whole job is to catch a missing dimension before the kernel does, and two
   // types (SHAFT, SCREW_BOSS) reached production without one.
+  //
+  // Each fixture carries ONE port of ONE type, so only that type's branch can
+  // fire and deleting any single branch fails that type's row. It does NOT cover
+  // FLAT_FACE's ring_diameter alternative — the older "accepts a declared face
+  // size, and the aliases models reach for" case does that.
   it("has a branch for every probed port type", () => {
     const needsDim: Record<string, Record<string, number>> = {
       CLEARANCE_HOLE: { diameter: 5 }, BORE: { diameter: 5 }, SCREW_SEAT: { diameter: 5 },
@@ -286,6 +296,31 @@ describe("cadFlatFaceSizeLint · SHAFT", () => {
     expect(out[0]).toContain("no diameter");
     const ok = graph([envNode("p", [cyl(0, 20, 10)], [{ name: "peg", type: "SHAFT", params: { diameter: 5 } }])], []);
     expect(cadFlatFaceSizeLint.run(ok)).toEqual([]);
+  });
+});
+
+// The alias lists are mirrored across the TS/Python boundary with no import
+// path, so a comment asking the next reader to keep them in step is the weakest
+// possible guard. This reads gates.py and enforces it. The drift is asymmetric:
+// a lint list narrower than the probe's blocks a plan the probe could have
+// measured, which is the expensive direction.
+describe("alias lists agree with the kernel", () => {
+  const gates = readFileSync(
+    new URL("../kernel/src/patchcad_kernel/gates.py", import.meta.url), "utf8",
+  );
+  const pyTuple = (name: string) => {
+    const m = gates.match(new RegExp(`^${name} = \\(([^)]*)\\)`, "m"));
+    if (!m) throw new Error(`${name} not found in gates.py`);
+    return (m[1]!.match(/"[^"]+"/g) ?? []).map((q) => q.slice(1, -1)).sort();
+  };
+
+  it("SCREW_BOSS outer-diameter keys match gates.py exactly", () => {
+    expect([...OUTER_DIAMETER_KEYS].sort()).toEqual(pyTuple("OUTER_D_KEYS"));
+  });
+
+  it("neither list accepts a bare `diameter` on a boss", () => {
+    expect(OUTER_DIAMETER_KEYS).not.toContain("diameter");
+    expect(pyTuple("OUTER_D_KEYS")).not.toContain("diameter");
   });
 });
 

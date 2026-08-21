@@ -294,7 +294,13 @@ const HOLE_PORT_TYPES = new Set(["CLEARANCE_HOLE", "SCREW_SEAT", "BORE", "HOLE_P
 const DIAMETER_KEYS = ["diameter", "dia", "holeDia", "hole_diameter", "d", "boreDia"];
 const FACE_SIZE_KEYS = ["size", "faceSize", "face_size", "width", "flatWidth", "flat_width"];
 const CHANNEL_PORT_TYPES = new Set(["GROOVE", "SLOT"]);
-const OUTER_DIAMETER_KEYS = ["outer_diameter", "outerDiameter", "od", "boss_diameter", "bossDiameter", "diameter"];
+// Mirrors gates.py's OUTER_D_KEYS across the language boundary, with no import
+// path between them. The drift is asymmetric: a lint list WIDER than the probe's
+// only lets a port through to fail at G3, while a lint list NARROWER than the
+// probe's blocks a plan the probe could have measured. So if these ever diverge,
+// widen this one. Bare "diameter" is deliberately absent from both, and dropping
+// it from one alone would have created exactly the narrower case.
+export const OUTER_DIAMETER_KEYS = ["outer_diameter", "outerDiameter", "od", "boss_diameter", "bossDiameter"];
 const CHANNEL_WIDTH_KEYS = ["width", "slotWidth", "slot_width", "grooveWidth", "groove_width", "channelWidth"];
 
 export const cadFlatFaceSizeLint = {

@@ -79,13 +79,25 @@ def main() -> None:
     # 1. Example node cooks to a mesh in <3s (warm worker). The nonce keeps
     # repeat runs cache-cold for the "re-executes" checks while still letting
     # the within-run cache-hit check pass.
+    #
+    # WARM ONE WORKER FIRST, because this check said "warm worker" and measured a
+    # cold one. export_gltf is imported lazily, so the first job on a freshly
+    # spawned worker pays that cost: measured 3.02s against a 3.0s budget, then
+    # 0.16s and 0.07s for everything after. So the check failed whenever the pool
+    # was new, which a GATES_VERSION bump guarantees, and it was reporting import
+    # latency as geometry latency. The budget is about the geometry.
+    warm = {"width": 10, "depth": 10, "thickness": 2, "hole_diameter": 2, "nonce": int(time.time())}
+    cold_started = time.monotonic()
+    client.post("/execute", json={"code": PLATE, "params": warm})
+    cold = time.monotonic() - cold_started
+
     params = {"width": 60, "depth": 40, "thickness": 5, "hole_diameter": 8, "nonce": int(time.time())}
     started = time.monotonic()
     r = client.post("/execute", json={"code": PLATE, "params": params}).json()
     elapsed = time.monotonic() - started
     meas = r.get("measurements", {})
     check("plate executes", r["ok"], f"{elapsed*1000:.0f}ms volume={meas.get('volume_mm3', 0):.0f}mm³")
-    check("mesh under 3s", elapsed < 3.0, f"{elapsed:.2f}s")
+    check("mesh under 3s", elapsed < 3.0, f"{elapsed:.2f}s (first job on a cold worker was {cold:.2f}s)")
     expected = 60 * 40 * 5 - 3.14159 * 4 * 4 * 5
     check("volume plausible", abs(meas.get("volume_mm3", 0) - expected) < expected * 0.01)
     glb = client.get(r["glb"])

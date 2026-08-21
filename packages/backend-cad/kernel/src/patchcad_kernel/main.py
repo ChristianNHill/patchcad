@@ -74,7 +74,17 @@ executor = ThreadPoolExecutor(max_workers=POOL_SIZE)
 # length check is two-sided (a long peg bottoms out) and reach exhaustion is a
 # failure instead of a silent omission. Any peg that passed under 8 was judged
 # by weaker comparisons.
-GATES_VERSION = 9
+# 9 -> 10: a bare `diameter` stopped being an outer-diameter alias on a
+# SCREW_BOSS, so a boss declaring only that used to PASS (resolved to the wall)
+# and now fails with a repairable message. That is a pass-to-fail change, which
+# is the direction only-passes-are-cached makes dangerous.
+#
+# I could argue the bump away: smoke is the only producer of boss passes and it
+# uses outer_diameter, and no graph on disk declares a SCREW_BOSS at all. But the
+# cache stores measurements, not request bodies, so nothing on disk PROVES which
+# spellings produced the nine stored boss passes. Bumping costs one
+# re-execution; reasoning wrongly here has cost four commits already.
+GATES_VERSION = 10
 
 
 def job_hash(*parts: Any) -> str:

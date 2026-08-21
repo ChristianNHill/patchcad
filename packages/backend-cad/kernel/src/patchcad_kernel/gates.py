@@ -483,7 +483,14 @@ def _probe_boss(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-OUTER_D_KEYS = ("outer_diameter", "outerDiameter", "od", "boss_diameter", "bossDiameter", "diameter")
+# NO bare "diameter" here. A boss has two, so a bare `diameter` is ambiguous
+# between the wall and the pilot, and resolving it to the wall measures the wrong
+# feature while sounding confident: a model writing {diameter: 3} for the pilot
+# got "expected outer Ø3, measured Ø10", whose repair is to shrink the boss.
+# Without the alias it gets "declares no numeric outer diameter", which names the
+# fix. A clear error beats a wrong reading, which is the same argument that
+# replaced the raw index here in the first place.
+OUTER_D_KEYS = ("outer_diameter", "outerDiameter", "od", "boss_diameter", "bossDiameter")
 PILOT_D_KEYS = ("pilot_diameter", "pilotDiameter", "pilot", "pilot_hole_diameter")
 LENGTH_TOL_MM = 0.5  # a peg is a slip fit; half a millimetre short still seats
 DIAMETER_KEYS = ("diameter", "dia", "shaftDiameter", "shaft_diameter", "pegDiameter", "peg_diameter")
@@ -1187,6 +1194,10 @@ if __name__ == "__main__":  # pragma: no cover
     expect("a missing outer diameter is a repairable G3, not a KeyError",
            lambda: _probe_boss(bossed, {"key": "b", "type": "SCREW_BOSS", "pose": boss_pose,
                                         "params": {"pilot_diameter": 3.0}}),
+           "declares no numeric outer diameter")
+    expect("a bare `diameter` is NOT an outer-diameter alias, because a boss has two",
+           lambda: _probe_boss(bossed, {"key": "b", "type": "SCREW_BOSS", "pose": boss_pose,
+                                        "params": {"diameter": 10.0}}),
            "declares no numeric outer diameter")
     expect("a wrong pilot is still caught",
            lambda: _probe_boss(bossed, {"key": "b", "type": "SCREW_BOSS", "pose": boss_pose,
