@@ -1,11 +1,28 @@
 {
   "id": "pen-cup-hexagonal",
   "prompt": "a pen cup holder with hexagonal cutouts that is 75 mm wide",
-  "why": "THE BRICK. projects/a-pen-cup-holder-with-hexagonal-msw95gq7 cooked green with every port typed GROOVE or SLOT, neither of which had a probe, so nothing verified the cutouts the prompt asked for. A solid Box(75,75,95) passed. noSkippedPorts is the assertion that fails that build.",
+  "why": "THE BRICK. projects/a-pen-cup-holder-with-hexagonal-msw95gq7 cooked green with every port typed GROOVE or SLOT, neither of which had a probe, so nothing verified the cutouts the prompt asked for. A solid Box(75,75,95) passed. Bookkeeping alone does not catch that: a part declaring no ports has nothing to compare, so the assertion that bites is volumeFraction. The real one measured 8.8% of its bounding box; a solid block is 100%.",
   "expect": {
-    "nodes": { "min": 1, "max": 3 },
+    "nodes": {
+      "min": 1,
+      "max": 3
+    },
     "allReady": true,
     "noSkippedPorts": true,
-    "bboxSize": { "value": [75, 75, 95], "tol": 25.0, "axes": [0, 1] }
+    "bboxSize": {
+      "value": [
+        75,
+        75,
+        95
+      ],
+      "tol": 25.0,
+      "axes": [
+        0,
+        1
+      ]
+    },
+    "volumeFraction": {
+      "max": 0.45
+    }
   }
 }

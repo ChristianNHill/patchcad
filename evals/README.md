@@ -26,6 +26,34 @@ So the load-bearing assertion here is `noSkippedPorts`, and it defaults to on. A
 port the kernel cannot probe reports `skipped` and passes, and a case that
 tolerates one is measuring nothing.
 
+`skipped` is only the visible half. A port declared and never probed is simply
+absent from the list, and a part declaring no port has nothing to skip: both
+passed the first version of this scorer, which means it certified the brick it
+was written to catch. `noSkippedPorts` now also requires that every port a ready
+node declares appears in its probe list, that a ready node with declared ports
+has measurements at all, and that those measurements match the node's current
+version. Bookkeeping still cannot reach a part that declares nothing, which is
+what `volumeFraction` is for: a solid box fills 100% of its bounding box and the
+real pen cup fills 8.8%.
+
+## Score what is already on disk
+
+```sh
+pnpm exec tsx src/eval.ts --score-projects       # every project, 0 LLM calls
+```
+
+Asks one question of every `ready` node in `projects/`: does anything actually
+measure the geometry it declares. It costs nothing and it is the sharpest tool
+here, because every hole review found in this scorer was an **absence** rather
+than a wrong value, and a self-test built from synthetic defects cannot model a
+graph that carries nothing. One read of a real payload found what nineteen
+fixtures could not.
+
+Current answer: **6 of 10 projects on disk carry a ready node whose declared
+geometry nothing measured.** Two unprobed port types are in live use, and the
+plan had assumed neither existed: `LIP` (6 ports, two projects) and `SHAFT` (14
+ports, both staff imports, the pegs whose sockets alone get measured).
+
 ## Writing a case
 
 Cases are JSON in `cases/`. They assert **structurally, never by node id**,
@@ -40,6 +68,7 @@ graph there is one CLEARANCE_HOLE measuring 6mm" survives a rename that
 | `noSkippedPorts` | no port reports `skipped`. Default on. See above. |
 | `ports[]` | `{type, count \| minCount, diameter \| width, tol}`, matched against any node's probes. |
 | `bboxSize` | `{value, tol, axes?}` against the largest node by volume. `axes` limits it when only some dimensions are pinned by the prompt. |
+| `volumeFraction` | `{max, min}` on measured volume over bounding-box volume. The only check that separates a hollow or cut part from the solid block of the same size, so it is what a "with cutouts" prompt asserts. |
 | `zeroLlmKinds` | these kinds must cost 0 model calls. Registry hardware that touches a model is a defect. |
 | `assemblyProblems` | expected count from `solveScene`. |
 

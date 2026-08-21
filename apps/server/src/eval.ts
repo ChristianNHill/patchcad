@@ -42,6 +42,10 @@ type CaseExpect = {
   noSkippedPorts?: boolean;
   ports?: PortExpect[];
   bboxSize?: { value: number[]; tol: number; axes?: number[] };
+  /** measured volume / bbox volume. The only thing that distinguishes a hollow
+   *  or cut part from the solid block of the same size, and a contract declaring
+   *  no ports gives the port checks nothing to bite on. */
+  volumeFraction?: { max?: number; min?: number };
   zeroLlmKinds?: string[];
   assemblyProblems?: number;
 };
@@ -113,6 +117,32 @@ function score(c: EvalCase, store: GraphStore, problems: unknown[]): { misses: M
         `${skipped.length} port(s) verified by NOTHING: ` +
           skipped.map((p) => `${p["node"]}.${p.key}(${p.type}): ${p.skipped}`).join("; "),
       );
+
+    // A SKIPPED PORT IS ONLY THE VISIBLE HALF. `skipped` fires on a port that
+    // reached the probe list and reported that no probe exists. A port declared
+    // and never probed at all is simply absent, and a part that declares no
+    // port has nothing to skip: both passed. That is how the pen-cup brick
+    // scored green here, in the case written to catch it, which is the harness
+    // reproducing the defect it exists to prevent. Verified means the contract
+    // and the probes agree, so that is what this checks.
+    for (const n of nodes) {
+      // Only a READY node claims to be verified. A planned or dirty node has no
+      // measurements by definition, and failing it here would report the queue
+      // as a defect.
+      if (n.status !== "ready") continue;
+      const declared = ((n.contract.payload as { ports?: { name?: string; type?: string }[] } | null)?.ports) ?? [];
+      const data = (n.measurements?.data ?? null) as Measured | null;
+      const probed = new Set((data?.ports ?? []).map((p) => p.key));
+      for (const d of declared)
+        if (!probed.has(d.name)) misses.push(`${n.id}.${d.name}(${d.type}) declared but never probed`);
+      // `ready` does not imply measurements exist. Three of the four ready
+      // nodes in the pen-cup project have measurements: null, so four declared
+      // ports were invisible and the catch survived on one node's two.
+      if (declared.length && !n.measurements)
+        misses.push(`${n.id} is ready with no measurements at all, so its ${declared.length} port(s) are unverified`);
+      if (n.measurements && n.measurements.version !== n.version)
+        misses.push(`${n.id} scored on v${n.measurements.version} measurements at v${n.version} (stale)`);
+    }
   }
 
   for (const want of e.ports ?? []) misses.push(...checkPorts(probes, want));
@@ -135,6 +165,26 @@ function score(c: EvalCase, store: GraphStore, problems: unknown[]): { misses: M
         if (!(Math.abs(got - want_v) <= e.bboxSize.tol))
           misses.push(`bbox axis ${i} measured ${got.toFixed(1)}, expected ${want_v} +/- ${e.bboxSize.tol}`);
       }
+    }
+  }
+
+  if (e.volumeFraction) {
+    // A SOLID BOX PASSES EVERY BOOKKEEPING CHECK. Declared-vs-probed catches a
+    // port nothing measured, but a part that declares no port at all has
+    // nothing to compare, and that is the shape the pen-cup brick actually had.
+    // Removed material is measurable, so a prompt asking for cutouts asserts it.
+    const all = nodes
+      .map((n) => (n.measurements?.data ?? null) as Measured | null)
+      .filter((d): d is Measured => typeof d?.volume_mm3 === "number" && !!d.bbox?.size);
+    if (!all.length) misses.push("no volume measured, so the material claim is unchecked");
+    for (const d of all) {
+      const size = d.bbox!.size!;
+      const box = size.reduce((a, b) => a * b, 1);
+      const frac = box > 0 ? d.volume_mm3! / box : 1;
+      if (e.volumeFraction.max != null && frac > e.volumeFraction.max)
+        misses.push(`solid: fills ${(frac * 100).toFixed(0)}% of its bounding box, expected at most ${(e.volumeFraction.max * 100).toFixed(0)}% (nothing was cut out)`);
+      if (e.volumeFraction.min != null && frac < e.volumeFraction.min)
+        misses.push(`too thin: fills only ${(frac * 100).toFixed(0)}% of its bounding box, expected at least ${(e.volumeFraction.min * 100).toFixed(0)}%`);
     }
   }
 
@@ -232,6 +282,49 @@ function selfTest(): void {
     score(casePlate, mk({ p: node("p", { status: "error_code" }, goodPlate) }), []).misses,
     "fire", "not ready");
 
+  // ABSENCE-SHAPED DEFECTS, which the synthetic fixtures above were blind to.
+  // Every hole review found in this scorer was an absence rather than a wrong
+  // value, and a self-test built from graphs that carry a defect cannot model a
+  // graph that carries nothing.
+  const withPorts = (over: Record<string, unknown>, data?: unknown) =>
+    node("p", {
+      contract: { name: "p", summary: "", params: [], provides: [], requires: [],
+                  payload: { ports: [{ name: "g", type: "GROOVE" }] } },
+      ...over,
+    }, data);
+
+  console.log("and on a defect that is an absence rather than a wrong value");
+  const bare: EvalCase = { id: "t", prompt: "p", expect: { nodes: { min: 1, max: 1 }, noSkippedPorts: true } };
+  // THE BRICK, and the shape that passed before review: a solid box declaring
+  // no port at all. Nothing to skip, so nothing fired.
+  expect("a part declaring no ports passes the bookkeeping checks",
+    score(bare, mk({ p: node("p", {}, { volume_mm3: 1, bbox: { size: [75, 75, 95] }, ports: [] }) }), []).misses,
+    "quiet");
+  // THE ACTUAL BRICK, and the reason volumeFraction exists: the shape review
+  // found passing was a solid box declaring no ports, which no port check can
+  // reach. Removed material is the only measurable difference.
+  const cut: EvalCase = { id: "t", prompt: "p", expect: { volumeFraction: { max: 0.45 } } };
+  expect("a SOLID BOX sold as a part with cutouts",
+    score(cut, mk({ p: node("p", {}, { volume_mm3: 75 * 75 * 95, bbox: { size: [75, 75, 95] }, ports: [] }) }), []).misses,
+    "fire", "nothing was cut out");
+  expect("the real pen cup's measured geometry",
+    score(cut, mk({ p: node("p", {}, { volume_mm3: 47231.67, bbox: { size: [75, 75, 95] }, ports: [] }) }), []).misses,
+    "quiet");
+  expect("a port declared and never probed",
+    score(bare, mk({ p: withPorts({}, { volume_mm3: 1, bbox: { size: [1, 1, 1] }, ports: [] }) }), []).misses,
+    "fire", "declared but never probed");
+  expect("ready with no measurements at all",
+    score(bare, mk({ p: withPorts({}) }), []).misses,
+    "fire", "ready with no measurements");
+  expect("measurements from an older version",
+    score(bare, mk({ p: withPorts({ version: 3 }, { volume_mm3: 1, bbox: { size: [1, 1, 1] },
+                                                    ports: [{ key: "g", type: "GROOVE", measured_width: 3 }] }) }), []).misses,
+    "fire", "stale");
+  expect("a planned node is not a defect",
+    score({ id: "t", prompt: "p", expect: { allReady: false, noSkippedPorts: true } },
+      mk({ p: withPorts({ status: "planned" }) }), []).misses,
+    "quiet");
+
   const caseBolt: EvalCase = {
     id: "b", prompt: "p",
     expect: { nodes: { min: 1 }, allReady: true, zeroLlmKinds: ["fastener"], assemblyProblems: 0 },
@@ -250,7 +343,46 @@ function selfTest(): void {
   if (failures) process.exit(1);
 }
 
-async function runCase(c: EvalCase, budgetLeft: number) {
+/** Score every project already on disk, with zero model calls.
+ *
+ *  The scorer self-test is built from synthetic graphs, so it can only catch
+ *  defects it models, and all of this harness's holes were ABSENCES rather than
+ *  wrong values: a port declared and never probed, a ready node with no
+ *  measurements, a stale version. A real payload found in one read what twelve
+ *  synthetic fixtures could not. These cost nothing, so they run as fixtures.
+ */
+function scoreProjects(): void {
+  const root = path.join(repoRoot, "projects");
+  if (!fs.existsSync(root)) {
+    console.log("no projects/ on disk, nothing to score");
+    return;
+  }
+  const dirs = fs.readdirSync(root).filter((d) => fs.existsSync(path.join(root, d, "patchcad.json")));
+  // Asks only "is every ready node's declared geometry actually measured", which
+  // is the claim the whole project rests on. No prompt-specific expectations.
+  const generic: EvalCase = { id: "verified", prompt: "", expect: { allReady: false, noSkippedPorts: true } };
+  let unverified = 0;
+  for (const d of dirs) {
+    const doc = JSON.parse(fs.readFileSync(path.join(root, d, "patchcad.json"), "utf8"));
+    let store: GraphStore;
+    try {
+      store = new GraphStore(GraphDoc.parse(doc), new EventBus(), async () => {});
+    } catch (err) {
+      console.log(`  SKIP  ${d} (will not parse: ${String(err).slice(0, 80)})`);
+      continue;
+    }
+    const nodes = Object.values(store.doc.nodes);
+    const ready = nodes.filter((n) => n.status === "ready").length;
+    const { misses } = score(generic, store, []);
+    console.log(`  ${misses.length ? "UNVERIFIED" : "clean      "}  ${d}  (${ready}/${nodes.length} ready)`);
+    for (const m of misses.slice(0, 6)) console.log(`      ${m}`);
+    if (misses.length > 6) console.log(`      ...and ${misses.length - 6} more`);
+    if (misses.length) unverified++;
+  }
+  console.log(`\n${unverified}/${dirs.length} project(s) carry a ready node whose declared geometry nothing measured.`);
+}
+
+async function runCase(c: EvalCase) {
   const backend = new CadBackend();
   const bus = new EventBus();
   const provider = (await resolveProvider())?.provider;
@@ -283,7 +415,9 @@ async function runCase(c: EvalCase, budgetLeft: number) {
   // the plan itself, and this harness exists to report real dollars.
   const arch = plan.usage;
   const usd = nodes.reduce((s, n) => s + n.cost.usd, arch.usd);
-  const calls = nodes.reduce((s, n) => s + n.cost.calls, 1);
+  // Not a hardcoded 1: a repaired plan is two or more, and a harness whose
+  // point is real numbers must not round its own headline down.
+  const calls = nodes.reduce((s, n) => s + n.cost.calls, plan.repaired ? 2 : 1);
   const outTok = nodes.reduce((s, n) => s + n.cost.outputTokens, arch.outputTokens);
   const inTok = nodes.reduce((s, n) => s + n.cost.inputTokens, arch.inputTokens);
   // A node that passed on its first generation. Deterministic nodes cost 0
@@ -304,7 +438,6 @@ async function runCase(c: EvalCase, budgetLeft: number) {
     architect: { usd: arch.usd, inTok: arch.inputTokens, outTok: arch.outputTokens, repaired: plan.repaired },
     planMs, cookMs, probes: probes.length,
     skipped: probes.filter((p) => p.skipped).length,
-    budgetLeftBefore: budgetLeft,
     perNode: nodes.map((n) => ({
       id: n.id, kind: n.kind, status: n.status, calls: n.cost.calls, usd: n.cost.usd,
     })),
@@ -313,6 +446,7 @@ async function runCase(c: EvalCase, budgetLeft: number) {
 
 async function main() {
   if (flag("self-test")) return selfTest();
+  if (flag("score-projects")) return scoreProjects();
 
   const files = fs.readdirSync(casesDir).filter((f) => f.endsWith(".json")).sort();
   const only = opt("case");
@@ -326,6 +460,22 @@ async function main() {
   // provider is the one way this harness can cost more than it is worth.
   const maxUsd = Number(opt("max-usd") ?? "0");
 
+  // An expectation that asserts nothing is worse than a missing one: it reads
+  // like a check. A port expectation with neither diameter nor width only counts
+  // probes, and an empty ports array runs a zero-iteration loop.
+  const vacuous: string[] = [];
+  for (const c of cases) {
+    if (c.expect.ports && c.expect.ports.length === 0)
+      vacuous.push(`${c.id}: "ports": [] asserts nothing, remove the key or fill it`);
+    for (const pe of c.expect.ports ?? [])
+      if (pe.diameter == null && pe.width == null)
+        vacuous.push(`${c.id}: ${pe.type} expectation has no diameter or width, so it only counts probes`);
+  }
+  if (vacuous.length) {
+    for (const v of vacuous) console.error(`INVALID CASE: ${v}`);
+    process.exit(2);
+  }
+
   if (flag("dry-run")) {
     console.log(`${cases.length} case(s), validated without calling a model:\n`);
     for (const c of cases) {
@@ -336,6 +486,7 @@ async function main() {
         e.noSkippedPorts !== false && "NO port verified by nothing",
         ...(e.ports ?? []).map((p) => `${p.type} ${p.diameter ?? p.width ?? ""}`.trim()),
         e.bboxSize && `bbox ${e.bboxSize.value.join("x")} +/-${e.bboxSize.tol}`,
+        e.volumeFraction && `fills ${e.volumeFraction.min != null ? `>=${e.volumeFraction.min * 100}%` : ""}${e.volumeFraction.max != null ? `<=${e.volumeFraction.max * 100}%` : ""} of its bbox`,
         e.zeroLlmKinds && `zero LLM: ${e.zeroLlmKinds.join(",")}`,
         e.assemblyProblems != null && `assembly problems == ${e.assemblyProblems}`,
       ].filter(Boolean);
@@ -360,7 +511,7 @@ async function main() {
       break;
     }
     console.log(`\n=== ${c.id} ===\n  ${c.prompt}`);
-    const r = await runCase(c, maxUsd - spent);
+    const r = await runCase(c);
     spent += r.usd;
     results.push(r);
     console.log(
