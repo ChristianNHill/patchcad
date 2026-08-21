@@ -451,8 +451,22 @@ export const cadProbedPortsLint = {
       if (REGISTRY_HARDWARE.has(n.kind)) continue;
       for (const p of (n.contract.payload as CadContractPayload | undefined)?.ports ?? []) {
         if (!PROBED_PORT_TYPES.has(p.type)) {
+          // LIP gets a named substitution rather than the generic list, because
+          // it is the one unprobed type that graphs on disk actually use, and it
+          // is not one feature. Its six live instances carry three different
+          // vocabularies covering OPPOSITE geometries: a raised annular rim
+          // (rimOuterDiameter/rimInnerDiameter/rimHeight), a recess that
+          // receives one (recessOuterDiameter/recessDepth/fitClearance), and
+          // diameter/depth used for BOTH a plug and the seat it enters. So no
+          // single probe can verify a LIP: the contract never says which side of
+          // the joint it is. Every live instance is round, so each is already
+          // expressible as the male or female type that IS measured.
+          const hint =
+            p.type === "LIP"
+              ? `A LIP is not one feature — on disk it means a raised rim, a recess that receives one, and a plug, all under one name, so no probe can know which side of the joint it is. Split it: the part that stands proud is a SHAFT (diameter, length), the part that receives it is a BORE (diameter). That names the fit, and both are measured.`
+              : `Re-express this interface with a type the probes measure (${verified}), or drop the port and model the feature as part of one solid.`;
           problems.push(
-            `${n.id}: port "${p.name}" is a ${p.type}, which no gate can measure — a node whose ports are all unprobed passes verify even if the geometry is a featureless block. Re-express this interface with a type the probes measure (${verified}), or drop the port and model the feature as part of one solid.`,
+            `${n.id}: port "${p.name}" is a ${p.type}, which no gate can measure — a node whose ports are all unprobed passes verify even if the geometry is a featureless block. ${hint}`,
           );
         }
       }

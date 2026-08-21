@@ -234,6 +234,22 @@ describe("cadProbedPortsLint", () => {
     }
   });
 
+  // LIP is the only unprobed type real graphs use, so its message names the
+  // substitution instead of listing every verified type. Pinned because the
+  // repair round acts on this sentence.
+  it("tells a LIP to split into the SHAFT and BORE it actually is", () => {
+    const g = graph([node("wall", "part", [{ name: "seat", type: "LIP" }])], []);
+    const out = cadProbedPortsLint.run(g);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toContain("not one feature");
+    expect(out[0]).toContain("SHAFT");
+    expect(out[0]).toContain("BORE");
+    // and an unprobed type with no known meaning still gets the generic list
+    const other = cadProbedPortsLint.run(graph([node("w", "part", [{ name: "s", type: "SNAP_HOOK" }])], []));
+    expect(other[0]).toContain("Re-express this interface");
+    expect(other[0]).not.toContain("not one feature");
+  });
+
   it("names every unprobed port, not just the first", () => {
     const g = graph(
       [node("wall", "part", [{ name: "a", type: "SNAP_HOOK" }, { name: "b", type: "LIP" }])],
