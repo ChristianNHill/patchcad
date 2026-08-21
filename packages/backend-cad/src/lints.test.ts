@@ -354,7 +354,10 @@ describe("cadPortConsistencyLint · edges to hardware", () => {
     );
     const out = cadPortConsistencyLint.run(g);
     expect(out).toHaveLength(1);
-    expect(out[0]).toContain("not a payload port name");
+    // A node declaring NO ports gets the specific message naming why, since
+    // "not a payload port name" would leave the architect guessing at a node
+    // that has none at all.
+    expect(out[0]).toContain("declares no ports");
     expect(out[0]).toContain("head_seat");
   });
 
@@ -382,6 +385,33 @@ describe("cadPortConsistencyLint · edges to hardware", () => {
     );
     expect(cadPortConsistencyLint.run(g)).toEqual([]);
     expect(cadFastenerJustifiedLint.run(g)).toEqual([]);
+  });
+
+  // The FROM side carried the identical skip. A fastener lands there whenever
+  // the architect phrases the requirement the other way round.
+  it("rejects a bad port name on the FROM side too", () => {
+    const g = graph(
+      [node("screw-m4", "fastener", []),
+       node("plate", "part", [{ name: "hole", type: "CLEARANCE_HOLE" }])],
+      [{ from: "screw-m4", fromPort: "seat", to: "plate", toPort: "hole" }],
+    );
+    const out = cadPortConsistencyLint.run(g);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toContain("declares no ports");
+  });
+
+  // Hardware WITH ports matched neither arm of the previous branch structure and
+  // went unchecked entirely.
+  it("checks hardware that DOES declare ports", () => {
+    const g = graph(
+      [node("plate", "part", [{ name: "hole", type: "CLEARANCE_HOLE" }]),
+       node("m4", "fastener", [{ name: "head_seat", type: "FLAT_FACE" }])],
+      [{ from: "plate", fromPort: "hole", to: "m4", toPort: "wrong_name" }],
+    );
+    const out = cadPortConsistencyLint.run(g);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toContain("not a payload port name");
+    expect(out[0]).not.toContain("declares no ports");
   });
 
   it("still allows an edge between two real parts", () => {
@@ -443,6 +473,28 @@ describe("cadFaceHoleConflictLint", () => {
     const g = graph([posed("p", "part", [
       { name: "bolt", type: "CLEARANCE_HOLE", pose: { origin: [0, 0, 2], zAxis: [0, 0, 1], xAxis: [1, 0, 0] }, params: {} },
       { name: "seat", type: "FLAT_FACE", pose: { origin: [0, 0, -2], zAxis: [0, 0, -1], xAxis: [1, 0, 0] }, params: { ring_diameter: 5.5 } },
+    ])], []);
+    expect(cadFaceHoleConflictLint.run(g)).toEqual([]);
+  });
+
+  // The ordinary bolted plate: clearance hole plus a coaxial screw-head seat,
+  // sharing the hole's exact origin. Exempting only the coaxial branch left this
+  // blocked, and it is the most common part in the domain.
+  it("exempts an annular seat sharing the hole's ORIGIN, not only its axis", () => {
+    const g = graph([posed("p", "part", [
+      { name: "bolt", type: "CLEARANCE_HOLE", pose: { origin: [0, 0, 2], zAxis: [0, 0, 1], xAxis: [1, 0, 0] }, params: {} },
+      { name: "seat", type: "FLAT_FACE", pose: { origin: [0, 0, 2], zAxis: [0, 0, 1], xAxis: [1, 0, 0] }, params: { ring_diameter: 9 } },
+    ])], []);
+    expect(cadFaceHoleConflictLint.run(g)).toEqual([]);
+  });
+
+  // An oblique pose must skip the coaxial branch rather than guess an axis.
+  // |zAxis| compared elementwise read [0.7,0,0.7] and [0.7,0,-0.7] as parallel,
+  // and findIndex(|v|>0.5) then picked x, comparing the wrong two components.
+  it("skips the coaxial rule for an OBLIQUE axis instead of guessing", () => {
+    const g = graph([posed("p", "part", [
+      { name: "bolt", type: "CLEARANCE_HOLE", pose: { origin: [0, 0, 0], zAxis: [0.7, 0, 0.7], xAxis: [0, 1, 0] }, params: {} },
+      { name: "face", type: "FLAT_FACE", pose: { origin: [0, 0, 9], zAxis: [0.7, 0, -0.7], xAxis: [0, 1, 0] }, params: { size: 20 } },
     ])], []);
     expect(cadFaceHoleConflictLint.run(g)).toEqual([]);
   });

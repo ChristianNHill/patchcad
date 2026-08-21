@@ -127,32 +127,35 @@ export const cadPortConsistencyLint = {
       }
     }
     for (const e of graph.edges) {
-      const from = graph.nodes[e.from];
-      const to = graph.nodes[e.to];
-      if (from && !REGISTRY_HARDWARE.has(from.kind) && !payloadNames.get(e.from)?.has(e.fromPort)) {
-        problems.push(`edge ${e.from}.${e.fromPort} → ${e.to}: "${e.fromPort}" is not a payload port name of ${e.from}`);
-      }
-      // HARDWARE IS NOT EXEMPT FROM THE EDGE CHECK, only from the
-      // contract-vs-payload one above. examples/cad-clamp's m4-screw declares a
-      // real `head_seat` payload port and its edge names it, so hardware does
-      // carry ports and an edge naming one that is absent is simply wrong.
+      // BOTH SIDES, one loop. The TO side carried a registry-hardware skip that
+      // let plate-a.screw_hole → screw-m4.hole through a whole cook against a
+      // screw declaring no ports, and the assembly then reported "missing port"
+      // with both fasteners at the origin. Fixing only that side left the
+      // identical bug on the FROM side, where a fastener lands whenever the
+      // architect phrases the requirement the other way round. Half a symmetric
+      // bug fixed is how the first half survived.
       //
-      // This exemption let plate-a.screw_hole → screw-m4.hole through a whole
-      // cook against a screw declaring NO ports, and the assembly reported
-      // "missing port" with both fasteners left at the origin.
+      // Hardware is NOT exempt here, only from the contract-vs-payload check
+      // above: examples/cad-clamp's m4-screw declares a real head_seat port and
+      // its edge names it. An earlier version rejected every edge to hardware
+      // instead, which deadlocked against cad-fastener-justified — that lint
+      // requires a fastener to be wired, so a fastener could be neither wired
+      // nor unwired and no plan containing one was possible.
       //
-      // My first attempt at this rejected every edge to hardware instead, which
-      // deadlocked against cad-fastener-justified: that lint requires a fastener
-      // to be wired to something, so a fastener could be neither wired nor
-      // unwired and no plan containing one was possible. The architect burned
-      // three repair rounds and planning failed outright. Requiring the NAME to
-      // exist leaves both lints satisfiable together, which is the whole point.
-      if (to && !payloadNames.get(e.to)?.has(e.toPort)) {
+      // So the rule is that the NAME must exist, and the kind only chooses how
+      // to explain it. Branch on the message, never on whether to check.
+      for (const [id, port] of [
+        [e.from, e.fromPort],
+        [e.to, e.toPort],
+      ] as const) {
+        const n = graph.nodes[id];
+        if (!n) continue;
+        const names = payloadNames.get(id);
+        if (names?.has(port)) continue;
         problems.push(
-          `edge ${e.from} → ${e.to}.${e.toPort}: "${e.toPort}" is not a payload port name of ${e.to}` +
-            (REGISTRY_HARDWARE.has(to.kind)
-              ? `. ${e.to} is ${to.kind}: give it the seat port the edge names (examples/cad-clamp's screw declares head_seat), or wire to a different node.`
-              : ""),
+          REGISTRY_HARDWARE.has(n.kind) && !names?.size
+            ? `edge ${e.from}.${e.fromPort} → ${e.to}.${e.toPort}: ${id} is ${n.kind} and declares no ports, so "${port}" cannot exist and the mate will not solve. Give it the seat port the edge names (examples/cad-clamp's screw declares head_seat as a FLAT_FACE with ring_diameter).`
+            : `edge ${e.from}.${e.fromPort} → ${e.to}.${e.toPort}: "${port}" is not a payload port name of ${id}`,
         );
       }
     }
@@ -454,14 +457,23 @@ export const cadFaceHoleConflictLint = {
           // the face's centre, the face probe's centre sample is void whatever
           // the declared size. A blind BORE or SCREW_SEAT is exempt because it
           // stops, which is why this widening is safe for a plan blocker.
-          const parallel = ["0", "1", "2"].every(
-            (i) => Math.abs(Number(f.pose.zAxis[Number(i)] ?? 0)) === Math.abs(Number(h.pose.zAxis[Number(i)] ?? 0)),
-          );
-          const axis = [0, 1, 2].findIndex((i) => Math.abs(Number(h.pose.zAxis[i] ?? 0)) > 0.5);
+          // AXIS-ALIGNED BY CONSTRUCTION, not by the corpus happening to be. The
+          // previous test compared |zAxis| elementwise, so [0.7,0,0.7] and
+          // [0.7,0,-0.7] read as parallel while being 90 degrees apart, and the
+          // fail-safe I claimed for it did not exist: findIndex(|v| > 0.5)
+          // returns 0 for [0.7,0,0.7], so it picked x as the axis and compared
+          // the wrong two components. Only a body diagonal fell through to -1.
+          // A lint that can stop a plan has to fail safe on its own terms, so an
+          // oblique pose now skips the coaxial branch entirely.
+          const aligned = (v: unknown[]) =>
+            [0, 1, 2].findIndex((i) => Math.abs(Number(v[i] ?? 0)) > 0.999);
+          const hAxis = aligned(h.pose.zAxis);
+          const fAxis = aligned(f.pose.zAxis);
+          const parallel = hAxis >= 0 && hAxis === fAxis;
           const lateralSame =
-            axis >= 0 &&
+            parallel &&
             [0, 1, 2].every(
-              (i) => i === axis || String(f.pose.origin[i]) === String(h.pose.origin[i]),
+              (i) => i === hAxis || String(f.pose.origin[i]) === String(h.pose.origin[i]),
             );
           const sameOrigin = ["0", "1", "2"].every(
             (i) => String(f.pose.origin[Number(i)]) === String(h.pose.origin[Number(i)]),
@@ -473,10 +485,18 @@ export const cadFaceHoleConflictLint = {
           // which is a screw's bearing annulus around its own shank. Without
           // this, the widening below would reject the reference design's own
           // idiom the moment a seat and its clearance hole shared a part.
+          // Annular exempts BOTH branches, not only the coaxial one. An annular
+          // face sharing the hole's exact origin is equally fine: the ring sits
+          // in material and the centre is never sampled. Exempting one branch
+          // left the ordinary bolted plate — clearance hole plus a coaxial
+          // screw-head seat — blocked at plan time.
+          //
+          // Residual, and the price of not resolving expressions: a hole WIDER
+          // than the ring is still unsatisfiable and still undetectable here,
+          // because comparing them needs both numbers resolved.
           const annular = (f.params as { ring_diameter?: unknown } | undefined)?.ring_diameter != null;
-          const coaxialThrough =
-            !annular && h.type === "CLEARANCE_HOLE" && parallel && lateralSame;
-          if (sameOrigin || coaxialThrough)
+          const coaxialThrough = h.type === "CLEARANCE_HOLE" && parallel && lateralSame;
+          if (!annular && (sameOrigin || coaxialThrough))
             problems.push(
               sameOrigin
                 ? `${n.id}: port "${f.name}" (FLAT_FACE) and port "${h.name}" (${h.type}) share an origin, ` +
