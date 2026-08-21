@@ -151,6 +151,46 @@ const stubProvider: LlmProvider = {
     ({ data: { code: "x" }, usage: { inputTokens: 1, outputTokens: 1, usd: 0 }, model: "stub" }) as never,
 };
 
+/** A provider that returns a completion with no code — the failure CLAUDE.md
+ *  records as "reasoning models can spend the whole max_tokens budget thinking". */
+const emptyProvider = (code: string): LlmProvider => ({
+  id: "empty",
+  complete: async () =>
+    ({ data: { code }, usage: { inputTokens: 1, outputTokens: 9999, usd: 0 }, model: "empty" }) as never,
+});
+
+describe("cookOne empty-completion guard", () => {
+  it("spends ONE round on an empty completion, not the whole budget", async () => {
+    const h = makeRepairBackend({ failTimes: 0, maxAttempts: 5 });
+    const deps = makeDeps(makeGraph(), emptyProvider(""), new MemoryLibrary(), h.backend);
+
+    await expect(cookOne(deps, "widget")).rejects.toThrow(/empty completion/);
+    // The gates never ran: an empty artifact is a provider problem, and the
+    // kernel round trip it used to buy only produced a confusing G0 report.
+    expect(h.executes).toBe(0);
+    expect(h.repairs).toHaveLength(0);
+  });
+
+  it("treats whitespace-only code as empty", async () => {
+    const h = makeRepairBackend({ failTimes: 0, maxAttempts: 5 });
+    const deps = makeDeps(makeGraph(), emptyProvider("\n  \n"), new MemoryLibrary(), h.backend);
+    await expect(cookOne(deps, "widget")).rejects.toThrow(/empty completion/);
+    expect(h.executes).toBe(0);
+  });
+
+  it("lands the node resumable, and still bills the call that happened", async () => {
+    const h = makeRepairBackend({ failTimes: 0, maxAttempts: 5 });
+    const deps = makeDeps(makeGraph(), emptyProvider(""), new MemoryLibrary(), h.backend);
+
+    await expect(cookOne(deps, "widget")).rejects.toThrow();
+    const node = deps.store.node("widget");
+    // error_code is what cook-dirty picks back up.
+    expect(node.status).toBe("error_code");
+    expect(node.cost.calls).toBe(1);
+    expect(node.cost.outputTokens).toBe(9999);
+  });
+});
+
 describe("cookOne repair budget", () => {
   it("takes the engine default of 3 rounds when the backend states none", async () => {
     const h = makeRepairBackend({ failTimes: 99 });

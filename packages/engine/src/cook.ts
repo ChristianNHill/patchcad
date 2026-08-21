@@ -392,6 +392,27 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
       usd: result.usage.usd,
     });
 
+    // A completion carrying NO CODE AT ALL is a provider failure, not a gate
+    // failure, and retrying the same prompt against the same budget reproduces
+    // it. This used to fall through to the gates: the empty string went to the
+    // backend, came back as a confusing G0/G1 report, and the loop spent the
+    // whole budget on it — one node on disk has a 0-byte artifact and
+    // cost.calls: 5. Land it in error_code instead, which cook-dirty resumes.
+    // (Emptiness is the only domain-agnostic check available here; what counts
+    // as *valid* code is the backend's business, and the gates ask that.)
+    if (code.trim() === "") {
+      log("provider returned no code — not retrying, the prompt and budget are unchanged");
+      store.setStatus(nodeIdValue, "error_code", {
+        stage: "llm",
+        message:
+          "the model returned an empty completion (no code). This is usually the whole " +
+          "output budget going to reasoning tokens — raise maxTokens or lower effort for " +
+          "this role, then re-cook.",
+        attribution: "unknown",
+      });
+      throw new Error(`${nodeIdValue}: provider returned an empty completion`);
+    }
+
     // -- execute --
     store.setStatus(nodeIdValue, "building");
     const exec = await backend.execute(store.node(nodeIdValue), workspace);
