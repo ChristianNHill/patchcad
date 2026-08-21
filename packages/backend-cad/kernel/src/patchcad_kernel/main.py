@@ -59,7 +59,13 @@ executor = ThreadPoolExecutor(max_workers=POOL_SIZE)
 # 5 -> 6: hole probes measure depth and through-ness, and a CLEARANCE_HOLE must
 # pass through at ANY depth, not merely be deeper than a dimple. A cached pass
 # would otherwise keep the verdict this change exists to overturn.
-GATES_VERSION = 6
+# 6 -> 7: joining-hole cutters changed size, so a re-split of an imported node
+# produces different geometry. The mesh bytes are NOT in the digest below,
+# because import_dir is hashed as a path string and no file is ever read, so an
+# undo-then-re-split reuses the same key: same node ids, same filenames, same
+# code, same params, same ports, new holes. The cache is on disk and outlives
+# the restart, which is precisely when it would serve the stale verdict.
+GATES_VERSION = 7
 
 
 def job_hash(*parts: Any) -> str:

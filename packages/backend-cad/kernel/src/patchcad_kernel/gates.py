@@ -944,9 +944,13 @@ if __name__ == "__main__":  # pragma: no cover
 
     print("_port_dim_opt — every alias, and garbage must not shadow a valid one")
     grooved4 = grooved
+    # 99.0 for the same reason as the garbage case below: the fixture's real
+    # floor IS 4.0, so declaring 4.0 passes whether the alias was read or
+    # ignored entirely. Deleting the alias lookup used to pass all five.
     for k in ("depth", "slotDepth", "slot_depth", "grooveDepth", "groove_depth"):
         expect(f"depth alias {k}",
-               lambda kk=k: _probe_channel(grooved4, {"key": "g", "type": "GROOVE", "pose": pose((0, 0, 5)), "params": {"width": 3.0, kk: 4.0}}))
+               lambda kk=k: _probe_channel(grooved4, {"key": "g", "type": "GROOVE", "pose": pose((0, 0, 5)), "params": {"width": 3.0, kk: 99.0}}),
+               "expected depth 99")
     # 99.0, not 4.0: the fixture's real floor IS 4.0, so a valid-looking value
     # cannot tell "resolved the later alias" from "gave up and skipped the
     # check". A wrong value discriminates.

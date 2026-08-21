@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import sys
 import math
+import pathlib
+import subprocess
 import time
 
 import httpx
@@ -36,7 +38,21 @@ def check(name: str, ok: bool, detail: str = "") -> None:
         failures.append(name)
 
 
+def structural() -> None:
+    """check_module.py runs here so it runs at all. Committed but uncalled, it
+    only ever ran when someone remembered, which is the failure mode it exists
+    to replace. It needs no kernel, so it goes first and costs milliseconds."""
+    print("module structure")
+    proc = subprocess.run([sys.executable, "check_module.py"],
+                          cwd=pathlib.Path(__file__).parent,
+                          capture_output=True, text=True)
+    ok = proc.returncode == 0
+    check("kernel source has no duplicate or unbound names", ok,
+          "" if ok else proc.stdout.strip().splitlines()[-1])
+
+
 def main() -> None:
+    structural()
     client = httpx.Client(base_url=BASE, timeout=60)
 
     health = client.get("/health").json()

@@ -388,6 +388,9 @@ def segment(
         planes = [lo0 + step * i for i in range(1, pieces)]
 
     lo, hi = float(bounds[0][axis]), float(bounds[1][axis])
+    # The slab boundaries are what a joining hole has to reach, so they are
+    # computed here rather than at the cut, and the cut reads them.
+    boundaries = [lo - 1.0, *planes, hi + 1.0]
 
     hole_d = METRIC_CLEARANCE.get(thread.upper(), 4.5)
     interfaces: list[Interface] = []
@@ -447,19 +450,24 @@ def segment(
             hp[axis] = plane
             if joints == "holes":
                 holes.append({"center": [round(float(c), 3) for c in hp], "diameter": hole_d})
-                # SIZED TO THE MODEL, not a magic 40. A fixed 40mm cutter
-                # centred on the cut plane reaches 20mm each way, so any piece
-                # thicker than that got a BLIND hole while the docstring above
-                # promised a through-hole. import-handle is 120mm in three 40mm
-                # pieces: both end pieces carry holes that stop dead at 20.00mm,
-                # and a screw through one cannot reach its neighbour. Spanning
-                # the whole model guarantees it passes through whatever single
-                # piece it lands in.
-                span = float(bounds[1][axis] - bounds[0][axis]) + 2.0
-                cyl = trimesh.creation.cylinder(radius=hole_d / 2, height=span)
+                # SPANS THE TWO SLABS THIS PLANE DIVIDES, and nothing else.
+                # A screw needs to cross both pieces it joins, so the reach is
+                # each neighbour's own length, not a constant and not the whole
+                # model. A fixed 40mm cutter left a BLIND hole in any piece
+                # thicker than 20mm; a whole-model cutter is centred on the
+                # plane, so it reaches L/2 each way and goes blind again for any
+                # cut more than a hair off centre, which is exactly what the
+                # natural-neck path produces. It also over-drilled: on a 3-way
+                # split its far end bored 21mm into a piece that does not touch
+                # this interface at all.
+                back = plane - boundaries[i - 1]
+                fwd = boundaries[i + 1] - plane
+                cyl = trimesh.creation.cylinder(radius=hole_d / 2, height=back + fwd)
                 align = trimesh.geometry.align_vectors([0, 0, 1], np.eye(3)[axis])
                 cyl.apply_transform(align)
-                cyl.apply_translation(hp)
+                centre = hp.copy()
+                centre[axis] = plane + (fwd - back) / 2
+                cyl.apply_translation(centre)
                 hole_cutters.append(cyl)
             elif joints == "pegs":
                 pegs.append({
@@ -485,7 +493,6 @@ def segment(
     for cutter in hole_cutters:
         drilled = _boolean(drilled, "difference", cutter)
 
-    boundaries = [lo - 1.0, *planes, hi + 1.0]
     result: list[trimesh.Trimesh] = []
     for i in range(len(boundaries) - 1):
         slab = _slab(bounds, axis, boundaries[i], boundaries[i + 1])
