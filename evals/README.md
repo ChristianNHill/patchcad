@@ -73,6 +73,13 @@ That is the pen-cup brick one rung up, and worse, because a green result looks
 like evidence. Before writing a case, name the gate that produces the failure.
 If there isn't one, the case is measuring something else.
 
+The replacement then had the same disease in miniature, from `axes: [0, 1]` on
+its bbox. The prompt pins a 5mm plate and a 6mm rib, so z = 11 is the only
+assertion proving the rib exists: omit the rib entirely and a bare plate has the
+hole through it at x 70 and y 40, and passes. `axes` is for a dimension the
+prompt leaves free, which is why pen-cup uses it. Excluding a
+dimension the prompt pins deletes an assertion and looks like tidiness.
+
 ## Writing a case
 
 Cases are JSON in `cases/`. They assert **structurally, never by node id**,

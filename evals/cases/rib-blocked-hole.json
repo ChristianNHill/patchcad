@@ -1,14 +1,30 @@
 {
   "id": "rib-blocked-hole",
   "prompt": "a 70mm by 40mm plate 5mm thick with a 6mm tall stiffening rib running the full length down its centre line, and a 4.5mm bolt hole 15mm from one end that has to pass all the way through the plate and the rib together",
-  "why": "THE ONE THAT SHOULD NEED REPAIR, replacing a first attempt that could not detect its own premise. That version asked for bolt holes clearing a boss on an adjoining leg, and review measured that a hole bored straight through the boss wall still passes: _probe_boss tolerates one lost ring point by design, _probe_hole only looks at its own pose, G4 ignores holes and G5 never runs on one part. A green result would have looked like evidence while measuring nothing, which is the pen-cup brick one rung up.\n\nThis interaction IS measured, by a gate that already exists. The rib sits on the hole's axis, so if the generator drills the plate and adds the rib afterwards, or cuts the hole only to the plate's top face, the bore stops inside the rib and G3 reports it: \"bottoms out at Nmm instead of passing through\". Through-ness is the one property here that no amount of plausible-looking code can fake.\n\nIf it passes first try, that is the answer and not a disappointment: it means the generator handles ordering interactions the ladder cannot otherwise show, and B7 needs a harder case rather than a better prompt.",
+  "why": "THE ONE THAT SHOULD NEED REPAIR, replacing a first attempt that could not detect its own premise. That version asked for bolt holes clearing a boss on an adjoining leg, and review measured that a hole bored straight through the boss wall still passes: _probe_boss tolerates one lost ring point by design, _probe_hole only looks at its own pose, G4 ignores holes and G5 never runs on one part. A green result would have looked like evidence while measuring nothing, which is the pen-cup brick one rung up.\n\nThis interaction IS measured, by a gate that already exists. The rib sits on the hole's axis, so if the generator drills the plate and adds the rib afterwards, or cuts the hole only to the plate's top face, the bore stops inside the rib and G3 reports it: \"bottoms out at Nmm instead of passing through\". Through-ness is the one property here that no amount of plausible-looking code can fake.\n\nIf it passes first try, that is the answer and not a disappointment: it means the generator handles ordering interactions the ladder cannot otherwise show, and B7 needs a harder case rather than a better prompt.\n\nAll THREE bbox axes are asserted, and z is the load-bearing one. An earlier version excluded it with axes [0,1], which removed the only assertion proving the rib exists at all: omit the rib and a bare 5mm plate has the hole through it, x 70, y 40, and passes. That was this file's own lesson applied to the wrong prompt. On the bracket the third dimension was genuinely unstated; here \"5mm thick\" plus a \"6mm tall rib\" pins z = 11 exactly, so present-and-unchecked was not documentation debt, it was the missing assertion.",
   "expect": {
-    "nodes": { "min": 1, "max": 1 },
+    "nodes": {
+      "min": 1,
+      "max": 1
+    },
     "allReady": true,
     "noSkippedPorts": true,
     "ports": [
-      { "type": "CLEARANCE_HOLE", "minCount": 1, "diameter": 4.5, "tol": 0.4, "through": true }
+      {
+        "type": "CLEARANCE_HOLE",
+        "minCount": 1,
+        "diameter": 4.5,
+        "tol": 0.4,
+        "through": true
+      }
     ],
-    "bboxSize": { "value": [70, 40, 11], "tol": 2.0, "axes": [0, 1] }
+    "bboxSize": {
+      "value": [
+        70,
+        40,
+        11
+      ],
+      "tol": 2.0
+    }
   }
 }
