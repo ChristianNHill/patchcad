@@ -227,11 +227,11 @@ describe("vision in the repair loop", () => {
  * $21 each. An unfalsifiable claim is worse than no claim.
  */
 describe("the repair prompt changes tactics as rounds run out", () => {
-  const round = (attempt: number, priors = 1) =>
+  const round = (attempt: number, priors = 2, maxAttempts = 5) =>
     repairPrompt(
       ctx({
         attempt,
-        maxAttempts: 5,
+        maxAttempts,
         priorFailures: Array.from({ length: priors }, () => ({
           stage: "G3",
           report: "port \"bolt\": bottoms out at 2.80mm instead of passing through",
@@ -259,10 +259,23 @@ describe("the repair prompt changes tactics as rounds run out", () => {
     expect(last).not.toContain("SECOND TO LAST");
   });
 
-  it("does not preach tactics on a penultimate round with nothing spent yet", () => {
-    // No prior failures means this approach has not been tried twice, so
+  it("does not preach tactics with nothing spent yet", () => {
+    // No prior failures means this approach has not been tried at all, so
     // "refining the same approach has failed more than once" would be a lie.
     expect(round(4, 0)).not.toContain("SECOND TO LAST");
+  });
+
+  it("needs TWO priors, because one failure is not 'more than once'", () => {
+    expect(round(4, 1)).not.toContain("SECOND TO LAST");
+    expect(round(4, 2)).toContain("SECOND TO LAST");
+  });
+
+  // web-code runs maxAttempts 3, where the penultimate round is round 2 and only
+  // one failure can have happened. A 3-round budget has no room for a distinct
+  // penultimate strategy, so it is skipped rather than asserted falsely.
+  it("stays silent on a 3-round budget, where the claim cannot be true", () => {
+    expect(round(2, 1, 3)).not.toContain("SECOND TO LAST");
+    expect(round(3, 2, 3)).toContain("FINAL attempt");
   });
 
   it("still carries the gate measurement, which is the whole point of the prompt", () => {

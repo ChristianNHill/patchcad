@@ -126,17 +126,27 @@ async function main() {
       library,
       signal: cookSignal(),
       inspect: opts.inspect,
-      // PASSED, at last. CookDeps has carried `concurrency` since it was
-      // written and nobody set it, so every wave ran at the default 4 — the
-      // exact dead-option pattern this function's own docstring says already
-      // bit them once with `signal`.
+      // DELIBERATELY NOT SET, and the reasoning belongs here because the
+      // temptation to set it recurs. CookDeps has carried `concurrency` from the
+      // start with nobody passing it, which looks exactly like the dead-option
+      // pattern this function's docstring warns about — so I passed 8, matching
+      // the kernel pool.
       //
-      // Generators are network-bound, not CPU-bound: a cook worker spends its
-      // time waiting on an API, and the kernel behind it now runs a pool sized
-      // to the machine. So the ceiling here is about how many model calls to
-      // have outstanding, not about cores. 8 matches the kernel pool, which is
-      // the thing that would actually queue behind it.
-      concurrency: Number(process.env.PATCHCAD_COOK_CONCURRENCY) || 8,
+      // That was a speculative change dressed as a fix. The largest wave in the
+      // eval ladder is four nodes, so 8 never engages on anything measured, and
+      // the passing plate cooked in 26.4s with no sign that 4 was the limit. Its
+      // first real exercise would be a large plan, which costs a dollar to
+      // discover and would spend it proving a number nobody chose on evidence.
+      //
+      // It is also not free to get wrong: architect, generator and repair all
+      // route to the direct `claude` provider on the user's own key, so eight
+      // concurrent large-output calls is a tokens-per-minute question. A 429
+      // attributes only half honestly — the ledger stays right now that a
+      // thrown call carries its usage, but a provider throw lands each node in
+      // error_code, so a scheduling problem would read as N node failures.
+      //
+      // Set it from a wave that is measurably slow at 4, not from the kernel
+      // pool: they are unrelated resources that happen to share a number.
     };
   }
 

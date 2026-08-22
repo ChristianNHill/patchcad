@@ -92,6 +92,13 @@ export class OpenAiCompatProvider implements LlmProvider {
       // A timeout of its own, combined with the caller's signal rather than
       // replacing it: cancelling a cook must still work, and a stall must not
       // depend on someone noticing.
+      //
+      // It covers the BODY READ too, which I assumed it did not. undici ties the
+      // signal to the whole response, so a server that sends headers and then
+      // stalls mid-body aborts res.json() on the same timer. Measured: headers
+      // with no body and a 1s ceiling threw after 1010ms with a TimeoutError.
+      // Worth stating, because "the timeout only covers the fetch" is the
+      // plausible-sounding wrong answer.
       const ms = this.opts.timeoutMs ?? 300_000;
       const bound = AbortSignal.timeout(ms);
       const signal = req.signal ? AbortSignal.any([req.signal, bound]) : bound;
