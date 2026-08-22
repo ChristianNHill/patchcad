@@ -52,6 +52,14 @@ const PATHS: Record<string, React.ReactNode> = {
       <line x1="4" y1="7" x2="10" y2="7" />
     </>
   ),
+  imported: (
+    // brought-in geometry: arrow landing on a tray
+    <>
+      <path d="M7 1.5 V8.25" />
+      <path d="M4.25 5.5 L7 8.25 L9.75 5.5" />
+      <path d="M2 10 V12.5 H12 V10" />
+    </>
+  ),
 };
 
 const FALLBACK = <rect x="2" y="2" width="10" height="10" rx="1.5" />;

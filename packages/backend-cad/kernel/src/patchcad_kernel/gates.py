@@ -224,10 +224,14 @@ def _in_material(shape: Any, p: tuple[float, float, float]) -> bool:
 
 
 def _march(shape: Any, frame, du: float, dv: float, w: float, max_r: float,
-           find: str = "material") -> float | None:
-    """Distance along (du, dv) at depth w to the first change of state, or None
-    if it never changes within max_r. Outward step then 12 bisections, so the
-    answer is good to max_r/2**12 regardless of the step.
+           find: str = "material", dw: float = 0.0) -> float | None:
+    """Distance along (du, dv, dw) from depth w to the first change of state, or
+    None if it never changes within max_r. Outward step then 12 bisections, so
+    the answer is good to max_r/2**12 regardless of the step.
+
+    `dw` marches along the frame's z rather than in its plane: du=dv=0, dw=-1 is
+    the depth probe that follows the axis down to a channel or hole floor. It
+    was a second function, _march_depth, identical but for the sample point.
 
     This is the one directional measurement primitive. It was inlined in
     _measure_hole_radius with the median-over-8-rays aggregation baked around
@@ -250,11 +254,17 @@ def _march(shape: Any, frame, du: float, dv: float, w: float, max_r: float,
     # i.e. a zero width or a zero-diameter shaft. Every caller checks the origin
     # itself before marching, so this guards the next one; the self-check pins
     # both polarities.
-    if _in_material(shape, _at(o, x, y, z, 0.0, 0.0, w)) == want_material:
+    #
+    # IN-PLANE ONLY, deliberately. The depth probe starts AT the port origin,
+    # which lies on the mating face — a point the containment test may call
+    # either way. _march_depth never had this guard, and a guard that fires on a
+    # boundary sample would turn a real floor into None, which reads as "the cut
+    # passes through". Behaviour of the depth path is left exactly as it was.
+    if dw == 0.0 and _in_material(shape, _at(o, x, y, z, 0.0, 0.0, w)) == want_material:
         return None
     lo, crossing, r = 0.0, None, step
     while r <= max_r:
-        if _in_material(shape, _at(o, x, y, z, du * r, dv * r, w)) == want_material:
+        if _in_material(shape, _at(o, x, y, z, du * r, dv * r, w + dw * r)) == want_material:
             crossing = r
             break
         lo = r
@@ -267,7 +277,7 @@ def _march(shape: Any, frame, du: float, dv: float, w: float, max_r: float,
         # Polarity applies to the bisection too. Testing raw material here would
         # converge on the wrong side of the boundary for find="void", returning
         # the last void sample instead of the last solid one.
-        if _in_material(shape, _at(o, x, y, z, du * mid, dv * mid, w)) == want_material:
+        if _in_material(shape, _at(o, x, y, z, du * mid, dv * mid, w + dw * mid)) == want_material:
             hi = mid
         else:
             lo = mid
@@ -330,7 +340,7 @@ def _probe_hole(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     # hole a screw was supposed to go through.
     bbox = shape.bounding_box()
     reach = max(float(bbox.size.X), float(bbox.size.Y), float(bbox.size.Z)) + 2.0
-    floor = _march_depth(shape, frame, reach)
+    floor = _march(shape, frame, 0.0, 0.0, 0.0, reach, dw=-1.0)
     result["through"] = floor is None
     if floor is not None:
         result["measured_depth"] = round(floor, 3)
@@ -350,7 +360,7 @@ def _probe_hole(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     #
     # A DECLARED depth is not enforced, on purpose. No hole port in any project
     # declares one, so the comparison would be dead code, and on a stepped hole
-    # it is unsatisfiable: _march_depth follows the axis to the DEEPEST floor in
+    # it is unsatisfiable: the depth march follows the axis to the DEEPEST floor in
     # a coaxial stack, so a counterbore over a pilot measures the pilot. A
     # counterbore's own floor is an annulus and never lies on the axis. The
     # FLAT_FACE grid already taught what an unsatisfiable check costs. Both
@@ -662,31 +672,6 @@ def _port_dim_opt(port: dict[str, Any], keys: tuple[str, ...]) -> float | None:
     return None
 
 
-def _march_depth(shape: Any, frame, max_d: float) -> float | None:
-    """Distance straight down -z from the port origin to the floor, or None if
-    the cut passes through. Same march-then-bisect as _march, along the axis
-    rather than in-plane."""
-    o, x, y, z = frame
-    step = 0.25
-    lo, crossing, d = 0.0, None, step
-    while d <= max_d:
-        if _in_material(shape, _at(o, x, y, z, 0.0, 0.0, -d)):
-            crossing = d
-            break
-        lo = d
-        d += step
-    if crossing is None:
-        return None
-    hi = crossing
-    for _ in range(12):
-        mid = (lo + hi) / 2
-        if _in_material(shape, _at(o, x, y, z, 0.0, 0.0, -mid)):
-            hi = mid
-        else:
-            lo = mid
-    return (lo + hi) / 2
-
-
 def _probe_channel(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     """GROOVE / SLOT: a channel cut into the mating face, receiving a tongue or
     a plate. Both are used the same way by real contracts, so both are measured
@@ -734,7 +719,7 @@ def _probe_channel(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     # wrong declaration reads as "deeper than declared" either way round.
     bbox = shape.bounding_box()
     reach_down = max(float(bbox.size.X), float(bbox.size.Y), float(bbox.size.Z)) + 2.0
-    floor = _march_depth(shape, frame, reach_down)
+    floor = _march(shape, frame, 0.0, 0.0, 0.0, reach_down, dw=-1.0)
 
     if declared_depth and declared_depth > 0:
         # MEASURE the floor, never echo the declaration. Handing back the
@@ -767,8 +752,24 @@ def _probe_channel(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
         left = _march(shape, frame, 0.0, 1.0, -probe_w, reach)
         right = _march(shape, frame, 0.0, -1.0, -probe_w, reach)
         if left is None or right is None:
+            # Two very different causes, and the depth tells them apart. Failing
+            # at the SHALLOWEST slice means the walls exist deeper down but are
+            # gone at the mouth — an over-cut lead-in, not a bad pose. The one
+            # that keeps happening: a Box rotated 45 deg and subtracted as a
+            # chamfer spans leg*sqrt(2) in each rotated axis, so a flare sized
+            # against the wall thickness quietly eats the entire wall.
+            if probe_w <= PROBE_DEPTH_MM:
+                hint = ("a wall is missing at the channel MOUTH but may exist deeper. Suspect an "
+                        "over-cut lead-in/chamfer: a Box rotated 45 deg spans leg*1.414 in each "
+                        "rotated axis, so a flare sized to the wall thickness cuts the wall away "
+                        "entirely. Use chamfer(edges, length) or fillet(edges, radius) on the mouth "
+                        "edges instead of subtracting a rotated Box. If you meant no lead-in at all, "
+                        "check the pose's xAxis points ALONG the channel, not across it")
+            else:
+                hint = ("the channel must be bounded on both sides across its width; "
+                        "check the pose's xAxis points ALONG the channel, not across it")
             raise GateError("G3", f'port "{key}" ({ptype}): no wall within {reach:.1f}mm at {probe_w:.1f}mm depth — the channel is open, not a {width:g}mm gap',
-                            "the channel must be bounded on both sides across its width; check the pose's xAxis points ALONG the channel, not across it")
+                            hint)
         span = left + right
         if measured is None or span < measured:
             measured, at_depth = span, probe_w
@@ -830,27 +831,18 @@ def _posed_mesh(shape: Any, matrix: list[float]) -> Any:
     import numpy as np
     import trimesh
 
-    # A build123d shape has a .mesh METHOD; a MeshPart's .mesh IS a Trimesh. The
-    # callable check is the discriminator — hasattr alone would send every part
-    # down the mesh branch.
-    if hasattr(shape, "mesh") and not callable(getattr(shape, "mesh")):
-        mesh = shape.mesh.copy()  # MeshPart — already a volume; copy so posing
-        if not mesh.is_watertight:  # does not mutate the caller's part
+    from .meshpart import MeshPart, to_trimesh
+
+    mesh = to_trimesh(shape, TESSELLATION_TOL_CLASH)  # welds the b3d branch
+    if isinstance(shape, MeshPart):
+        mesh = mesh.copy()  # to_trimesh hands over the part's own mesh; posing mutates
+        if not mesh.is_watertight:
             # This branch is where a non-watertight mesh can actually arrive:
             # an imported STL. The repair used to sit on the build123d branch,
             # where process=True has already welded and b3d tessellates closed
             # anyway — guarding the case that could not happen.
             mesh.merge_vertices(merge_tex=True, merge_norm=True)
             trimesh.repair.fill_holes(mesh)
-    else:
-        verts, faces = shape.tessellate(TESSELLATION_TOL_CLASH)
-        # Welding is not optional: raw OCP tessellation duplicates vertices per
-        # face, and a boolean against an unwelded shell returns nonsense.
-        mesh = trimesh.Trimesh(
-            vertices=[(v.X, v.Y, v.Z) for v in verts],
-            faces=[tuple(f) for f in faces],
-            process=True,
-        )
     if matrix:
         m = np.asarray(matrix, dtype=np.float64).reshape(4, 4).T  # column-major in
         mesh.apply_transform(m)
@@ -1013,16 +1005,21 @@ def _raise_selfcheck(msg: str) -> None:
 # directly against shapes built here, so a bad radius or a flipped polarity
 # fails in a second with a line number. There is no pytest in this package.
 if __name__ == "__main__":  # pragma: no cover
-    from build123d import Axis, Box, BuildPart, Cone, Cylinder, Locations, Mode, Pos, chamfer
+    from build123d import Axis, Box, BuildPart, Cone, Cylinder, Locations, Mode, Pos, Rot, chamfer
 
     fails: list[str] = []
 
-    def expect(label: str, fn, want_error: str | None = None) -> None:
+    def expect(label: str, fn, want_error: str | None = None, want_hint: str | None = None) -> None:
         try:
             fn()
             ok, detail = want_error is None, "passed"
         except GateError as err:
             ok = want_error is not None and want_error in err.error
+            if ok and want_hint is not None and want_hint not in (err.hint or ""):
+                ok, detail = False, f"hint missing {want_hint!r}: {err.hint}"
+                print(f"  FAIL  {label}  <- {detail}")
+                fails.append(label)
+                return
             detail = f"{err.stage}: {err.error}"
         print(f"  {'PASS' if ok else 'FAIL'}  {label}" + ("" if ok else f"  <- {detail}"))
         if not ok:
@@ -1059,11 +1056,38 @@ if __name__ == "__main__":  # pragma: no cover
     expect("groove probed across its length",
            lambda: _probe_channel(grooved, {"key": "g", "type": "GROOVE", "pose": pose((0, 0, 5), x=(0, 1, 0)), "params": {"width": 3.0}}),
            "no wall")
+    # A cable clip burned its whole repair budget here. The generator faked a
+    # mouth chamfer with Rot(45,0,0) * Box(w, leg*2, leg*2), whose footprint is
+    # leg*sqrt(2) per rotated axis — sized against the wall it removed the wall
+    # outright. The walls still exist deeper in, so the SHALLOW slice is what
+    # fails, and the hint has to say "over-cut lead-in", not "check your axes".
+    def _clip(flare_mult: float):
+        clip_w, jaw, slot_w, wall, back = 18.0, 14.0, 20.6, 2.4, 3.0
+        mouth, floor = -jaw / 2, jaw / 2
+
+        def span(x_len, y0, y1, z_len):
+            return Pos(0, (y0 + y1) / 2, 0) * Box(x_len, y1 - y0, z_len)
+
+        part = span(clip_w, mouth, floor + back, slot_w + 2 * wall) - span(clip_w + 2, mouth - 1, floor, slot_w)
+        if flare_mult:
+            leg = wall * flare_mult
+            for sz in (1, -1):
+                part = part - Pos(0, mouth, sz * slot_w / 2) * (Rot(45, 0, 0) * Box(clip_w + 2, leg * 2, leg * 2))
+        return part, {"key": "desk_slot", "type": "SLOT",
+                      "pose": pose((0, mouth, 0), z=(0, -1, 0)), "params": {"width": slot_w, "depth": jaw}}
+
+    expect("a jaw slot with no lead-in measures clean",
+           lambda: _probe_channel(*_clip(0.0)))
+    expect("an over-cut 45deg-Box lead-in is caught at the mouth",
+           lambda: _probe_channel(*_clip(0.9)),
+           "the channel is open",
+           want_hint="over-cut lead-in")
+
     expect("groove with no width",
            lambda: _probe_channel(grooved, {"key": "g", "type": "GROOVE", "pose": pose((0, 0, 5)), "params": {}}),
            "no numeric width")
 
-    print("_march_depth — the floor, measured not echoed")
+    print("the depth march — the floor, measured not echoed")
     for true_d, declared, want in ((4.0, 4.0, None), (4.5, 4.0, "deeper than declared"),
                                    (3.5, 4.0, "shallower than declared"),
                                    (4.0, 0.5, "deeper than declared"),

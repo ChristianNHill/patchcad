@@ -20,7 +20,7 @@ describe("diffContract", () => {
     const a = contract({ summary: "old" });
     const b = contract({ summary: "new" });
     const d = diffContract(a, b);
-    expect(d.valueChanged).toBe(true);
+    expect(d.changed).toBe(true);
     expect(d.shapeChanged).toBe(false);
     expect(d.shapeChangedProvides).toEqual([]);
   });
@@ -69,7 +69,7 @@ describe("contractHash", () => {
 
   it("adding ui is not even a value change", () => {
     const d = diffContract(withUi(), withUi({ group: "holes", unit: "mm" }));
-    expect(d.valueChanged).toBe(false);
+    expect(d.changed).toBe(false);
     expect(d.shapeChanged).toBe(false);
     expect(d.changed).toBe(false);
   });

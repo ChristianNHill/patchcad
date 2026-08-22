@@ -37,7 +37,7 @@ const MIN_EXEMPLAR_CHARS = 200;
 /** Contract closeness, plus a brevity nudge: a short worked example costs
  *  fewer tokens and is easier to pattern-match than a long one. The closeness
  *  half is shared with reuse — see similarity.ts. */
-export function exemplarScore(target: Contract, candidate: Contract, codeLength: number): number {
+function exemplarScore(target: Contract, candidate: Contract, codeLength: number): number {
   return contractSimilarity(target, candidate) - codeLength / 2000;
 }
 

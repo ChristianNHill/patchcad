@@ -26,28 +26,12 @@ function sortValue(value: unknown): unknown {
 export function fnv1a64(input: string): string {
   let h = 0xcbf29ce484222325n;
   const prime = 0x100000001b3n;
-  const mix = (byte: number) => {
+  // Lone surrogates encode as U+FFFD here, where a hand-rolled encoder would
+  // emit raw invalid UTF-8. Contract hashes are library keys, so that boundary
+  // is pinned by contract-hash-stability.test.ts in @patchcad/engine.
+  for (const byte of new TextEncoder().encode(input)) {
     h ^= BigInt(byte);
     h = (h * prime) & 0xffffffffffffffffn;
-  };
-  // Manual UTF-8 so this stays lib-free (no TextEncoder in bare ES2022).
-  for (let i = 0; i < input.length; i++) {
-    let cp = input.codePointAt(i)!;
-    if (cp > 0xffff) i++; // surrogate pair consumed
-    if (cp < 0x80) mix(cp);
-    else if (cp < 0x800) {
-      mix(0xc0 | (cp >> 6));
-      mix(0x80 | (cp & 0x3f));
-    } else if (cp < 0x10000) {
-      mix(0xe0 | (cp >> 12));
-      mix(0x80 | ((cp >> 6) & 0x3f));
-      mix(0x80 | (cp & 0x3f));
-    } else {
-      mix(0xf0 | (cp >> 18));
-      mix(0x80 | ((cp >> 12) & 0x3f));
-      mix(0x80 | ((cp >> 6) & 0x3f));
-      mix(0x80 | (cp & 0x3f));
-    }
   }
   return h.toString(16).padStart(16, "0");
 }

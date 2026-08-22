@@ -54,7 +54,7 @@ export class FileLibrary implements NodeLibrary {
    *  and an index would be one more thing to keep true. */
   async list(
     backendId: string,
-    opts: { kind?: string; limit?: number } = {},
+    opts: { kind?: string } = {},
   ): Promise<LibraryListing[]> {
     const dir = path.join(this.root, backendId);
     let files: string[];
@@ -80,8 +80,7 @@ export class FileLibrary implements NodeLibrary {
     }
 
     out.sort((a, b) => b.savedAt - a.savedAt);
-    const capped = opts.limit ? out.slice(0, opts.limit) : out;
-    return capped.map(({ savedAt: _savedAt, ...e }) => e);
+    return out.map(({ savedAt: _savedAt, ...e }) => e);
   }
 
   async capture(backendId: string, contractHash: string, entry: LibraryEntry): Promise<void> {

@@ -81,15 +81,10 @@ class MeshPart:
     # the exact same vocabulary on imported geometry as on generated parts.
     def _coerce(self, other: Any) -> trimesh.Trimesh:
         if isinstance(other, MeshPart):
-            return other.mesh
-        # OCP tessellation duplicates vertices per face — weld (process=True)
-        # so the result is a closed volume manifold can boolean against.
-        verts, faces = other.tessellate(0.05)
-        mesh = trimesh.Trimesh(
-            vertices=[(v.X, v.Y, v.Z) for v in verts],
-            faces=[tuple(f) for f in faces],
-            process=True,
-        )
+            return other.mesh  # already a volume, and NOT ours to repair in place
+        # OCP tessellation duplicates vertices per face — to_trimesh welds
+        # (process=True) so the result is a closed volume manifold can boolean.
+        mesh = to_trimesh(other, 0.05)
         if not mesh.is_watertight:
             mesh.merge_vertices(merge_tex=True, merge_norm=True)
             trimesh.repair.fill_holes(mesh)
@@ -112,6 +107,28 @@ class MeshPart:
             np.array([[1, 0, 0, 0], [0, 0, 1, 0], [0, -1, 0, 0], [0, 0, 0, 1]], dtype=float)
         )
         m.export(path)
+
+
+def to_trimesh(shape: Any, tol: float, process: bool = True) -> trimesh.Trimesh:
+    """Any part → a trimesh. The one place that answers "is this a MeshPart or a
+    build123d shape". Four copies of this branch existed and three of them
+    sniffed for MeshPart differently (`.trimesh`, `not callable(.mesh)`,
+    `isinstance(.mesh, Trimesh)`) — isinstance, never hasattr, because a
+    build123d shape carries a .mesh METHOD.
+
+    A MeshPart hands over its OWN mesh, not a copy: callers that transform or
+    repair must copy first. build123d shapes tessellate at `tol` and are welded
+    (process=True) unless the caller only wants the raw arrays — OCP emits
+    vertices duplicated per face, and a boolean or a watertight flag read off
+    an unwelded shell is nonsense."""
+    if isinstance(shape, MeshPart):
+        return shape.mesh
+    verts, faces = shape.tessellate(tol)
+    return trimesh.Trimesh(
+        vertices=[(v.X, v.Y, v.Z) for v in verts],
+        faces=[tuple(f) for f in faces],
+        process=process,
+    )
 
 
 # --- loading ----------------------------------------------------------------
@@ -525,7 +542,7 @@ def run_import(job: dict[str, Any]) -> dict[str, Any]:
     """Worker entrypoint: decode, segment, write piece STLs + GLBs, report."""
     data = base64.b64decode(job["data_b64"])
     components = load_mesh_file(job["filename"], data)
-    joints = str(job.get("joints") or ("holes" if job.get("join_holes") else "none"))
+    joints = str(job.get("joints") or "none")
     pieces, interfaces = segment(
         components,
         pieces=int(job.get("pieces", 1)),

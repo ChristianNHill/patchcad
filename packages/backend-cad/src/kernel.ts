@@ -108,8 +108,6 @@ export interface RenderResult {
 
 /** Formats the kernel will write. STEP is per-part: a posed assembly has no
  *  B-rep answer worth opening, and mesh is what a slicer wants anyway. */
-export const EXPORT_FORMATS = ["stl", "3mf", "obj", "step"] as const;
-export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 
 export interface ExportResult {
   ok: boolean;
@@ -231,21 +229,6 @@ export class KernelClient {
         import_dir: opts.importDir ?? "",
         views: opts.views ?? 6,
       }),
-    });
-    return (await res.json()) as RenderResult;
-  }
-
-  /** The posed assembly as one image — for judging parts in company, which
-   *  no per-part gate can do. */
-  async renderAssembly(
-    parts: { code: string; params: Record<string, unknown>; matrix: number[] }[],
-    opts: { importDir?: string; views?: number } = {},
-  ): Promise<RenderResult> {
-    await this.ready();
-    const res = await fetch(`${this.baseUrl}/render-assembly`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ parts, import_dir: opts.importDir ?? "", views: opts.views ?? 4 }),
     });
     return (await res.json()) as RenderResult;
   }

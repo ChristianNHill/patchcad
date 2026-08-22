@@ -17,6 +17,8 @@ from typing import Any
 import numpy as np
 import trimesh
 
+from .meshpart import to_trimesh
+
 LINE_WIDTH_MM = 0.4
 WALL_SAMPLES = 400
 THIN_PERCENTILE = 2.0
@@ -33,21 +35,8 @@ def two_tier_index(measured: float, feasible: float, recommended: float) -> floa
     return 1.0 / (1.0 + math.exp(-z))
 
 
-def to_trimesh(shape: Any) -> trimesh.Trimesh:
-    """MeshPart passes its mesh through; build123d shapes tessellate + weld.
-    (Type check, not hasattr: build123d shapes carry a .mesh METHOD.)"""
-    if isinstance(getattr(shape, "mesh", None), trimesh.Trimesh):
-        return shape.mesh
-    verts, faces = shape.tessellate(0.2)
-    return trimesh.Trimesh(
-        vertices=[(v.X, v.Y, v.Z) for v in verts],
-        faces=[tuple(f) for f in faces],
-        process=True,
-    )
-
-
 def measure_printability(shape: Any) -> dict[str, Any]:
-    mesh = to_trimesh(shape)
+    mesh = to_trimesh(shape, 0.2)
     out: dict[str, Any] = {}
 
     # min wall: ray chords along inverted surface normals, robust percentile

@@ -51,6 +51,25 @@ def _registry_namespace() -> dict[str, object]:
     return {"SpurGear": SpurGear, "IsoThread": IsoThread}
 
 
+def _namespace(job: dict) -> dict[str, object]:
+    """Exec namespace for every part in this job: the registry classes, plus
+    `load_import` bound to the job's import directory when it has one."""
+    ns: dict[str, object] = _registry_namespace()
+    import_dir = job.get("import_dir")
+    if import_dir:
+        from .meshpart import load_import_part
+
+        ns["load_import"] = lambda name, scale=1.0: load_import_part(import_dir, name, scale)
+    return ns
+
+
+def _build(part: dict, ns: dict[str, object]):
+    """G0 then G1: the only way a shape is ever produced here."""
+    from . import gates
+
+    return gates.g1_execute(gates.g0_scan(part["code"]), part.get("params", {}), ns)
+
+
 def worker_main(conn: Connection) -> None:
     _apply_rlimits()
 
@@ -80,16 +99,8 @@ def worker_main(conn: Connection) -> None:
                 from .exporters import export_parts
 
                 spec = job["export"]
-                extra_ns_e: dict[str, object] = _registry_namespace()
-                if job.get("import_dir"):
-                    from .meshpart import load_import_part
-
-                    de = job["import_dir"]
-                    extra_ns_e["load_import"] = lambda name, scale=1.0: load_import_part(de, name, scale)
-                shapes = []
-                for part in spec["parts"]:
-                    tree_e = gates.g0_scan(part["code"])
-                    shapes.append((gates.g1_execute(tree_e, part.get("params", {}), extra_ns_e), part.get("matrix", [])))
+                ns = _namespace(job)
+                shapes = [(_build(part, ns), part.get("matrix", [])) for part in spec["parts"]]
                 os.makedirs(job["out_dir"], exist_ok=True)
                 out = os.path.join(job["out_dir"], f"export.{spec['format']}")
                 info = export_parts(shapes, out, spec["format"])
@@ -100,17 +111,9 @@ def worker_main(conn: Connection) -> None:
                 continue
 
             if "clash" in job:
-                extra_ns_c: dict[str, object] = _registry_namespace()
-                if job.get("import_dir"):
-                    from .meshpart import load_import_part
-
-                    dc = job["import_dir"]
-                    extra_ns_c["load_import"] = lambda name, scale=1.0: load_import_part(dc, name, scale)
-                posed = []
-                for part in job["clash"]:
-                    tree_c = gates.g0_scan(part["code"])
-                    shape_c = gates.g1_execute(tree_c, part.get("params", {}), extra_ns_c)
-                    posed.append((part.get("key", "?"), shape_c, part.get("matrix", [])))
+                ns = _namespace(job)
+                posed = [(part.get("key", "?"), _build(part, ns), part.get("matrix", []))
+                         for part in job["clash"]]
                 conn.send({"ok": True, "clash": gates.g5_clash(posed),
                            "elapsed_ms": int((time.monotonic() - started) * 1000)})
                 continue
@@ -118,32 +121,15 @@ def worker_main(conn: Connection) -> None:
             if "assembly" in job:
                 from .render import render_assembly
 
-                extra_ns_a: dict[str, object] = _registry_namespace()
-                if job.get("import_dir"):
-                    from .meshpart import load_import_part
-
-                    d = job["import_dir"]
-                    extra_ns_a["load_import"] = lambda name, scale=1.0: load_import_part(d, name, scale)
-                built = []
-                for part in job["assembly"]:
-                    tree_p = gates.g0_scan(part["code"])
-                    shape_p = gates.g1_execute(tree_p, part.get("params", {}), extra_ns_a)
-                    built.append((shape_p, part.get("matrix", [])))
+                ns = _namespace(job)
+                built = [(_build(part, ns), part.get("matrix", [])) for part in job["assembly"]]
                 os.makedirs(job["out_dir"], exist_ok=True)
                 info = render_assembly(built, os.path.join(job["out_dir"], "sheet.png"), job.get("render_views", 4))
                 conn.send({"ok": True, "render": info,
                            "elapsed_ms": int((time.monotonic() - started) * 1000)})
                 continue
 
-            extra_ns: dict[str, object] = _registry_namespace()
-            if job.get("import_dir"):
-                from .meshpart import load_import_part
-
-                import_dir = job["import_dir"]
-                extra_ns["load_import"] = lambda name, scale=1.0: load_import_part(import_dir, name, scale)
-
-            tree = gates.g0_scan(job["code"])
-            shape = gates.g1_execute(tree, job["params"], extra_ns)
+            shape = _build(job, _namespace(job))
             measurements = gates.g2_validity(shape)
             # Contract gates run only when declarations are supplied (verify pass).
             if job.get("ports"):

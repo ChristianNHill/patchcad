@@ -50,14 +50,11 @@
   --space-sm:  0.75rem;
   --space-md:  1rem;
   --space-lg:  1.5rem;
-  --space-xl:  2.5rem;
 
   /* ---- motion ---- */
   --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-in:     cubic-bezier(0.7, 0, 0.84, 0);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --dur-micro:   120ms;
-  --dur-short:   220ms;
   --dur-long:    320ms;
 
   /* ---- geometry ---- */
@@ -66,10 +63,6 @@
   --radius-pill:  999px;
 
   /* ---- z · named layers ---- */
-  --z-base:    1;
-  --z-raised:  10;
   --z-sticky:  200;
   --z-modal:   400;
-  --z-toast:   500;
-  --z-tooltip: 600;
 }

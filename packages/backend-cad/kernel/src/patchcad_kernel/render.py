@@ -19,6 +19,8 @@ from typing import Any
 
 import numpy as np
 
+from .meshpart import to_trimesh
+
 # Each view is rendered at this square size, then tiled into the sheet. Small
 # on purpose: the sheet is for judging shape and proportion, not surface finish.
 VIEW_PX = 220
@@ -45,16 +47,14 @@ VIEWS: list[tuple[str, tuple[float, float, float], tuple[float, float, float]]] 
 
 
 def _mesh_arrays(shape: Any, tol: float = 0.3) -> tuple[np.ndarray, np.ndarray]:
-    """(vertices Nx3, triangles Mx3) from either a build123d shape or a MeshPart."""
-    # Imported meshes carry their own trimesh; build123d shapes tessellate.
-    tri = getattr(shape, "trimesh", None)
-    if tri is not None and hasattr(tri, "vertices"):
-        return np.asarray(tri.vertices, dtype=np.float64), np.asarray(tri.faces, dtype=np.int64)
+    """(vertices Nx3, triangles Mx3) from either a build123d shape or a MeshPart.
 
-    vertices, triangles = shape.tessellate(tol)
-    v = np.array([[float(p.X), float(p.Y), float(p.Z)] for p in vertices], dtype=np.float64)
-    t = np.asarray(triangles, dtype=np.int64).reshape(-1, 3)
-    return v, t
+    process=False: a rasterizer draws triangles and never asks whether they
+    close, so welding here would cost time and buy nothing. exporters.py, which
+    does care, welds its own combined mesh."""
+    mesh = to_trimesh(shape, tol, process=False)
+    return (np.asarray(mesh.vertices, dtype=np.float64),
+            np.asarray(mesh.faces, dtype=np.int64).reshape(-1, 3))
 
 
 def _decimate(v: np.ndarray, t: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

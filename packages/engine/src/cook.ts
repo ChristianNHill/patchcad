@@ -28,7 +28,6 @@ export interface CookDeps {
   workspace: Workspace;
   /** Contract-hash reuse: a hit skips the generator entirely (still verified). */
   library?: NodeLibrary;
-  concurrency?: number;
   signal?: AbortSignal;
   /**
    * Look at each node after it passes its gates, and allow ONE rewrite if it
@@ -68,7 +67,7 @@ export async function cookNodes(deps: CookDeps, nodeIds: string[]): Promise<Cook
   const needsModel: string[] = [];
   for (const id of nodeIds) (isDeterministic(id) ? noModel : needsModel).push(id);
   const queue = [...noModel, ...needsModel];
-  const workers = Math.max(1, Math.min(deps.concurrency ?? 4, queue.length));
+  const workers = Math.max(1, Math.min(4, queue.length));
 
   for (const id of queue) deps.store.setStatus(id, "queued");
 
@@ -201,7 +200,7 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
         await storeInterface();
         commit(cause);
         storeMeasurements(verify.measurements);
-        await backend.previewAdapter.hotSwap(store.doc, workspace, [nodeIdValue]);
+        await backend.previewAdapter?.hotSwap(store.doc, workspace, [nodeIdValue]);
         log(`ready (v${store.node(nodeIdValue).version}, ${cause})`);
         return null;
       }
@@ -331,6 +330,9 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
     if (deps.signal?.aborted) throw new Error("cancelled");
 
     // -- generate (or repair) --
+    // Two hops, deliberately: building/verifying → generating is NOT a legal
+    // transition, so a repair has to route through "repairing" to get back to
+    // "generating". Collapsing these throws "illegal status transition".
     store.setStatus(nodeIdValue, attempt === 1 ? "generating" : "repairing");
     if (attempt > 1) store.setStatus(nodeIdValue, "generating");
     // Show the model what it actually built. Only worth doing on a repair,
@@ -492,7 +494,7 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
         })
         .catch(() => {});
     }
-    await backend.previewAdapter.hotSwap(store.doc, workspace, [nodeIdValue]);
+    await backend.previewAdapter?.hotSwap(store.doc, workspace, [nodeIdValue]);
     log(`ready (v${store.node(nodeIdValue).version}, attempt ${attempt})`);
     return;
   }

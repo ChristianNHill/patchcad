@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
+import { PlanForm } from "./PlanBar.js";
 import { useStudio } from "./store.js";
 
 /** The front door: an empty project shows nothing but the question that
  * matters — describe what you want to design, or bring geometry you already
  * have. All studio chrome stays hidden until there is a graph to show. */
 export function Welcome() {
-  const plan = useStudio((s) => s.plan);
   const planState = useStudio((s) => s.planState);
   const importCad = useStudio((s) => s.importCad);
   const projects = useStudio((s) => s.projects);
@@ -15,7 +15,6 @@ export function Welcome() {
   useEffect(() => {
     void loadProjects();
   }, [loadProjects]);
-  const [goal, setGoal] = useState("");
   const [importError, setImportError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -33,30 +32,16 @@ export function Welcome() {
         </span>
         <h1 className="welcome__ask">What do you want to design?</h1>
 
-        <form
+        <PlanForm
           className="welcome__form"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (goal.trim().length >= 4 && !busy) void plan(goal.trim(), "cad");
-          }}
-        >
-          <input
-            className="input welcome__input"
-            autoFocus
-            value={goal}
-            onChange={(e) => setGoal(e.target.value)}
-            placeholder="a wall mount for my headphones, printable in one piece…"
-            aria-label="what to design"
-          />
-          <button
-            type="submit"
-            className="btn btn--primary"
-            disabled={busy || goal.trim().length < 4}
-            data-state={planState.status === "planning" ? "loading" : undefined}
-          >
-            {planState.status === "planning" ? "planning…" : "design it"}
-          </button>
-        </form>
+          inputClassName="input welcome__input"
+          autoFocus
+          placeholder="a wall mount for my headphones, printable in one piece…"
+          ariaLabel="what to design"
+          label="design it"
+          busy={importing}
+          requireGoal
+        />
 
         <div className="welcome__or">or</div>
 

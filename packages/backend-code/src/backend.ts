@@ -24,7 +24,6 @@ import { VitePreviewAdapter, type VitePreviewOptions } from "./preview.js";
 const GeneratedArtifactSchema: z.ZodType<GeneratedArtifact> = z.object({
   code: z.string(),
   testCode: z.string().optional(),
-  notes: z.string().optional(),
 });
 
 const NODE_KINDS: NodeKindSpec[] = [
@@ -62,14 +61,12 @@ const NODE_KINDS: NodeKindSpec[] = [
 
 const GRAPH_LINTS: GraphLint[] = [
   {
-    id: "one-shell",
     run(graph) {
       const shells = Object.values(graph.nodes).filter((n) => n.kind === "shell");
       return shells.length === 1 ? [] : [`expected exactly 1 shell node, found ${shells.length}`];
     },
   },
   {
-    id: "acyclic",
     run(graph) {
       const problems: string[] = [];
       const visiting = new Set<string>();
@@ -97,7 +94,6 @@ const GRAPH_LINTS: GraphLint[] = [
     },
   },
   {
-    id: "requires-satisfied",
     run(graph) {
       const problems: string[] = [];
       for (const node of Object.values(graph.nodes)) {
@@ -112,7 +108,6 @@ const GRAPH_LINTS: GraphLint[] = [
     },
   },
   {
-    id: "payload-valid",
     run(graph) {
       const problems: string[] = [];
       for (const node of Object.values(graph.nodes)) {
@@ -150,7 +145,7 @@ function generatorSystem(): string {
     "- Style inline or via the style node's tokens if it is a neighbor.",
     "- TypeScript (.tsx). Self-contained: no TODOs, no placeholders.",
     "",
-    "Return JSON: { code, testCode?, notes? }. `code` is the full module source.",
+    "Return JSON: { code, testCode? }. `code` is the full module source.",
   ].join("\n");
 }
 
@@ -174,7 +169,6 @@ function contractBlock(ctx: GenerateCtx<CodeContractPayload>): string {
     // Hermetic generators cannot agree on anything the contracts do not
     // pin; this is the one channel that lets them.
     ctx.brief.design ? `# Shared design intent (every node follows this)\n${ctx.brief.design}` : "",
-    ctx.brief.constraints.length ? `Constraints:\n${ctx.brief.constraints.map((s) => `- ${s}`).join("\n")}` : "",
     "",
     ctx.upstream.length
       ? `# Upstream neighbors (import these)\n${ctx.upstream.map(describeNeighbor).join("\n")}`

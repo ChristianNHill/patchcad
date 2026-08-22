@@ -30,4 +30,4 @@ build-backend = "hatchling.build"
 packages = ["src/patchcad_kernel"]
 
 [dependency-groups]
-dev = ["httpx>=0.27"]
+dev = ["httpx>=0.27", "ruff>=0.6"]

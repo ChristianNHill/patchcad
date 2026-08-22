@@ -4,37 +4,65 @@ import { useStudio } from "./store.js";
 /** Prompt bar (header) + plan approval overlay. Planning is CAD-only in the
  * studio; the web-code backend still runs existing projects. */
 
-export function PlanBar() {
+/** The one plan form — the header bar and Welcome render it with their own
+ * classes and copy; the goal state, 4-char guard and cad-only plan call are
+ * shared. */
+export function PlanForm(p: {
+  className: string;
+  inputClassName: string;
+  placeholder: string;
+  ariaLabel: string;
+  label: string;
+  autoFocus?: boolean;
+  /** extra reason to be busy (welcome: an import is running) */
+  busy?: boolean;
+  /** welcome also disables the button until the goal is long enough */
+  requireGoal?: boolean;
+}) {
   const planState = useStudio((s) => s.planState);
   const plan = useStudio((s) => s.plan);
   const [goal, setGoal] = useState("");
 
-  const busy = planState.status === "planning";
+  const planning = planState.status === "planning";
+  const busy = planning || !!p.busy;
 
   return (
     <form
-      className="plan-form"
+      className={p.className}
       onSubmit={(e) => {
         e.preventDefault();
         if (goal.trim().length >= 4 && !busy) void plan(goal.trim(), "cad");
       }}
     >
       <input
-        className="input"
+        className={p.inputClassName}
+        autoFocus={p.autoFocus}
         value={goal}
         onChange={(e) => setGoal(e.target.value)}
-        placeholder="plan printed parts…"
-        aria-label="goal"
+        placeholder={p.placeholder}
+        aria-label={p.ariaLabel}
       />
       <button
         type="submit"
         className="btn btn--primary"
-        disabled={busy}
-        data-state={busy ? "loading" : undefined}
+        disabled={busy || (p.requireGoal === true && goal.trim().length < 4)}
+        data-state={planning ? "loading" : undefined}
       >
-        {busy ? "planning…" : "plan"}
+        {planning ? "planning…" : p.label}
       </button>
     </form>
+  );
+}
+
+export function PlanBar() {
+  return (
+    <PlanForm
+      className="plan-form"
+      inputClassName="input"
+      placeholder="plan printed parts…"
+      ariaLabel="goal"
+      label="plan"
+    />
   );
 }
 

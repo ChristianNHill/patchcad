@@ -227,14 +227,8 @@ export class ClaudeProvider implements LlmProvider {
       };
       // STREAMING IS NOT OPTIONAL HERE. The SDK refuses a non-streaming request
       // whose max_tokens could outrun the HTTP timeout, and the architect emits
-      // a whole graph — it asks for 32000 and got a hard error. Streaming also
-      // finally gives `onDelta` something to deliver: the field has been on
-      // LlmRequest since the beginning with no adapter behind it, which is why
-      // planning showed a dead spinner for the entire call.
+      // a whole graph — it asks for 32000 and got a hard error.
       const stream = this.client.messages.stream(params, { signal: req.signal });
-      if (req.onDelta) {
-        stream.on("text", (delta) => req.onDelta!(delta));
-      }
       const response = await stream.finalMessage();
       // Account BEFORE any throw: the API bills a refusal, and returning zero
       // for it puts spend in the ledger that nobody can see.
@@ -288,7 +282,7 @@ export class ClaudeProvider implements LlmProvider {
       );
     }
 
-    return { data: parsed.data, model, usage };
+    return { data: parsed.data, usage };
   }
 
   private tryParse<T>(

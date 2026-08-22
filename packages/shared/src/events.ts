@@ -20,13 +20,6 @@ export const EngineEvent = z.discriminatedUnion("type", [
     detail: CookFailure.optional(),
   }),
   z.object({
-    type: z.literal("node:delta"),
-    projectId: z.string(),
-    nodeId: z.string(),
-    /** Streaming text from the generator, for live display in the inspector. */
-    text: z.string(),
-  }),
-  z.object({
     type: z.literal("node:committed"),
     projectId: z.string(),
     nodeId: z.string(),

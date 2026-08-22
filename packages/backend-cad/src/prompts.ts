@@ -28,7 +28,12 @@ const CHEAT_SHEET = `build123d ALGEBRA MODE — the only API you may use (plus \
 RULES:
   - def build(p): ... return <shape>   (exactly this entrypoint; p.name reads a param)
   - millimeters everywhere; NO topological string selectors; NO other imports.
-  - loops/math are fine: for sx in (-1, 1): plate = plate - Pos(sx*dx, 0, 0) * Cylinder(r, t)`;
+  - loops/math are fine: for sx in (-1, 1): plate = plate - Pos(sx*dx, 0, 0) * Cylinder(r, t)
+  - CHAMFERS: use chamfer()/fillet() on the real edges. Do NOT fake one by
+    subtracting a rotated Box — Rot(45,0,0) * Box(w, leg*2, leg*2) spans
+    leg*1.414 in BOTH rotated axes, not leg, so a "small" lead-in sized against
+    a wall thickness cuts the entire wall away and the slot probe then reports
+    "the channel is open".`;
 
 /** Deterministic armor for weak-model code slop: markdown fences, modules
  * emitted as one line of literal \n escapes, and forgotten imports. */
@@ -49,7 +54,6 @@ export const CadArtifactSchema = z.object({
     .string()
     .describe("complete Python module: imports + def build(p)")
     .transform(normalizeCadCode),
-  notes: z.string().default(""),
 });
 
 function portLines(payload: CadContractPayload): string {

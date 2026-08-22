@@ -149,7 +149,6 @@ export class OpenAiCompatProvider implements LlmProvider {
     const outputTokens = usage?.completion_tokens ?? 0;
     return {
       data: parsed.data,
-      model,
       usage: {
         inputTokens,
         outputTokens,

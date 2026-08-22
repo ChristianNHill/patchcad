@@ -27,11 +27,35 @@ const g3 = (n: number, port: string) =>
     stage: "G3",
     report: `port "${port}" (BORE): expected Ø4.5, measured Ø6.00`,
   }));
+/** The over-cut variant: material missing where a wall should be. */
+const g3open = (n: number, port: string) =>
+  Array.from({ length: n }, () => ({
+    stage: "G3",
+    report: `port "${port}" (SLOT): no wall within 63.8mm at 0.6mm depth — the channel is open, not a 20.6mm gap`,
+  }));
 
 describe("CadBackend.classifyFailure", () => {
   it("defaults to a wider budget than the engine", () => {
     expect(new CadBackend().maxAttempts).toBe(5);
     expect(new CadBackend({ maxAttempts: 3 }).maxAttempts).toBe(3);
+  });
+
+  // A desk-edge cable clip burned all 5 rounds and $0.51 landing in
+  // error_contract, telling the user to re-plan a part that was perfectly
+  // buildable. The generator had faked a mouth chamfer with a Box rotated 45°,
+  // which spans leg*√2 per rotated axis and ate the whole 2.4mm jaw wall. Same
+  // port, every round, so the persistence rule blamed the architect.
+  it("does not blame the architect when a channel reads as over-cut", () => {
+    expect(classify(g3open(4, "desk_slot"), 5)).toBe("code-invalid");
+    expect(classify(g3open(5, "desk_slot"), 5)).toBe("code-invalid");
+  });
+
+  it("still blames the architect for a persistent dimension MISMATCH", () => {
+    expect(classify(g3(4, "desk_slot"), 5)).toBe("contract-infeasible");
+  });
+
+  it("an over-cut channel does not mask a real mismatch on the same port", () => {
+    expect(classify([...g3open(2, "seat"), ...g3(4, "seat")], 5)).toBe("contract-infeasible");
   });
 
   it("keeps the historical 2-of-3 behaviour at the old budget", () => {

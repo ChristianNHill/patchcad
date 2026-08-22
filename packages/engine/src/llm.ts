@@ -50,9 +50,8 @@ export interface LlmRequest<T> {
    * A provider that has no such control ignores this, like the rest of the
    * optional fields here.
    */
-  effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  effort?: "low" | "medium" | "high";
   signal?: AbortSignal;
-  onDelta?: (text: string) => void;
 }
 
 export interface LlmUsage {
@@ -64,25 +63,9 @@ export interface LlmUsage {
 export interface LlmResult<T> {
   data: T;
   usage: LlmUsage;
-  model: string;
 }
 
 export interface LlmProvider {
   id: string;
   complete<T>(req: LlmRequest<T>): Promise<LlmResult<T>>;
 }
-
-/** Role → model routing, config-overridable. */
-export interface ModelRouting {
-  architect: { provider: string; model: string };
-  generator: { provider: string; model: string };
-  repairEscalation: { provider: string; model: string };
-  classifier: { provider: string; model: string };
-}
-
-export const DEFAULT_ROUTING: ModelRouting = {
-  architect: { provider: "claude", model: "claude-opus-5" },
-  generator: { provider: "claude", model: "claude-sonnet-5" },
-  repairEscalation: { provider: "claude", model: "claude-opus-5" },
-  classifier: { provider: "claude", model: "claude-haiku-4-5" },
-};

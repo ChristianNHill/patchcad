@@ -15,6 +15,7 @@
  *  as a pen cup holder with hexagonal cutouts. A case that tolerates a skipped
  *  port is measuring nothing, so this defaults to on.
  */
+import { parseArgs } from "node:util";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -108,12 +109,20 @@ type Measured = {
   volume_mm3?: number;
 };
 
-const args = process.argv.slice(2);
-const flag = (name: string) => args.includes(`--${name}`);
-const opt = (name: string) => {
-  const i = args.indexOf(`--${name}`);
-  return i >= 0 ? args[i + 1] : undefined;
-};
+// parseArgs also rejects a typo'd flag, where the hand-rolled version read it
+// as unset and ran the wrong thing silently.
+const { values: argv } = parseArgs({
+  options: {
+    "self-test": { type: "boolean" },
+    "score-projects": { type: "boolean" },
+    "dry-run": { type: "boolean" },
+    case: { type: "string" },
+    "max-usd": { type: "string" },
+    repeat: { type: "string" },
+  },
+});
+const flag = (name: "self-test" | "score-projects" | "dry-run") => argv[name] === true;
+const opt = (name: "case" | "max-usd" | "repeat") => argv[name] as string | undefined;
 
 /** A failed expectation, phrased so the line alone says what went wrong. */
 type Miss = string;
@@ -814,7 +823,7 @@ async function main() {
         `plan ${(r.planMs / 1000).toFixed(1)}s cook ${(r.cookMs / 1000).toFixed(1)}s`,
     );
     for (const m of r.misses) console.log(`    MISS: ${m}`);
-    for (const [i, round] of (r.architect.lintProblems.length ? [r.architect.lintProblems] : []).entries())
+    for (const round of r.architect.lintProblems.length ? [r.architect.lintProblems] : [])
       console.log(`    lint-repair: ${round.map((m) => m.slice(0, 90)).join(" | ").slice(0, 240)}`);
     for (const n of r.perNode) {
       if (!n.status.startsWith("error") && n.status === "ready") continue;

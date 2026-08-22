@@ -10,5 +10,4 @@ export * from "./renegotiate.js";
 export * from "./library.js";
 export * from "./exemplars.js";
 export * from "./similarity.js";
-export * from "./critic.js";
 export * from "./inspect.js";

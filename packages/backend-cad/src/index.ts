@@ -97,7 +97,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { KernelClient, type ExportResult, type KernelResult } from "./kernel.js";
 import { generatePrompt, repairPrompt } from "./prompts.js";
-import { FASTENING_HARDWARE, REGISTRY_HARDWARE, resolveDeterministic, METRIC} from "./registry.js";
+import { FASTENING_HARDWARE, REGISTRY_HARDWARE, resolveDeterministic } from "./registry.js";
 import { solveAssembly, type AssemblyMate, type AssemblyNode } from "./assembly.js";
 import { resolveDim, resolvePose } from "./bindings.js";
 import {
@@ -117,7 +117,6 @@ import {
  * Fasteners are exempt (registry geometry, no probed ports by convention).
  */
 export const cadPortConsistencyLint = {
-  id: "cad-port-consistency",
   run(graph: GraphDoc): string[] {
     const problems: string[] = [];
     const payloadNames = new Map<string, Set<string>>();
@@ -185,7 +184,6 @@ const FASTENED_PORT_TYPES = new Set(["CLEARANCE_HOLE", "SCREW_SEAT", "SCREW_BOSS
  * wired to nothing is exactly as decorative as a floating screw.
  */
 export const cadFastenerJustifiedLint = {
-  id: "cad-fastener-justified",
   run(graph: GraphDoc): string[] {
     const problems: string[] = [];
     const holePorts = (id: string) =>
@@ -249,7 +247,6 @@ const overlaps = (a: Aabb, b: Aabb, slack: number) =>
   [0, 1, 2].every((i) => a.min[i]! - slack <= b.max[i]! && b.min[i]! - slack <= a.max[i]!);
 
 export const cadEnvelopeCoherentLint = {
-  id: "cad-envelope-coherent",
   run(graph: GraphDoc): string[] {
     const problems: string[] = [];
     for (const n of Object.values(graph.nodes)) {
@@ -338,7 +335,6 @@ export const OUTER_DIAMETER_KEYS = ["outer_diameter", "outerDiameter", "od", "bo
 const CHANNEL_WIDTH_KEYS = ["width", "slotWidth", "slot_width", "grooveWidth", "groove_width", "channelWidth"];
 
 export const cadFlatFaceSizeLint = {
-  id: "cad-port-params",
   run(graph: GraphDoc): string[] {
     const problems: string[] = [];
     for (const n of Object.values(graph.nodes)) {
@@ -477,7 +473,6 @@ const PROBED_PORT_TYPES = new Set([
  *  positions whichever end is not yet placed.
  */
 export const cadMateConnectivityLint = {
-  id: "cad-mate-connectivity",
   run(graph: GraphDoc): string[] {
     const ids = Object.keys(graph.nodes);
     if (ids.length <= 1) return [];
@@ -504,7 +499,6 @@ export const cadMateConnectivityLint = {
 };
 
 export const cadHardwareSeatLint = {
-  id: "cad-hardware-seat",
   run(graph: GraphDoc): string[] {
     const problems: string[] = [];
     for (const n of Object.values(graph.nodes)) {
@@ -561,7 +555,6 @@ export const cadHardwareSeatLint = {
 };
 
 export const cadFaceHoleConflictLint = {
-  id: "cad-face-hole-conflict",
   run(graph: GraphDoc): string[] {
     const problems: string[] = [];
     const HOLE_LIKE = new Set(["CLEARANCE_HOLE", "BORE", "SCREW_SEAT"]);
@@ -692,7 +685,6 @@ export const cadFaceHoleConflictLint = {
 };
 
 export const cadProbedPortsLint = {
-  id: "cad-probed-ports",
   run(graph: GraphDoc): string[] {
     const problems: string[] = [];
     const verified = [...PROBED_PORT_TYPES].join(", ");
@@ -974,14 +966,6 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     ].join("\n"),
   };
 
-  previewAdapter = {
-    // The three.js viewport lands in CAD-M3; cooks work headless meanwhile.
-    start: async (_g: GraphDoc, _w: Workspace) => ({ url: "" }),
-    hotSwap: async (_g: GraphDoc, _w: Workspace, _n: string[]) => {},
-    pushParams: async (_n: string, _p: Record<string, ParamValue>) => {},
-    stop: async () => {},
-  };
-
   deterministicArtifact(node: NodeRecord): { code: string } | null {
     const code = resolveDeterministic(node);
     return code ? { code } : null;
@@ -1008,20 +992,6 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     };
   }
 
-  /** Every cooked part, placed by the assembly solver, in one image. */
-  async renderAssembly(graph: GraphDoc, ws: Workspace): Promise<LlmImage | null> {
-    const { world } = this.solveScene(graph);
-    const parts = Object.values(graph.nodes)
-      .filter((n) => n.artifact?.code && world[n.id])
-      .map((n) => ({ code: n.artifact!.code, params: mergedParams(n), matrix: world[n.id]! }));
-    if (parts.length < 2) return null; // one part is not an assembly
-
-    const result = await this.kernel.renderAssembly(parts, { importDir: this.importDir(ws) });
-    if (!result.ok || !result.sheet) return null;
-    const res = await fetch(`${this.kernel.baseUrl}${result.sheet}`);
-    if (!res.ok) return null;
-    return { mediaType: "image/png", dataB64: Buffer.from(await res.arrayBuffer()).toString("base64") };
-  }
 
   /**
    * Write geometry to a file the user can open.
@@ -1108,7 +1078,17 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     // the declared pose/dims, not the code (design doc heuristic). Judged on
     // the worst single port, not on every G3 failure agreeing: over more
     // rounds one unrelated port miss would otherwise clear the real culprit.
-    const g3 = evidence.failures.filter((f) => f.stage === "G3");
+    // ...EXCEPT the "channel is open" variant. That message means material
+    // which should be there was cut away, and the usual cause is a local
+    // modelling defect near the mouth (an over-sized lead-in chamfer: a Box
+    // rotated 45° spans leg*√2 in each rotated axis, so a "small" flare eats
+    // the whole wall). The contract is buildable; escalating it ends the very
+    // repair loop that would have fixed it and asks the user to re-plan a part
+    // that was never impossible. A dimension MISMATCH still escalates — that
+    // one really can be a contract no geometry satisfies.
+    const g3 = evidence.failures.filter(
+      (f) => f.stage === "G3" && !/the channel is open/.test(f.report),
+    );
     if (g3.length >= persistent) {
       const counts = new Map<string, number>();
       for (const f of g3) {
@@ -1142,18 +1122,7 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       return { id: n.id, ports };
     });
     const mates: AssemblyMate[] = graph.edges.map((e) => {
-      const consumer = graph.nodes[e.to];
-      const dof = (name: string) => {
-        const v = consumer?.params[`mate.${e.toPort}.${name}`];
-        return typeof v === "number" ? v : 0;
-      };
-      return {
-        fromNode: e.from,
-        fromPort: e.fromPort,
-        toNode: e.to,
-        toPort: e.toPort,
-        dofs: { clock: dof("clock"), offset: dof("offset"), u: dof("u"), v: dof("v") },
-      };
+      return { fromNode: e.from, fromPort: e.fromPort, toNode: e.to, toPort: e.toPort };
     });
     const { world, problems } = solveAssembly(nodes, mates, graph.assembly.entryNodeId);
     const scene = {

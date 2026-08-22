@@ -5,7 +5,6 @@ import {
   GraphDoc,
   ParamDeclNoUi,
   PortDecl,
-  type ChatMessage,
 } from "@patchcad/shared";
 import type { DomainBackend } from "./backend.js";
 import type { LlmProvider, LlmUsage } from "./llm.js";
@@ -292,7 +291,7 @@ export function normalizeArchitectOutput(
     for (const n of nodes) {
       if (n.kind === "shell" && n !== entryNode) n.kind = "component";
     }
-    if (entryNode && nodes.some(() => true)) entryNode.kind = "shell";
+    if (entryNode) entryNode.kind = "shell";
   }
 
   // Edges are authoritative: a `requires` port nothing wires into can never
@@ -388,7 +387,7 @@ export function architectOutputToGraph(
     schemaVersion: 1,
     id: projectIdValue,
     backend: backendId,
-    brief: { goal, constraints: [], clarifications: [], design: out.design ?? "" },
+    brief: { goal, design: out.design ?? "" },
     nodes,
     edges,
     assembly: { entryNodeId: out.entryNodeId },
@@ -416,9 +415,6 @@ export async function planGraph(opts: {
   backend: DomainBackend<unknown>;
   projectId: string;
   goal: string;
-  clarifications?: ChatMessage[];
-  /** Lint-repair round-trips (default 3 — weaker local models need the extra rounds). */
-  maxRepairs?: number;
   signal?: AbortSignal;
 }): Promise<PlanResult> {
   const kinds = opts.backend.planning.nodeKinds.map((k) => k.kind);
@@ -475,7 +471,8 @@ ${payloadDoc}`;
   };
 
   let problems = lint(out);
-  const maxRepairs = opts.maxRepairs ?? 3;
+  // 3 rounds: weaker local models need more than one shot at the lints.
+  const maxRepairs = 3;
   for (let round = 1; problems.length > 0 && round <= maxRepairs; round++) {
     repaired = true;
     lintRounds.push([...problems]);

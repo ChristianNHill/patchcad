@@ -74,7 +74,6 @@ const mockBackend: DomainBackend<unknown> = {
   previewAdapter: {
     start: async () => ({ url: "" }),
     hotSwap: async () => {},
-    pushParams: async () => {},
     stop: async () => {},
   },
   globalCheck: async () => ({ ok: true, problems: [] }),

@@ -13,7 +13,6 @@ import {
   computeDirtySet,
   contractHash,
   cookNodes,
-  critiqueAssembly,
   GraphStore,
   cookOne,
   diffContract,
@@ -191,7 +190,7 @@ async function main() {
     const backend = backends[project.store.doc.backend] ?? codeBackend;
     const workspace: Workspace = { root: path.join(dir, ".preview") };
     await backend.assemble(project.store.doc, workspace);
-    const { url } = await backend.previewAdapter.start(project.store.doc, workspace);
+    const { url } = (await backend.previewAdapter?.start(project.store.doc, workspace)) ?? { url: "" };
 
     const watcher = chokidar.watch(path.join(dir, "nodes"), { ignoreInitial: true });
     // Disk-edit hot-swap is a web-code affordance (Vite modules); CAD edits
@@ -249,7 +248,7 @@ async function main() {
     const backend = codeBackend;
     const workspace: Workspace = { root: path.join(os.tmpdir(), "patchcad-untitled-preview") };
     await backend.assemble(graph, workspace);
-    await backend.previewAdapter.start(graph, workspace);
+    await backend.previewAdapter?.start(graph, workspace);
     const watcher = chokidar.watch([], { ignoreInitial: true });
     bus.emit({ type: "graph:replaced", projectId: graph.id, graph });
     bus.emit({ type: "undo:stack", projectId: graph.id, depth: 0, label: "" });
@@ -291,8 +290,8 @@ async function main() {
   /** Web-code exposes a live Vite URL; CAD projects render in the studio's
    * viewport pane instead (no iframe). */
   function previewUrl(): string {
-    const adapter = active.backend.previewAdapter as { url?: () => string };
-    return adapter.url?.() ?? "";
+    const adapter = active.backend.previewAdapter as { url?: () => string } | undefined;
+    return adapter?.url?.() ?? "";
   }
 
   async function runGlobalCheck() {
@@ -436,29 +435,6 @@ async function main() {
       return reply.code(422).send({ error: result.error ?? "render failed", stage: result.stage });
     }
     return { url: `${cad.kernel.baseUrl}${result.sheet}`, ...result.render };
-  });
-
-  /**
-   * Look at the whole thing, once. Advisory by design: a model reading a
-   * picture is not an oracle, and gating a cook on one would let a confident
-   * hallucination block a correct assembly. Findings name a node and a fix so
-   * they become a contract edit or a reprompt — never a hand edit.
-   */
-  app.post("/api/project/critique", async (_req, reply) => {
-    if (active.backend.id !== "cad") return reply.code(409).send({ error: "active project is not a CAD graph" });
-    if (!resolved) return reply.code(503).send({ error: NO_PROVIDER_HELP });
-    const cad = active.backend as CadBackend;
-    const image = await cad.renderAssembly(active.store.doc, active.workspace);
-    if (!image) {
-      return reply.code(409).send({ error: "nothing to look at yet — needs at least two cooked parts" });
-    }
-    try {
-      const critique = await critiqueAssembly({ provider: resolved.provider, graph: active.store.doc, image });
-      console.log(`[patchcad] critique: ${critique.problems.length} problem(s) — ${critique.summary}`);
-      return critique;
-    } catch (err) {
-      return reply.code(502).send({ error: (err as Error).message });
-    }
   });
 
   /**

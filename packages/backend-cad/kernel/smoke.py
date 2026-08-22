@@ -43,17 +43,20 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 
 def structural() -> None:
-    """check_module.py runs here so it runs at all. Committed but uncalled, it
-    only ever ran when someone remembered, which is the failure mode it exists
-    to replace. It needs no kernel, so it goes first and costs milliseconds."""
+    """Ruff runs here so it runs at all. F811 is a name bound twice in one scope
+    (a duplicate def silently shadows the copy the fix went into) and F821 is a
+    name used but never bound (the signature of a deletion that took a
+    neighbour with it) — the two defects a hand-rolled AST walker used to check.
+    It is a pinned dev dependency, so this needs no network and no kernel: it
+    goes first and costs milliseconds."""
     print("module structure")
-    proc = subprocess.run([sys.executable, "check_module.py"],
+    proc = subprocess.run(["uv", "run", "ruff", "check", "--select", "F811,F821", "src/"],
                           cwd=pathlib.Path(__file__).parent,
                           capture_output=True, text=True)
     ok = proc.returncode == 0
-    # stdout is EMPTY exactly when check_module cannot start (SyntaxError,
-    # import error, bad interpreter): the traceback goes to stderr. Indexing
-    # [-1] blind crashed the guard-for-the-guard with a trace naming this file.
+    # stdout is EMPTY exactly when ruff cannot run at all (not installed, bad
+    # rule code, unreadable tree): that goes to stderr. Indexing [-1] blind
+    # crashed the guard-for-the-guard with a trace naming this file.
     # `or ["no output"]` would be unreachable: [""] is truthy, so the middle arm
     # always yields one element. The default belongs inside it.
     detail = (proc.stdout.strip().splitlines()
@@ -632,7 +635,7 @@ def build(p):
               r.status_code == 200 and abs((m.get("measured_depth") or 0) - 0.8) < 0.05,
               str(m) if r.status_code == 200 else r.json().get("error", ""))
 
-    # _march_depth follows the axis to the DEEPEST floor in a coaxial stack, so a
+    # The depth march follows the axis to the DEEPEST floor in a coaxial stack, so a
     # counterbore over a pilot measures the pilot. Reported, never enforced: a
     # counterbore's own floor is an annulus and never lies on the axis, so
     # comparing a declared depth against this would be unsatisfiable.

@@ -8,7 +8,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -34,7 +33,6 @@ POOL_SIZE = int(os.environ.get("PATCHCAD_KERNEL_WORKERS") or _default_pool_size(
 CACHE_ROOT = Path(os.environ.get("PATCHCAD_KERNEL_CACHE", str(Path.home() / ".patchcad" / "kernel-cache")))
 
 pool = None  # set at startup; parent process stays OCP-free
-executor = ThreadPoolExecutor(max_workers=POOL_SIZE)
 
 
 # The cache is keyed on the JOB, but a cached entry is really a claim about what
@@ -132,7 +130,6 @@ class ImportBody(BaseModel):
     filename: str
     data_b64: str
     pieces: int = 1
-    join_holes: bool = False  # legacy alias for joints="holes"
     joints: str = "none"  # none | holes | pegs
     thread: str = "M4"
 
@@ -362,14 +359,13 @@ async def import_file(body: ImportBody):
     """Segment an uploaded STL/3MF/STEP into pieces + interface contracts.
     Runs in a worker (same isolation as node code); pieces land content-
     addressed like any other artifact."""
-    digest = job_hash("import", body.filename, body.data_b64[:64], len(body.data_b64), body.pieces, body.join_holes, body.joints, body.thread)
+    digest = job_hash("import", body.filename, body.data_b64[:64], len(body.data_b64), body.pieces, body.joints, body.thread)
     out_dir = CACHE_ROOT / f"import-{digest}"
     job = {
         "import_job": {
             "filename": body.filename,
             "data_b64": body.data_b64,
             "pieces": body.pieces,
-            "join_holes": body.join_holes,
             "joints": body.joints,
             "thread": body.thread,
         },

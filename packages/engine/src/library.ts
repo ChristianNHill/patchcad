@@ -50,5 +50,5 @@ export interface NodeLibrary {
    * nodes — is the engine's job, so the hermeticity filter lives in one
    * testable place instead of in every NodeLibrary implementation.
    */
-  list?(backendId: string, opts?: { kind?: string; limit?: number }): Promise<LibraryListing[]>;
+  list?(backendId: string, opts?: { kind?: string }): Promise<LibraryListing[]>;
 }

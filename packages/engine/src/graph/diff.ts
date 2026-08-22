@@ -10,9 +10,8 @@ import { hashValue } from "@patchcad/shared";
  */
 
 export interface ContractDiff {
-  changed: boolean;
   /** Any change at all that alters the contract hash. */
-  valueChanged: boolean;
+  changed: boolean;
   /** Interface shape moved: dirty propagation required. */
   shapeChanged: boolean;
   /** provides-port keys whose shape changed (added/removed/retyped). */
@@ -77,7 +76,7 @@ export function diffContract(before: Contract, after: Contract): ContractDiff {
     }
   }
 
-  return { changed: valueChanged, valueChanged, shapeChanged, shapeChangedProvides, notes };
+  return { changed: valueChanged, shapeChanged, shapeChangedProvides, notes };
 }
 
 /**

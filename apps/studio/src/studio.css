@@ -720,14 +720,6 @@ body {
 }
 .cad-viewport__problem { color: var(--color-warn); }
 
-.domain-toggle {
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  flex: none;
-}
-
 /* ---------- welcome (first-run) ---------- */
 
 .welcome {
@@ -754,11 +746,6 @@ body {
 }
 .welcome__form { display: flex; gap: var(--space-xs); width: 100%; }
 .welcome__input { flex: 1; font-size: var(--text-md); padding: var(--space-sm) var(--space-md); }
-.welcome__domains { display: flex; gap: var(--space-xs); }
-.welcome__domain--on {
-  border-color: var(--color-accent);
-  color: var(--color-accent);
-}
 .welcome__or { color: var(--color-muted); font-family: var(--font-mono); font-size: var(--text-2xs); text-transform: uppercase; letter-spacing: 0.12em; }
 .welcome__import { font-size: var(--text-sm); }
 .welcome__recent {

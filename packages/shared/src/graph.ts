@@ -244,8 +244,6 @@ export const GraphDoc = z.object({
   backend: z.string(),
   brief: z.object({
     goal: z.string(),
-    constraints: z.array(z.string()).default([]),
-    clarifications: z.array(ChatMessage).default([]),
     /** Non-structural intent every generator sees: proportion, edge treatment,
      *  how the thing should read. Hermeticity gives parts no way to agree on
      *  anything the contract does not pin, so without this each one invents its

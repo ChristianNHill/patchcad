@@ -1,5 +1,4 @@
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { GraphDoc } from "@patchcad/shared";

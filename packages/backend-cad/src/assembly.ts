@@ -67,28 +67,9 @@ export function poseToMat(pose: Pose): Mat4 {
 /** π about local X: z → -z, y → -y — mating frames face each other. */
 const FLIP_X: Mat4 = [1, 0, 0, 0, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1];
 
-export interface MateDofs {
-  /** rotation about A's port z-axis, radians */
-  clock?: number;
-  /** separation along A's port +z (out of A's material), mm — gasket thickness etc. */
-  offset?: number;
-  /** slide in A's port plane (its x / y axes), mm */
-  u?: number;
-  v?: number;
-}
-
-/** All DOFs are expressed in A's port frame (applied before the flip), so
- * their signs read naturally off the provider's declared pose. */
-export function mateTransform(portA: Pose, portB: Pose, dofs: MateDofs = {}): Mat4 {
-  const { clock = 0, offset = 0, u = 0, v = 0 } = dofs;
-  const c = Math.cos(clock);
-  const s = Math.sin(clock);
-  const rz: Mat4 = [c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-  const slide: Mat4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, u, v, offset, 1];
-  let m = mul(poseToMat(portA), slide);
-  m = mul(m, rz);
-  m = mul(m, FLIP_X);
-  return mul(m, invertRigid(poseToMat(portB)));
+/** Face two ports at each other: A's frame, flipped, times B's inverse. */
+export function mateTransform(portA: Pose, portB: Pose): Mat4 {
+  return mul(mul(poseToMat(portA), FLIP_X), invertRigid(poseToMat(portB)));
 }
 
 export interface AssemblyNode {
@@ -101,7 +82,6 @@ export interface AssemblyMate {
   fromPort: string;
   toNode: string;
   toPort: string;
-  dofs?: MateDofs;
 }
 
 /** How far two mates may disagree about where a part goes before it is a
@@ -153,10 +133,9 @@ export function solveAssembly(
         problems.push(`mate ${placedId}.${placedPortKey} → ${placingId}.${placingPortKey}: missing port`);
         continue;
       }
-      const rel = isForward
-        ? mateTransform(portA, portB, mate.dofs)
-        : mateTransform(portA, portB, mate.dofs); // symmetric: A is always the already-placed side
-      world[placingId] = mul(world[placedId]!, rel);
+      // Symmetric: A is always the already-placed side, so direction does not
+      // change the transform.
+      world[placingId] = mul(world[placedId]!, mateTransform(portA, portB));
       queue.push(placingId);
     }
   }
@@ -175,7 +154,7 @@ export function solveAssembly(
     const portA = a.ports[mate.fromPort];
     const portB = b.ports[mate.toPort];
     if (!portA || !portB) continue;
-    const expected = mul(world[mate.fromNode]!, mateTransform(portA, portB, mate.dofs));
+    const expected = mul(world[mate.fromNode]!, mateTransform(portA, portB));
     const actual = world[mate.toNode]!;
     // Positional disagreement only: it is the number a user can act on, and a
     // pure rotation mismatch still moves the mated features apart.

@@ -23,7 +23,7 @@ from typing import Any
 from .gates import GateError
 from .render import _mesh_arrays, combine, transform
 
-MESH_FORMATS = {"stl", "3mf", "obj", "ply"}
+MESH_FORMATS = {"stl", "3mf", "obj"}
 BREP_FORMATS = {"step"}
 SUPPORTED = MESH_FORMATS | BREP_FORMATS
 

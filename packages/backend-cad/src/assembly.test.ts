@@ -22,26 +22,6 @@ describe("mateTransform", () => {
     expect(closeTo(apply(t, [0, 0, 4]), [0, 0, 1.5])).toBe(true);
   });
 
-  it("offset separates along the mate axis", () => {
-    const t = mateTransform(topFace(0), topFace(0), { offset: 2 });
-    expect(closeTo(apply(t, [0, 0, 0]), [0, 0, 2])).toBe(true);
-  });
-
-  it("clock spins about the mate axis", () => {
-    const t = mateTransform(topFace(0), topFace(0), { clock: Math.PI / 2 });
-    const p = apply(t, [5, 0, 0]); // point along B's local +x
-    expect(Math.abs(p[2])).toBeLessThan(1e-9);
-    expect(Math.hypot(p[0], p[1])).toBeCloseTo(5, 9);
-    expect(Math.abs(p[0])).toBeLessThan(1e-9); // rotated onto ±y
-  });
-
-  it("u/v slide in the mate plane", () => {
-    const t = mateTransform(topFace(0), topFace(0), { u: 3, v: -4 });
-    const p = apply(t, [0, 0, 0]);
-    expect(Math.hypot(p[0], p[1])).toBeCloseTo(5, 9);
-    expect(Math.abs(p[2])).toBeLessThan(1e-9);
-  });
-
   it("invertRigid: M · M⁻¹ = I for a ROTATED pose (the identity-rotation trap)", () => {
     const pose: Pose = { origin: [3, -2, 7], zAxis: [0, 1, 0], xAxis: [0, 0, 1] };
     const m = poseToMat(pose);

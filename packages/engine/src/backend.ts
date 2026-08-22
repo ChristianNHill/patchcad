@@ -94,7 +94,6 @@ export interface PromptSpec {
 export interface GeneratedArtifact {
   code: string;
   testCode?: string;
-  notes?: string;
 }
 
 export interface ExecuteResult {
@@ -127,8 +126,6 @@ export interface PreviewAdapter {
   start(graph: GraphDoc, ws: Workspace): Promise<{ url: string }>;
   /** One node's artifact changed — swap just that module. */
   hotSwap(graph: GraphDoc, ws: Workspace, nodeIds: string[]): Promise<void>;
-  /** T0: push new param values without any rebuild. */
-  pushParams(nodeId: string, params: Record<string, ParamValue>): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -139,10 +136,7 @@ export interface NodeKindSpec {
   guidance: string;
 }
 
-export interface GraphLint {
-  id: string;
-  run(graph: GraphDoc): string[];
-}
+export type GraphLint = { run(graph: GraphDoc): string[] };
 
 export type FailureClass = "code-invalid" | "contract-infeasible" | "unknown";
 
@@ -176,7 +170,7 @@ export interface DomainBackend<P = unknown> {
    *  precisely so it stops depending on which adapter happens to serve it,
    *  which is the failure this comment describes. */
   generation?: {
-    effort?: "low" | "medium" | "high" | "xhigh" | "max";
+    effort?: "low" | "medium" | "high";
     maxTokens?: number;
   };
 
@@ -236,7 +230,7 @@ export interface DomainBackend<P = unknown> {
   /** Materialize the whole graph into the workspace (glue, stubs, configs). */
   assemble(graph: GraphDoc, ws: Workspace): Promise<void>;
 
-  previewAdapter: PreviewAdapter;
+  previewAdapter?: PreviewAdapter;
 
   /** Whole-graph invariants; dirty whenever any node is dirty. */
   globalCheck(graph: GraphDoc, ws: Workspace): Promise<CheckResult>;
