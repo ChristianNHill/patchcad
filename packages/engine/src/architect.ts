@@ -364,6 +364,13 @@ export interface PlanResult {
   rationale: string;
   usage: LlmUsage;
   repaired: boolean;
+  /** What each lint-repair round was fixing: the problems the previous emission
+   *  failed on, verbatim. An audit found the architect paying a repair round on
+   *  14 of 15 plans and NOTHING recorded which lint it kept tripping — the
+   *  `repaired` boolean was the entire observability. The offender turned out
+   *  to be one rule (face/hole conflict) missing from the guidance, findable in
+   *  one probe once this existed and invisible for a week while it did not. */
+  lintRounds: string[][];
 }
 
 export async function planGraph(opts: {
@@ -398,6 +405,7 @@ export async function planGraph(opts: {
   const usage: LlmUsage = { ...first.usage };
   let out = normalizeArchitectOutput(first.data, { enforceShell });
   let repaired = false;
+  const lintRounds: string[][] = [];
 
   const lint = (o: ArchitectOutput): string[] => {
     const problems = genericLints(o);
@@ -412,6 +420,7 @@ export async function planGraph(opts: {
   const maxRepairs = opts.maxRepairs ?? 3;
   for (let round = 1; problems.length > 0 && round <= maxRepairs; round++) {
     repaired = true;
+    lintRounds.push([...problems]);
     const repair = await opts.provider.complete({
       role: "architect",
       label: `architect-repair-${round}:${opts.projectId}`,
@@ -452,5 +461,6 @@ export async function planGraph(opts: {
     rationale: out.rationale,
     usage,
     repaired,
+    lintRounds,
   };
 }

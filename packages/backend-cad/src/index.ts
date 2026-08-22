@@ -869,6 +869,21 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       "a screw into a SCREW_BOSS needs neither.",
       "",
       "",
+      // THE RULE THE ARCHITECT TRIPPED ON 14 OF 15 PLANS. It lived only in the
+      // lint, so every first emission declared a face and a hole on one axis —
+      // the natural reading of 'a plate with a hole in the middle' — and paid a
+      // whole-graph repair round (~$0.07, 15-30s) to learn a rule one sentence
+      // states. Confirmed live: cad-face-hole-conflict fired on the simplest
+      // prompt in the ladder, every time.
+      "A FLAT_FACE may not share its origin with a hole port, and a",
+      "CLEARANCE_HOLE may not be coaxial with a FLAT_FACE at any distance: a",
+      "clearance hole passes through, so it pierces every face on its axis at",
+      "the exact point the face probe samples. Offset the face from the hole",
+      "axis (a face beside a hole is an ordinary plate), shrink it clear, or use",
+      "an annular face (params.ring_diameter) whose probe never samples its",
+      "centre. A BORE or SCREW_SEAT stops, so it only conflicts at a shared",
+      "origin.",
+      "",
       // Rendered from grounding.ts, so the numbers the architect reads are the
       // same objects the lints check. The pose sign is in here because guessing
       // it cost two unrecoverable fastener failures.

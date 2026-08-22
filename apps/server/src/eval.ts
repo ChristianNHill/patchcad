@@ -668,7 +668,14 @@ async function runCase(c: EvalCase) {
     deterministic: nodes.length - modelNodes.length,
     firstTry: firstTry.length, dead: dead.length,
     calls, inTok, outTok, usd,
-    architect: { usd: arch.usd, inTok: arch.inputTokens, outTok: arch.outputTokens, repaired: plan.repaired },
+    architect: {
+      usd: arch.usd, inTok: arch.inputTokens, outTok: arch.outputTokens, repaired: plan.repaired,
+      // The audit's observability fix: WHICH lint each repair round was for,
+      // not just that one happened. The repaired boolean hid a single missing
+      // guidance rule behind 14 identical-looking repair rounds.
+      lintRounds: plan.lintRounds.map((round) => round.map((m) => m.split(":")[0] ?? m)),
+      lintProblems: plan.lintRounds.flat(),
+    },
     globalProblems: global,
     planMs, cookMs, probes: probes.length,
     skipped: probes.filter((p) => p.skipped).length,
@@ -807,6 +814,8 @@ async function main() {
         `plan ${(r.planMs / 1000).toFixed(1)}s cook ${(r.cookMs / 1000).toFixed(1)}s`,
     );
     for (const m of r.misses) console.log(`    MISS: ${m}`);
+    for (const [i, round] of (r.architect.lintProblems.length ? [r.architect.lintProblems] : []).entries())
+      console.log(`    lint-repair: ${round.map((m) => m.slice(0, 90)).join(" | ").slice(0, 240)}`);
     for (const n of r.perNode) {
       if (!n.status.startsWith("error") && n.status === "ready") continue;
       const d = n.detail as { stage?: string; message?: string; attribution?: string } | null;
