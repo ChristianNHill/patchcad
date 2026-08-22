@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { planGraph } from "./architect.js";
+import { makeArchitectSchema, makeArchitectWireSchema, planGraph } from "./architect.js";
 import type { DomainBackend, LlmProvider } from "./index.js";
 
 /** PlanResult.repaired was the entire observability of the repair loop, and it
@@ -68,5 +68,52 @@ describe("the repair loop records what each round was for", () => {
     const res = await planGraph({ provider, backend, projectId: "t", goal: "g" });
     expect(res.repaired).toBe(false);
     expect(res.lintRounds).toEqual([]);
+  });
+});
+
+/** The CAD payload subtree alone makes the structured-outputs grammar "too
+ *  large" (measured live: the full schema is rejected on every call, and
+ *  stubbing payload to a string compiles at 3569 bytes). So the wire schema
+ *  types payload as a JSON string and the validation schema parses it back. */
+describe("the wire/validation schema split", () => {
+  const payload = z.object({ units: z.string(), depth: z.number() });
+  const schema = makeArchitectSchema(payload, ["part"]);
+
+  const emission = (payloadValue: unknown) => ({
+    rationale: "r", design: "",
+    nodes: [{ id: "test-plate", kind: "part", title: "t", spec: "s",
+              contract: { name: "n", summary: "s", params: [], provides: [], requires: [],
+                          payload: payloadValue },
+              dependsOn: [] }],
+    edges: [], entryNodeId: "test-plate",
+  });
+
+  it("accepts the payload as its real object", () => {
+    const out = schema.safeParse(emission({ units: "mm", depth: 4 }));
+    expect(out.success).toBe(true);
+  });
+
+  it("accepts the payload as a JSON string, and parses it back to the object", () => {
+    const out = schema.safeParse(emission(JSON.stringify({ units: "mm", depth: 4 })));
+    expect(out.success).toBe(true);
+    if (out.success) {
+      expect(out.data.nodes[0]!.contract.payload).toEqual({ units: "mm", depth: 4 });
+    }
+  });
+
+  it("rejects a string payload that decodes to the WRONG shape, with the real error", () => {
+    const out = schema.safeParse(emission(JSON.stringify({ units: "mm" })));
+    expect(out.success).toBe(false);
+  });
+
+  it("rejects an unparseable string with a payload error, not a crash", () => {
+    const out = schema.safeParse(emission("not json {"));
+    expect(out.success).toBe(false);
+  });
+
+  it("the wire schema demands a STRING payload", () => {
+    const wire = makeArchitectWireSchema(["part"]);
+    expect(wire.safeParse(emission(JSON.stringify({ units: "mm", depth: 4 }))).success).toBe(true);
+    expect(wire.safeParse(emission({ units: "mm", depth: 4 })).success).toBe(false);
   });
 });

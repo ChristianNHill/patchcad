@@ -31,7 +31,7 @@ const DEFAULT_MODELS: Record<LlmRole, string> = {
 /** Structured outputs reject numeric/string/array constraints and require
  * additionalProperties:false on every object. Constraints still hold — the
  * zod safeParse below enforces them client-side. */
-function sanitizeSchema(schema: unknown): unknown {
+export function sanitizeSchema(schema: unknown): unknown {
   if (Array.isArray(schema)) return schema.map(sanitizeSchema);
   if (schema === null || typeof schema !== "object") return schema;
   const obj = { ...(schema as Record<string, unknown>) };
@@ -151,7 +151,7 @@ export class ClaudeProvider implements LlmProvider {
     // difference stayed invisible because OpenRouter ignores the schema field
     // for Anthropic models and reads the copy embedded in the prompt instead.
     // So the architect schema had never actually been validated by anyone.
-    const rawSchema = zodToJsonSchema(req.schema, { target: "jsonSchema7", $refStrategy: "none" });
+    const rawSchema = zodToJsonSchema(req.wireSchema ?? req.schema, { target: "jsonSchema7", $refStrategy: "none" });
     const jsonSchema = sanitizeSchema(rawSchema);
     const price = PRICES[model] ?? { in: 5, out: 25 };
     // usage is the caller's accumulator: the wrapper needs the running total

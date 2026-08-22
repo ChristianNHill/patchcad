@@ -52,7 +52,7 @@ export class OpenAiCompatProvider implements LlmProvider {
   async complete<T>(req: LlmRequest<T>): Promise<LlmResult<T>> {
     const model = this.opts.models[req.role] ?? this.opts.models.generator;
     // Fully inline — local grammar converters (Ollama/llama.cpp) don't resolve $refs.
-    const jsonSchema = zodToJsonSchema(req.schema, { $refStrategy: "none" });
+    const jsonSchema = zodToJsonSchema(req.wireSchema ?? req.schema, { $refStrategy: "none" });
 
     const attempt = async (extraUser?: string): Promise<{ raw: string; usage: ChatResponse["usage"] }> => {
       // OpenAI's vision shape: a content array of {type:"text"} and

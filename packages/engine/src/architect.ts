@@ -62,6 +62,43 @@ const ARCHITECT_REPAIR_EFFORT = "low" as const;
 
 const SLUG = /^[a-z][a-z0-9-]{1,40}$/;
 
+/** The validation schema accepts payload as its real object OR a JSON string
+ *  encoding one, because the WIRE schema (below) types it as a string: the CAD
+ *  payload subtree alone makes the structured-outputs grammar "too large", so
+ *  the model emits the payload as a string the grammar can compile, and this
+ *  parses it back before the real payloadSchema judges it. An unparseable
+ *  string falls through unparsed and fails payloadSchema with a real message. */
+function stringOr<P>(payloadSchema: z.ZodType<P>): z.ZodType<P, z.ZodTypeDef, unknown> {
+  return z.preprocess((v) => {
+    // Raw value first: if the inner schema already accepts it, do not touch it.
+    // Without this, wrapping a payloadSchema that IS a string (the wire twin)
+    // parsed a valid JSON string into an object and then failed z.string().
+    if (payloadSchema.safeParse(v).success) return v;
+    if (typeof v === "string") {
+      try {
+        return JSON.parse(v);
+      } catch {
+        return v;
+      }
+    }
+    return v;
+  }, payloadSchema);
+}
+
+/** The wire-side twin of makeArchitectSchema: same graph shape, payload as a
+ *  JSON string. Measured: the full schema is grammar-rejected ("too large") on
+ *  every call, and stubbing payload alone to a string compiles. */
+export function makeArchitectWireSchema(kinds?: string[]) {
+  return makeArchitectSchema(
+    z
+      .string()
+      .describe(
+        "STRICT JSON string encoding this node's domain payload object (ports, envelope, process, ...). JSON, not prose.",
+      ),
+    kinds,
+  );
+}
+
 export function makeArchitectSchema<P>(payloadSchema: z.ZodType<P>, kinds?: string[]) {
   // Constraining kind to the backend's taxonomy makes invented kinds
   // unrepresentable at decode time (grammar-constrained samplers included).
@@ -81,7 +118,7 @@ export function makeArchitectSchema<P>(payloadSchema: z.ZodType<P>, kinds?: stri
             params: z.array(ParamDeclNoUi).describe("live-tunable parameters (the T0 surface)"),
             provides: z.array(PortDecl),
             requires: z.array(PortDecl),
-            payload: payloadSchema,
+            payload: stringOr(payloadSchema),
           }),
         }),
       )
@@ -383,9 +420,11 @@ export async function planGraph(opts: {
   maxRepairs?: number;
   signal?: AbortSignal;
 }): Promise<PlanResult> {
+  const kinds = opts.backend.planning.nodeKinds.map((k) => k.kind);
+  const wireSchema = makeArchitectWireSchema(kinds);
   const schema = makeArchitectSchema(
     opts.backend.planning.payloadSchema,
-    opts.backend.planning.nodeKinds.map((k) => k.kind),
+    kinds,
   );
   const enforceShell = opts.backend.planning.nodeKinds.some((k) => k.kind === "shell");
   const system = architectSystem(opts.backend);
@@ -397,6 +436,7 @@ export async function planGraph(opts: {
     system,
     messages: [goalMessage],
     schema,
+    wireSchema,
     maxTokens: ARCHITECT_MAX_TOKENS,
     effort: ARCHITECT_EFFORT,
     signal: opts.signal,
@@ -442,6 +482,7 @@ export async function planGraph(opts: {
         },
       ],
       schema,
+      wireSchema,
       maxTokens: ARCHITECT_MAX_TOKENS,
       effort: ARCHITECT_REPAIR_EFFORT,
       signal: opts.signal,

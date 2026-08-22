@@ -30,6 +30,14 @@ export interface LlmRequest<T> {
   messages: LlmMessage[];
   /** Input type is free so schemas with .default() fields still bind T to the OUTPUT type. */
   schema: z.ZodType<T, z.ZodTypeDef, unknown>;
+  /** Schema for the WIRE (structured outputs grammar), when it must differ from
+   *  the validation schema. The CAD architect's payload subtree alone makes the
+   *  compiled grammar "too large", so every architect call was silently
+   *  grammar-rejected and fell back to prompt-embedded schema — freeform JSON
+   *  at temperature 1.0, malformed on ~20-25% of calls. The wire schema types
+   *  payload as a JSON STRING (which compiles); `schema` still validates the
+   *  real shape after a client-side parse. */
+  wireSchema?: z.ZodType<unknown, z.ZodTypeDef, unknown>;
   /** Human label for logs/cost attribution, e.g. "generate:product-grid". */
   label: string;
   maxTokens?: number;
