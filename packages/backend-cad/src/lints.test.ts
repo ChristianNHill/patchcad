@@ -434,6 +434,47 @@ describe("cadPortConsistencyLint · edges to hardware", () => {
 });
 
 describe("cadHardwareSeatLint", () => {
+  const posedHw = (kind: string, zAxis: number[], origin = [0, 0, 0]) => ({
+    ...node("m4", kind, []),
+    contract: {
+      name: "m4", summary: "",
+      params: [{ type: "enum", name: "thread", description: "", default: "M4", options: ["M3", "M4", "M5"] }],
+      provides: [], requires: [],
+      payload: { units: "mm", process: { kind: "FDM", minWall: 1.2, nozzle: 0.4 },
+                 ports: [{ name: "head_seat", type: "FLAT_FACE",
+                           pose: { origin, zAxis, xAxis: [1, 0, 0] },
+                           params: { ring_diameter: 5.5 } }],
+                 envelope: { volumes: [], clearance: 0.4 } },
+      hash: "",
+    },
+  }) as unknown as ReturnType<typeof node>;
+
+  // THE POSE THAT BROKE A GREEN LADDER, copied from the run artifact. One sign:
+  // the architect wrote zAxis [0,0,1] where cad-clamp has [0,0,-1], and both
+  // fasteners landed in unrecoverable error_code with zero model calls.
+  it("rejects a seat facing INTO the hardware, which cannot repair", () => {
+    for (const kind of ["fastener", "nut", "insert"]) {
+      const out = cadHardwareSeatLint.run(graph([posedHw(kind, [0, 0, 1])], []));
+      expect(out, kind).toHaveLength(1);
+      expect(out[0]).toContain("zAxis [0, 0, -1]");
+      expect(out[0]).toContain("no repair round");
+    }
+  });
+
+  it("accepts the pose cad-clamp actually uses", () => {
+    for (const kind of ["fastener", "nut", "insert"]) {
+      expect(cadHardwareSeatLint.run(graph([posedHw(kind, [0, 0, -1])], [])), kind).toEqual([]);
+    }
+  });
+
+  it("rejects a seat moved off the origin, where the bearing face is not", () => {
+    expect(cadHardwareSeatLint.run(graph([posedHw("fastener", [0, 0, -1], [0, 0, 4])], []))).toHaveLength(1);
+  });
+
+  it("rejects a sideways seat", () => {
+    expect(cadHardwareSeatLint.run(graph([posedHw("fastener", [1, 0, 0])], []))).toHaveLength(1);
+  });
+
   const hw = (kind: string, thread: string, ring: number | string) => ({
     ...node("m4", kind, []),
     contract: {

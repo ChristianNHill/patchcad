@@ -126,6 +126,16 @@ zero dead, zero repair rounds.
 | pen-cup-hexagonal | 1 | 1/1 | 2 | $0.194 | 88.1s |
 | rib-blocked-hole | 1 | **0/1** | 4 | $0.247 | 21.2s |
 
+A later full sweep found a REGRESSION the individual runs had hidden, which is
+the argument for sweeping: `two-plate-bolted` failed with both fasteners in
+`error_code` at zero calls. The architect declared its seat port `zAxis [0,0,1]`
+where the reference uses `[0,0,-1]`, one sign, and G3 reported "material found
+above the declared face". Hardware resolves from the registry with no repair
+round, so that is unrecoverable. The guidance told the architect to declare a
+seat port and said nothing about which way it faced, so the sign was a coin
+flip: an earlier run of the same prompt happened to get it right.
+`cadHardwareSeatLint` now checks the pose.
+
 `rib-blocked-hole` is the only rung that enters the repair loop, which is what
 makes a repair-strategy change measurable at all. It cooked `repair-2` after the
 plan-time lint cleared a face/hole conflict, and its generated code fuses the rib

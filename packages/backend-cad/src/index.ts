@@ -473,6 +473,29 @@ export const cadHardwareSeatLint = {
       if (!Number.isFinite(shank)) continue;
       const max = outer(m);
       for (const p of (n.contract.payload as CadContractPayload | undefined)?.ports ?? []) {
+        // THE POSE, and this one cost a green ladder. All three hardware kinds
+        // put their bearing face at z = 0 with the body running +z: an SHCS
+        // sits head-down with the head on z in [0, headH], a nut seats on z = 0
+        // with its body +z, an insert's flange the same. So a seat port's +z
+        // must point DOWN, out of that material.
+        //
+        // The guidance told the architect to declare a seat port and said
+        // nothing about which way it faced, which is a coin flip on one sign.
+        // It got [0,0,-1] on one run and [0,0,1] on the next, and the second
+        // failed G3 with "material found above the declared face" — on a node
+        // that resolves from the registry with ZERO model calls and no repair
+        // round, so both fasteners landed in unrecoverable error_code.
+        //
+        // A lint is the right place for it because the geometry is fixed and
+        // standards-exact: the architect cannot negotiate with it, so the only
+        // question is whether the mismatch is caught before or after a cook.
+        const z = p.pose.zAxis.map((v) => Number(v));
+        const o = p.pose.origin.map((v) => Number(v));
+        if (z[2] !== -1 || z[0] !== 0 || z[1] !== 0 || o.some((v) => v !== 0)) {
+          problems.push(
+            `${n.id}: seat port "${p.name}" is posed origin [${o.join(", ")}] zAxis [${z.join(", ")}]. A ${n.kind}'s bearing face sits at the origin with its body running +z, so the port must be origin [0, 0, 0] zAxis [0, 0, -1] to face out of the material. As posed it fails G3 with "material found above the declared face", and ${n.kind} nodes resolve from the registry with no repair round, so that is unrecoverable.`,
+          );
+        }
         const ring = (p.params as { ring_diameter?: unknown } | undefined)?.ring_diameter;
         if (typeof ring !== "number") continue; // an expression is not resolved here
         if (ring <= shank || ring > max) {
@@ -825,7 +848,11 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       "does not declare fails the port-consistency lint, and the mate will not",
       "solve. examples/cad-clamp is the pattern: m4-screw declares head_seat as a",
       "FLAT_FACE with ring_diameter 5.5, and the edge reads",
-      "base-plate.back_right_hole -> m4-screw.head_seat. Declare no OTHER ports,",
+      "base-plate.back_right_hole -> m4-screw.head_seat. POSE IT origin [0,0,0]",
+      "zAxis [0,0,-1]: all three kinds put their bearing face at the origin with",
+      "the body running +z, so the port's +z points DOWN out of that material.",
+      "The opposite sign fails G3 with \"material found above the declared face\",",
+      "and hardware has no repair round. Declare no OTHER ports,",
       "and a small cylinder envelope around the origin.",
       "Put ring_diameter in the MIDDLE of the bearing annulus, between the thread",
       "diameter and the head or across-flats width, not at either edge: the probe",
