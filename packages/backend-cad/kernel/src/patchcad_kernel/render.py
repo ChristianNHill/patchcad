@@ -233,21 +233,3 @@ def render_sheet(shape: Any, path: str, views: int = 6) -> dict[str, Any]:
     """Render one part from several angles into a PNG contact sheet."""
     v, t = _decimate(*_mesh_arrays(shape))
     return _sheet_from_mesh(v, t, path, views)
-
-
-def render_assembly(parts: list[tuple[Any, list[float]]], path: str, views: int = 4) -> dict[str, Any]:
-    """The whole thing, posed.
-
-    A part can satisfy every gate and still be wrong in company — sunk into its
-    neighbour, floating clear of it, or rotated a quarter turn. Nothing in the
-    per-part pipeline can see that, because nothing in it ever looks at two
-    parts at once.
-    """
-    meshed = []
-    for shape, matrix in parts:
-        v, t = _mesh_arrays(shape)
-        meshed.append((transform(v, matrix), t))
-    v, t = _decimate(*combine(meshed))
-    info = _sheet_from_mesh(v, t, path, views)
-    info["parts"] = len(parts)
-    return info

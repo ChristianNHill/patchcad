@@ -825,9 +825,8 @@ against this; changing one without the other moves the noise floor."""
 
 def _posed_mesh(shape: Any, matrix: list[float]) -> Any:
     """Tessellate and place, as one welded trimesh. Mesh rather than B-rep on
-    purpose: it is the same path render_assembly takes, it costs one
-    tessellation instead of an OCP boolean per pair, and it works unchanged on
-    imported MeshParts."""
+    purpose: it costs one tessellation instead of an OCP boolean per pair, and
+    it works unchanged on imported MeshParts."""
     import numpy as np
     import trimesh
 

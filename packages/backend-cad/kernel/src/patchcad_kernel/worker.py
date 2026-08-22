@@ -118,17 +118,6 @@ def worker_main(conn: Connection) -> None:
                            "elapsed_ms": int((time.monotonic() - started) * 1000)})
                 continue
 
-            if "assembly" in job:
-                from .render import render_assembly
-
-                ns = _namespace(job)
-                built = [(_build(part, ns), part.get("matrix", [])) for part in job["assembly"]]
-                os.makedirs(job["out_dir"], exist_ok=True)
-                info = render_assembly(built, os.path.join(job["out_dir"], "sheet.png"), job.get("render_views", 4))
-                conn.send({"ok": True, "render": info,
-                           "elapsed_ms": int((time.monotonic() - started) * 1000)})
-                continue
-
             shape = _build(job, _namespace(job))
             measurements = gates.g2_validity(shape)
             # Contract gates run only when declarations are supplied (verify pass).
