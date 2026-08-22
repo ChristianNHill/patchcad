@@ -7,8 +7,15 @@ cd apps/server
 pnpm exec tsx src/eval.ts --self-test              # 12 scorer checks, 0 LLM calls
 pnpm exec tsx src/eval.ts --dry-run               # what each case asserts, 0 LLM calls
 pnpm exec tsx src/eval.ts --case single-plate --max-usd 0.50
-pnpm exec tsx src/eval.ts --max-usd 2.00          # the whole ladder
+pnpm exec tsx src/eval.ts --max-usd 2.00          # the whole ladder, once each
+pnpm exec tsx src/eval.ts --repeat 3 --max-usd 6  # and again, for the spread
 ```
+
+`--repeat N` runs every case N times and reports the spread per case, because a
+sweep of single runs is what hid a real regression behind four green lines: the
+seat-pose bug was reachable the whole time and three individual passes never saw
+it. `rib-blocked-hole` measured generator calls of 2, 2, 4, 1, 2 across five
+runs, so one sample of any case is one draw from a distribution.
 
 `--max-usd` is required and is a hard stop. A ladder left running against a real
 provider is the one way this harness costs more than it is worth.

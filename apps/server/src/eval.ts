@@ -759,11 +759,20 @@ async function main() {
     process.exit(2);
   }
 
+  // REPEATS, because a sweep of one run each is what hid the seat-pose
+  // regression behind four green lines. rib-blocked-hole's generator calls
+  // measured 2, 2, 4, 1, 2 across five runs, so a single sample of any case is
+  // one draw from a distribution, and a case that passes is not a case that
+  // always passes.
+  const repeat = Math.max(1, Number(opt("repeat") ?? "1"));
+  const plan = repeat > 1 ? cases.flatMap((c) => Array.from({ length: repeat }, () => c)) : cases;
+  if (repeat > 1) console.log(`${cases.length} case(s) x ${repeat} repeats = ${plan.length} runs\n`);
+
   const results: unknown[] = [];
   let spent = 0;
-  for (const c of cases) {
+  for (const c of plan) {
     if (spent >= maxUsd) {
-      console.log(`\nSTOPPING: spent $${spent.toFixed(3)} of $${maxUsd.toFixed(2)}. Remaining cases not run: ${cases.slice(cases.indexOf(c)).map((x) => x.id).join(", ")}`);
+      console.log(`\nSTOPPING: spent $${spent.toFixed(3)} of $${maxUsd.toFixed(2)}. ${plan.length - plan.indexOf(c)} run(s) not started.`);
       break;
     }
     console.log(`\n=== ${c.id} ===\n  ${c.prompt}`);
@@ -813,7 +822,27 @@ async function main() {
   fs.writeFileSync(out, JSON.stringify({ spent, maxUsd, results }, null, 2));
 
   const passed = results.filter((r) => (r as { pass: boolean }).pass).length;
-  console.log(`\n${passed}/${results.length} cases pass. $${spent.toFixed(3)} spent. ${out}`);
+
+  if (repeat > 1) {
+    console.log("\n--- per case, across repeats ---");
+    for (const c of cases) {
+      const mine = results.filter((r) => (r as { id: string }).id === c.id) as {
+        pass: boolean; usd: number; perNode?: { calls: number }[];
+      }[];
+      const calls = mine.flatMap((r) => (r.perNode ?? []).filter((n) => n.calls > 0).map((n) => n.calls));
+      const mean = calls.length ? calls.reduce((a, b) => a + b, 0) / calls.length : 0;
+      // Report the SPREAD, not just the mean: a mean alone reads as a
+      // measurement when it is one draw's worth of information.
+      const spread = calls.length ? `${Math.min(...calls)}-${Math.max(...calls)}` : "n/a";
+      console.log(
+        `  ${c.id.padEnd(22)} ${mine.filter((r) => r.pass).length}/${mine.length} pass  ` +
+          `generator calls ${calls.join(",") || "none"}  mean ${mean.toFixed(2)}  range ${spread}  ` +
+          `$${mine.reduce((a, r) => a + r.usd, 0).toFixed(3)}`,
+      );
+    }
+  }
+
+  console.log(`\n${passed}/${results.length} runs pass. $${spent.toFixed(3)} spent. ${out}`);
   if (passed !== results.length) process.exit(1);
 }
 
