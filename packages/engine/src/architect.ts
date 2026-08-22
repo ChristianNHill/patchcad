@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { zodToJsonSchema } from "zod-to-json-schema";
 import {
   Edge,
   GraphDoc,
@@ -427,7 +428,24 @@ export async function planGraph(opts: {
     kinds,
   );
   const enforceShell = opts.backend.planning.nodeKinds.some((k) => k.kind === "shell");
-  const system = architectSystem(opts.backend);
+  // THE PAYLOAD SPEC, in the prompt, because the grammar can no longer carry
+  // it. The wire schema types payload as a JSON string (the full payload
+  // subtree makes the compiled grammar "too large"), which fixed malformed JSON
+  // completely — and removed the model's only sight of the payload's shape,
+  // since the old grammar-rejection fallback had been embedding the whole
+  // schema into the prompt as a side effect. A sweep after the split: 6 of 8
+  // runs dead on payload VALIDATION (envelope volumes missing pose/dims,
+  // process the wrong shape), $2.78 to learn that the fallback had been
+  // documentation. Grammar constrains the graph; this documents the string.
+  const payloadDoc = JSON.stringify(
+    zodToJsonSchema(opts.backend.planning.payloadSchema, { target: "jsonSchema7", $refStrategy: "none" }),
+  );
+  const system =
+    architectSystem(opts.backend) +
+    `
+
+Each node's contract.payload is a STRICT JSON string. The object it encodes MUST match this JSON schema exactly:
+${payloadDoc}`;
   const goalMessage = { role: "user" as const, content: `Goal: ${opts.goal}` };
 
   const first = await opts.provider.complete({

@@ -133,6 +133,27 @@ zero dead, zero repair rounds.
 | pen-cup-hexagonal | 1 | 1/1 | 2 | $0.194 | 88.1s |
 | rib-blocked-hole | 1 | **0/1** | 4 | $0.247 | 21.2s |
 
+## The sweep trajectory, 2026-08-22
+
+Four sweeps, each after one change, eight runs each:
+
+| sweep | state | result | cost |
+|---|---|---|---|
+| 1 | baseline | 7/8, lint repairs on nearly every plan | $2.152 |
+| 2 | + face/hole rule in guidance | 6/8, lint rounds to zero | $1.598 |
+| 3 | + wire schema, half done | **2/8** | $2.781 |
+| 4 | + payload doc in the prompt | **8/8, every model node first-try** | **$1.303** |
+
+Sweep 3 is kept in the table on purpose: the wire split fixed malformed JSON
+completely and removed the model's only sight of the payload shape, because the
+grammar-rejection fallback had been embedding the schema as a side effect. A
+$2.78 regression, diagnosed from its own artifacts, completed in sweep 4.
+
+Sweep 4 has zero lint rounds, zero parse failures, zero repairs and zero dead
+nodes anywhere. rib-blocked-hole ran 1,1 against a pooled repair mean of 2.14,
+so the documented payload spec may have fixed B7's measuring rung out from
+under it: promising at n=2, not proven.
+
 ## Swept twice, 2026-08-22
 
 The first sweep with `--repeat 2`, eight runs, $2.152, 7/8:
