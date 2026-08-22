@@ -15,6 +15,15 @@ export interface OpenAiCompatOptions {
   models: Partial<Record<LlmRole, string>> & { generator: string };
   /** Server supports response_format: json_schema (OpenRouter: per-model). */
   nativeJsonSchema?: boolean;
+  /** Wall-clock ceiling per request, milliseconds. Default 300000.
+   *
+   *  This path had NONE. `signal` is forwarded, so a caller who cancels is
+   *  fine, but a stalled connection with nobody watching hangs the cook
+   *  forever: no error, no timeout, a node stuck in `generating` until the
+   *  process dies. Generous by design, because the calls it bounds are slow —
+   *  a measured architect plan took 80.9s and a cook 100.9s — so this is a
+   *  hang-breaker and not a latency budget. */
+  timeoutMs?: number;
   /** USD per MTok for cost attribution; 0 for local models. Used only when
    *  `prices` has no entry for the model in play. */
   price?: { in: number; out: number };
@@ -80,15 +89,33 @@ export class OpenAiCompatProvider implements LlmProvider {
           json_schema: { name: "result", schema: jsonSchema, strict: true },
         };
       }
-      const res = await fetch(`${this.opts.baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...(this.opts.apiKey ? { authorization: `Bearer ${this.opts.apiKey}` } : {}),
-        },
-        body: JSON.stringify(body),
-        signal: req.signal ?? null,
-      });
+      // A timeout of its own, combined with the caller's signal rather than
+      // replacing it: cancelling a cook must still work, and a stall must not
+      // depend on someone noticing.
+      const ms = this.opts.timeoutMs ?? 300_000;
+      const bound = AbortSignal.timeout(ms);
+      const signal = req.signal ? AbortSignal.any([req.signal, bound]) : bound;
+      let res: Response;
+      try {
+        res = await fetch(`${this.opts.baseUrl}/chat/completions`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...(this.opts.apiKey ? { authorization: `Bearer ${this.opts.apiKey}` } : {}),
+          },
+          body: JSON.stringify(body),
+          signal,
+        });
+      } catch (err) {
+        // A timeout and a cancel both surface as an abort, and they mean
+        // opposite things: one is the server not answering, the other is the
+        // user changing their mind. Reporting them identically would send
+        // someone hunting a bug in their own cancel path.
+        if (bound.aborted) {
+          throw new Error(`${this.id}: no response for "${req.label}" within ${ms}ms — the request was abandoned, not refused`);
+        }
+        throw err;
+      }
       if (!res.ok) {
         throw new Error(`${this.id} ${res.status}: ${(await res.text()).slice(0, 400)}`);
       }

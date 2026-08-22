@@ -126,6 +126,17 @@ async function main() {
       library,
       signal: cookSignal(),
       inspect: opts.inspect,
+      // PASSED, at last. CookDeps has carried `concurrency` since it was
+      // written and nobody set it, so every wave ran at the default 4 — the
+      // exact dead-option pattern this function's own docstring says already
+      // bit them once with `signal`.
+      //
+      // Generators are network-bound, not CPU-bound: a cook worker spends its
+      // time waiting on an API, and the kernel behind it now runs a pool sized
+      // to the machine. So the ceiling here is about how many model calls to
+      // have outstanding, not about cores. 8 matches the kernel pool, which is
+      // the thing that would actually queue behind it.
+      concurrency: Number(process.env.PATCHCAD_COOK_CONCURRENCY) || 8,
     };
   }
 

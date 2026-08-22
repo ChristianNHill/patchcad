@@ -184,10 +184,23 @@ export function repairPrompt(ctx: RepairCtx<CadContractPayload>): PromptSpec {
         ].join("\n")
       : "";
 
+  // THREE DIFFERENT ROUNDS, not one instruction repeated. The loop previously
+  // varied only by the ledger above, so attempt 4 of 5 read exactly like
+  // attempt 2 and the model kept refining an approach that had already failed
+  // twice. The penultimate round is where changing tactics still has a round
+  // left to land in; on the final one there is no room to experiment.
+  //
+  // Measured rather than assumed to help: it is NOT claimed to improve the
+  // pass rate. rib-blocked-hole's generator calls across five runs were
+  // 2, 2, 4, 1, 2 — mean 2.20, sd 1.10 — so detecting a half-call change needs
+  // about 74 runs per arm, roughly $21 each at measured rates. What IS provable
+  // is that the instruction differs by round, which is what the tests assert.
   const lastRound =
     ctx.attempt >= ctx.maxAttempts
       ? "\nThis is the FINAL attempt: prefer a simpler geometry that certainly passes over a clever one that might."
-      : "";
+      : ctx.attempt >= ctx.maxAttempts - 1 && ctx.priorFailures.length > 0
+        ? "\nThis is the SECOND TO LAST attempt, and refining the same approach has now failed more than once. Change tactics rather than adjusting numbers: build the failing feature separately and combine it, or replace it with a simpler shape that satisfies the same contract. One round remains after this one."
+        : "";
 
   // A gate report is a number; a picture is the shape. Attached to the same
   // turn as the failure so the model reads them together — this is the only

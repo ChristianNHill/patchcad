@@ -214,3 +214,58 @@ describe("vision in the repair loop", () => {
     expect(last.content).not.toContain("The image shows");
   });
 });
+
+/**
+ * B7's measurable half. The repair loop varied only by the prior-failure
+ * ledger, so attempt 4 of 5 read exactly like attempt 2 while the model kept
+ * refining an approach that had already failed twice.
+ *
+ * These assert the INSTRUCTION differs by round, which is provable with zero
+ * model calls. They deliberately do not assert a pass-rate improvement: five
+ * runs of rib-blocked-hole gave generator calls of 2, 2, 4, 1, 2 (mean 2.20, sd
+ * 1.10), so detecting a half-call change needs roughly 74 runs per arm at about
+ * $21 each. An unfalsifiable claim is worse than no claim.
+ */
+describe("the repair prompt changes tactics as rounds run out", () => {
+  const round = (attempt: number, priors = 1) =>
+    repairPrompt(
+      ctx({
+        attempt,
+        maxAttempts: 5,
+        priorFailures: Array.from({ length: priors }, () => ({
+          stage: "G3",
+          report: "port \"bolt\": bottoms out at 2.80mm instead of passing through",
+        })),
+      }),
+    ).messages.map((m) => m.content).join("\n");
+
+  it("says nothing special on an early round", () => {
+    const early = round(2);
+    expect(early).not.toContain("SECOND TO LAST");
+    expect(early).not.toContain("FINAL attempt");
+  });
+
+  it("tells the penultimate round to change tactics, not numbers", () => {
+    const late = round(4);
+    expect(late).toContain("SECOND TO LAST");
+    expect(late).toContain("Change tactics rather than adjusting numbers");
+    expect(late).toContain("One round remains");
+    expect(late).not.toContain("FINAL attempt");
+  });
+
+  it("tells the final round to prefer something that certainly passes", () => {
+    const last = round(5);
+    expect(last).toContain("FINAL attempt");
+    expect(last).not.toContain("SECOND TO LAST");
+  });
+
+  it("does not preach tactics on a penultimate round with nothing spent yet", () => {
+    // No prior failures means this approach has not been tried twice, so
+    // "refining the same approach has failed more than once" would be a lie.
+    expect(round(4, 0)).not.toContain("SECOND TO LAST");
+  });
+
+  it("still carries the gate measurement, which is the whole point of the prompt", () => {
+    expect(round(4)).toContain("bottoms out at 2.80mm");
+  });
+});
