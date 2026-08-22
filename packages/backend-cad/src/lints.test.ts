@@ -9,6 +9,7 @@ import {
   cadFaceHoleConflictLint,
   cadPortConsistencyLint,
   cadHardwareSeatLint,
+  cadMateConnectivityLint,
   threadEngagementVolume,
   OUTER_DIAMETER_KEYS,
 } from "./index.js";
@@ -431,6 +432,44 @@ describe("cadPortConsistencyLint · edges to hardware", () => {
       [{ from: "a", fromPort: "face", to: "b", toPort: "face" }],
     );
     expect(cadPortConsistencyLint.run(g)).toEqual([]);
+  });
+});
+
+describe("cadMateConnectivityLint", () => {
+  const g = (nodes: string[], edges: [string, string][], entry = nodes[0]!) => {
+    const doc = graph(nodes.map((id) => node(id, "part", [{ name: "f", type: "FLAT_FACE" }])), []);
+    (doc as unknown as { edges: unknown[] }).edges = edges.map(([from, to]) => ({
+      from, fromPort: "f", to, toPort: "f",
+    }));
+    (doc as unknown as { assembly: { entryNodeId: string } }).assembly = { entryNodeId: entry };
+    return doc;
+  };
+
+  // THE GRAPH FROM THE SWEEP: holes wired to fasteners, no plate-to-plate mate,
+  // so the mate graph splits in two and plate-b lands inside plate-a.
+  it("rejects the disconnected two-plate graph a paid run produced", () => {
+    const doc = g(["plate-a", "m4-screw", "plate-b", "m4-nut"],
+                  [["plate-a", "m4-screw"], ["plate-b", "m4-nut"]], "plate-a");
+    const out = cadMateConnectivityLint.run(doc);
+    expect(out).toHaveLength(2);
+    expect(out.join(" ")).toContain("plate-b");
+    expect(out.join(" ")).toContain("positions the FASTENER, not the plate");
+  });
+
+  it("accepts the same nodes once the plates share a mate", () => {
+    const doc = g(["plate-a", "m4-screw", "plate-b", "m4-nut"],
+                  [["plate-a", "m4-screw"], ["plate-a", "plate-b"], ["plate-b", "m4-nut"]], "plate-a");
+    expect(cadMateConnectivityLint.run(doc)).toEqual([]);
+  });
+
+  it("ignores edge direction, since a mate positions the unplaced end", () => {
+    // entry is DOWNSTREAM of the edge: b -> a, entry a
+    const doc = g(["a", "b"], [["b", "a"]], "a");
+    expect(cadMateConnectivityLint.run(doc)).toEqual([]);
+  });
+
+  it("says nothing about a single-part graph", () => {
+    expect(cadMateConnectivityLint.run(g(["only"], []))).toEqual([]);
   });
 });
 

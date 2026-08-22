@@ -266,18 +266,26 @@ export class ClaudeProvider implements LlmProvider {
       raw = await attempt();
     }
     let parsed = this.tryParse(req, raw.text, raw.stop);
-    if (!parsed.success) {
+    // TWO repair attempts, raised from one on measured evidence rather than
+    // irritation. The architect's reply arrives malformed mid-object at a
+    // stable ~9% of runs (3 in ~34, all stop: end_turn, all well-formed either
+    // side of the break — a bad sample at temperature 1.0, not a schema fault).
+    // Each occurrence used to abort the whole run: a wasted $0.14-0.29 plus a
+    // rerun, against ~$0.07 for one more ask that only happens on failure. Two
+    // consecutive malformed replies at 9% is ~0.8% of runs; three is where a
+    // real schema fault stops hiding behind retries, so it still throws.
+    for (let retry = 1; !parsed.success && retry <= 2; retry++) {
       raw = await attempt({
         assistant: raw.text,
         user: `Your response failed validation:\n${parsed.error}\nRespond again with ONLY the corrected JSON.`,
       });
       parsed = this.tryParse(req, raw.text, raw.stop);
-      if (!parsed.success) {
-        throw new LlmCallError(
-          `schema validation failed twice for "${req.label}": ${parsed.error}`,
-          { ...usage },
-        );
-      }
+    }
+    if (!parsed.success) {
+      throw new LlmCallError(
+        `schema validation failed three times for "${req.label}": ${parsed.error}`,
+        { ...usage },
+      );
     }
 
     return { data: parsed.data, model, usage };

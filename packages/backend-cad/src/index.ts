@@ -460,6 +460,49 @@ const PROBED_PORT_TYPES = new Set([
  *  rather than wrong: at exactly the head diameter the ring samples the rim and
  *  tessellation decides, so the message says to move inboard.
  */
+/** Every node must be reachable from the assembly entry through edges.
+ *
+ *  solveAssembly already says an unmated non-entry node is always wrong: it
+ *  "defaults to the origin, which is almost certainly inside another part". But
+ *  that complaint arrives AFTER a full cook. A sweep caught the architect
+ *  emitting two plates with holes wired to their fasteners and no plate-to-plate
+ *  mate at all, so the graph split into (plate-a, screw) and (plate-b, nut) and
+ *  plate-b sat inside plate-a — a whole cook spent proving a defect that is
+ *  visible in the edge list alone.
+ *
+ *  Plausibly a side effect of the face/hole guidance: the easiest way to never
+ *  conflict a face with a hole is to declare no faces, which silently removes
+ *  the plate-to-plate mate. This makes that trade fail at plan time, where the
+ *  repair is free. Connectivity ignores edge direction, because a mate
+ *  positions whichever end is not yet placed.
+ */
+export const cadMateConnectivityLint = {
+  id: "cad-mate-connectivity",
+  run(graph: GraphDoc): string[] {
+    const ids = Object.keys(graph.nodes);
+    if (ids.length <= 1) return [];
+    const adj = new Map<string, string[]>(ids.map((id) => [id, []]));
+    for (const e of graph.edges) {
+      adj.get(e.from)?.push(e.to);
+      adj.get(e.to)?.push(e.from);
+    }
+    const entry = graph.assembly.entryNodeId;
+    const seen = new Set<string>([entry]);
+    const queue = [entry];
+    while (queue.length) {
+      for (const n of adj.get(queue.shift()!) ?? []) {
+        if (!seen.has(n)) { seen.add(n); queue.push(n); }
+      }
+    }
+    return ids
+      .filter((id) => !seen.has(id))
+      .map(
+        (id) =>
+          `${id}: no chain of edges connects it to the assembly entry "${entry}", so nothing positions it and it lands at the origin, inside whatever is there. Parts joined face to face need a FLAT_FACE mate edge between them — a hole wired to a fastener positions the FASTENER, not the plate.`,
+      );
+  },
+};
+
 export const cadHardwareSeatLint = {
   id: "cad-hardware-seat",
   run(graph: GraphDoc): string[] {
@@ -778,6 +821,7 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       cadProbedPortsLint,
       cadFaceHoleConflictLint,
       cadHardwareSeatLint,
+      cadMateConnectivityLint,
     ],
     architectGuidance: [
       "ONE PART IS A COMPLETE ANSWER. Decomposing is a cost, not a virtue: every",
