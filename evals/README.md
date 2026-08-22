@@ -133,7 +133,33 @@ zero dead, zero repair rounds.
 | pen-cup-hexagonal | 1 | 1/1 | 2 | $0.194 | 88.1s |
 | rib-blocked-hole | 1 | **0/1** | 4 | $0.247 | 21.2s |
 
-A later full sweep found a REGRESSION the individual runs had hidden, which is
+## Swept twice, 2026-08-22
+
+The first sweep with `--repeat 2`, eight runs, $2.152, 7/8:
+
+| case | pass | generator calls | mean | range |
+|---|---|---|---|---|
+| single-plate | 2/2 | 1, 1 | 1.00 | 1-1 |
+| pen-cup-hexagonal | 2/2 | 2, 1 | 1.50 | 1-2 |
+| rib-blocked-hole | 2/2 | 2, 2 | 2.00 | 2-2 |
+| two-plate-bolted | 1/2 | 1, 1 | 1.00 | 1-1 |
+
+Repeats corrected a claim immediately. `pen-cup-hexagonal` had been described as
+reliably first-try on the strength of two single runs; it repairs on some runs,
+and the spread says so. `rib-blocked-hole` at 2 and 2 is tighter than its earlier
+1-4, but pooling all seven runs gives 2, 2, 4, 1, 2, 2, 2 for a mean of 2.14, so
+it is still not a stable enough baseline to measure a repair change against.
+
+The single failure was not geometry. The architect's reply was unparseable twice
+and planning threw, at $0.291 billed. That rate is about **2 in 26 runs, ~8%**,
+counting one earlier occurrence that predates cost capture, and both recovered on
+a rerun. It is a malformed sample at temperature 1.0 rather than a schema fault:
+the adapter reported `stop: end_turn` (so not truncation), 7775 chars with the
+break at position 2147, and valid-looking JSON either side of it. That diagnosis is only available because a parse
+failure now carries the length, the stop reason and a window. The same failure
+earlier gave a bare position, and cost a rerun to understand.
+
+An earlier full sweep found a REGRESSION the individual runs had hidden, which is
 the argument for sweeping: `two-plate-bolted` failed with both fasteners in
 `error_code` at zero calls. The architect declared its seat port `zAxis [0,0,1]`
 where the reference uses `[0,0,-1]`, one sign, and G3 reported "material found
