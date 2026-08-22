@@ -9,6 +9,7 @@ import {
   cadFaceHoleConflictLint,
   cadPortConsistencyLint,
   cadHardwareSeatLint,
+  threadEngagementVolume,
   OUTER_DIAMETER_KEYS,
 } from "./index.js";
 
@@ -459,6 +460,17 @@ describe("cadHardwareSeatLint", () => {
       expect(out[0]).toContain("zAxis [0, 0, -1]");
       expect(out[0]).toContain("no repair round");
     }
+  });
+
+  // The volume-based clash exemption: a thread is exempt, a nut driven into a
+  // screw head is not. Muting the PAIR would have hidden both.
+  it("exempts a thread engagement but not a real overlap", () => {
+    const expected = threadEngagementVolume("M4", 3.2); // M4 nutH
+    expect(expected).toBeCloseTo(12.8, 1);
+    // the gate's own measurement sits at the expected volume
+    expect(12.8).toBeLessThanOrEqual(expected * 1.5);
+    // a nut driven 3mm into the head is an order of magnitude beyond it
+    expect(90.3).toBeGreaterThan(expected * 1.5);
   });
 
   it("accepts the pose cad-clamp actually uses", () => {

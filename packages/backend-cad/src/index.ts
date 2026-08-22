@@ -5,6 +5,7 @@ export * from "./kernel.js";
 export * from "./registry.js";
 export * from "./assembly.js";
 export * from "./bindings.js";
+export * from "./grounding.js";
 export { normalizeCadCode } from "./prompts.js";
 import type {
   CheckResult,
@@ -99,6 +100,14 @@ import { generatePrompt, repairPrompt } from "./prompts.js";
 import { FASTENING_HARDWARE, REGISTRY_HARDWARE, resolveDeterministic, METRIC} from "./registry.js";
 import { solveAssembly, type AssemblyMate, type AssemblyNode } from "./assembly.js";
 import { resolveDim, resolvePose } from "./bindings.js";
+import {
+  BEARING_DIAMETER,
+  SEAT_POSE,
+  engagementLength,
+  groundingLines,
+  seatBand,
+  threadEngagementVolume,
+} from "./grounding.js";
 
 /**
  * One name per port, everywhere: contract provides/requires keys, payload
@@ -455,23 +464,16 @@ export const cadHardwareSeatLint = {
   id: "cad-hardware-seat",
   run(graph: GraphDoc): string[] {
     const problems: string[] = [];
-    // Bearing face per kind: a screw bears on its head, a nut on its flats, an
-    // insert on its flange.
-    const bearing: Record<string, (m: (typeof METRIC)[string]) => number> = {
-      fastener: (m) => m.shcsHeadD,
-      nut: (m) => m.nutAf,
-      insert: (m) => m.insertD,
-    };
     for (const n of Object.values(graph.nodes)) {
-      const outer = bearing[n.kind];
-      if (!outer) continue;
+      if (!BEARING_DIAMETER[n.kind]) continue;
       const declared = n.contract.params.find((p) => p.name === "thread")?.default;
       const thread = typeof declared === "string" ? declared : undefined;
-      const m = thread ? METRIC[thread] : undefined;
-      if (!thread || !m) continue; // an unknown thread is another lint's business
-      const shank = Number(thread.slice(1));
-      if (!Number.isFinite(shank)) continue;
-      const max = outer(m);
+      // The band comes from grounding.ts rather than being recomputed here: the
+      // same numbers are rendered into the architect's guidance, and a lint that
+      // derives them separately can disagree with what the model was told.
+      const band = thread ? seatBand(n.kind, thread) : null;
+      if (!thread || !band) continue; // an unknown thread is another lint's business
+      const { min: shank, max, recommended } = band;
       for (const p of (n.contract.payload as CadContractPayload | undefined)?.ports ?? []) {
         // THE POSE, and this one cost a green ladder. All three hardware kinds
         // put their bearing face at z = 0 with the body running +z: an SHCS
@@ -491,7 +493,8 @@ export const cadHardwareSeatLint = {
         // question is whether the mismatch is caught before or after a cook.
         const z = p.pose.zAxis.map((v) => Number(v));
         const o = p.pose.origin.map((v) => Number(v));
-        if (z[2] !== -1 || z[0] !== 0 || z[1] !== 0 || o.some((v) => v !== 0)) {
+        const want = SEAT_POSE;
+        if (z.some((v, i) => v !== want.zAxis[i]) || o.some((v, i) => v !== want.origin[i])) {
           problems.push(
             `${n.id}: seat port "${p.name}" is posed origin [${o.join(", ")}] zAxis [${z.join(", ")}]. A ${n.kind}'s bearing face sits at the origin with its body running +z, so the port must be origin [0, 0, 0] zAxis [0, 0, -1] to face out of the material. As posed it fails G3 with "material found above the declared face", and ${n.kind} nodes resolve from the registry with no repair round, so that is unrecoverable.`,
           );
@@ -500,7 +503,7 @@ export const cadHardwareSeatLint = {
         if (typeof ring !== "number") continue; // an expression is not resolved here
         if (ring <= shank || ring > max) {
           problems.push(
-            `${n.id}: seat port "${p.name}" declares ring_diameter ${ring}, which is not on the bearing annulus of a ${thread} ${n.kind} (between Ø${shank} and Ø${max}). The probe samples that ring and would find air, and ${n.kind} nodes resolve from the registry with no repair round, so this fails unrecoverably. Use a value inside the band, e.g. ${((shank + max) / 2).toFixed(1)}.`,
+            `${n.id}: seat port "${p.name}" declares ring_diameter ${ring}, which is not on the bearing annulus of a ${thread} ${n.kind} (between Ø${shank} and Ø${max}). The probe samples that ring and would find air, and ${n.kind} nodes resolve from the registry with no repair round, so this fails unrecoverably. Use a value inside the band, e.g. ${recommended}.`,
           );
         }
         // NOTHING AT THE BOUNDARY. ring === max samples the rim, where
@@ -848,11 +851,7 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       "does not declare fails the port-consistency lint, and the mate will not",
       "solve. examples/cad-clamp is the pattern: m4-screw declares head_seat as a",
       "FLAT_FACE with ring_diameter 5.5, and the edge reads",
-      "base-plate.back_right_hole -> m4-screw.head_seat. POSE IT origin [0,0,0]",
-      "zAxis [0,0,-1]: all three kinds put their bearing face at the origin with",
-      "the body running +z, so the port's +z points DOWN out of that material.",
-      "The opposite sign fails G3 with \"material found above the declared face\",",
-      "and hardware has no repair round. Declare no OTHER ports,",
+      "base-plate.back_right_hole -> m4-screw.head_seat. Declare no OTHER ports,",
       "and a small cylinder envelope around the origin.",
       "Put ring_diameter in the MIDDLE of the bearing annulus, between the thread",
       "diameter and the head or across-flats width, not at either edge: the probe",
@@ -868,6 +867,12 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       "Pick the mating half deliberately: a screw into printed plastic wants an",
       "`insert` (tapped plastic strips); a screw through both parts wants a `nut`;",
       "a screw into a SCREW_BOSS needs neither.",
+      "",
+      "",
+      // Rendered from grounding.ts, so the numbers the architect reads are the
+      // same objects the lints check. The pose sign is in here because guessing
+      // it cost two unrecoverable fastener failures.
+      ...groundingLines(),
       "",
       "GEAR NODES are registry too — an involute tooth profile is not something",
       "to write by hand. Params: module, teeth, pressure_angle (20 unless you",
@@ -1158,9 +1163,27 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
           // screw-into-insert and screw-into-tapped-boss design in the domain,
           // which is most of them. Two fastening parts are DESIGNED to occupy
           // the same space; two printed parts are not, and those still report.
-          const aKind = graph.nodes[c.a]?.kind;
-          const bKind = graph.nodes[c.b]?.kind;
-          if (aKind && bKind && FASTENING_HARDWARE.has(aKind) && FASTENING_HARDWARE.has(bKind)) continue;
+          // Exempt the EXPECTED volume, not the pair. Muting every
+          // hardware-to-hardware clash also mutes a nut driven 3mm into a screw
+          // head, which is a real defect. The thread engagement is computable:
+          // pi/4 * (major² - tap²) * engagement, which returns 12.8 mm³ for an
+          // M4 nut and is what G5 measured to the tenth. Anything materially
+          // beyond it is not a thread.
+          const a = graph.nodes[c.a];
+          const b = graph.nodes[c.b];
+          const mating = [a, b].find((n) => n && (n.kind === "nut" || n.kind === "insert"));
+          const screw = [a, b].find((n) => n && n.kind === "fastener");
+          if (mating && screw) {
+            const thread = screw.contract.params.find((p) => p.name === "thread")?.default;
+            const len = typeof thread === "string" ? engagementLength(mating.kind, thread) : null;
+            if (typeof thread === "string" && len != null) {
+              // 1.5x, because the engagement can be longer than the table's
+              // nominal when a screw runs past a nut, and a thread is the only
+              // thing that overlaps at all at this scale.
+              const expected = threadEngagementVolume(thread, len) * 1.5;
+              if (c.volume_mm3 <= expected) continue;
+            }
+          }
           problems.push(
             `${c.a} and ${c.b} occupy the same space: ${c.volume_mm3.toFixed(1)} mm³ of shared material near [${c.at.join(", ")}]. Both parts pass their own gates, so the fault is in a mate offset or a port pose, not in either part's code.`,
           );
