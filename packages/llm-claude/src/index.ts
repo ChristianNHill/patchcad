@@ -10,7 +10,7 @@ import type { LlmProvider, LlmRequest, LlmResult, LlmRole, LlmUsage} from "@patc
  */
 
 /** List prices per MTok (input, output) for cost attribution. */
-const PRICES: Record<string, { in: number; out: number }> = {
+export const PRICES: Record<string, { in: number; out: number }> = {
   "claude-opus-5": { in: 5, out: 25 },
   "claude-sonnet-5": { in: 3, out: 15 },
   "claude-haiku-4-5": { in: 1, out: 5 },

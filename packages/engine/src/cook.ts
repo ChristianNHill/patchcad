@@ -162,7 +162,6 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
       (g) => {
         const n = g.nodes[nodeIdValue]!;
         n.version += 1;
-        n.pinned = true;
         n.history.push({
           version: n.version,
           contractHash: n.contract.hash,

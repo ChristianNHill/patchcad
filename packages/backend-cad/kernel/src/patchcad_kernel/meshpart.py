@@ -19,7 +19,6 @@ from typing import Any
 import numpy as np
 import trimesh
 
-from .registry_data import METRIC_CLEARANCE
 
 TESSELLATION_LIMIT = 500_000  # faces; imports beyond this get decimated
 
@@ -409,7 +408,11 @@ def segment(
     # computed here rather than at the cut, and the cut reads them.
     boundaries = [lo - 1.0, *planes, hi + 1.0]
 
-    hole_d = METRIC_CLEARANCE.get(thread.upper(), 4.5)
+    # Kernel-side mirror of the TS fastener registry's clearance dims (mm).
+    # Single source of truth is packages/backend-cad/src/registry.ts. The
+    # cross-language duplication is unavoidable; a whole module for one 3-entry
+    # dict with one reader was not.
+    hole_d = {"M3": 3.4, "M4": 4.5, "M5": 5.5}.get(thread.upper(), 4.5)
     interfaces: list[Interface] = []
     hole_cutters: list[trimesh.Trimesh] = []
 

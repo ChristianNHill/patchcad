@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   BEARING_DIAMETER,
   FDM_SLIP_FIT_MM,
-  HOLE_FOR,
   SEAT_POSE,
   engagementLength,
   groundingLines,
@@ -48,11 +47,12 @@ describe("grounded facts match what the probes and gates actually measured", () 
   it("keeps insert and tapped holes distinct, because confusing them measures the wrong feature", () => {
     // A heat-set insert is pressed into a hole sized for its own OD. The tap
     // diameter is for threading plastic directly, which is the ALTERNATIVE to an
-    // insert, not part of one.
-    expect(HOLE_FOR.heatSetInsert("M4")).toBe(5.6);
-    expect(HOLE_FOR.tapped("M4")).toBe(3.3);
-    expect(HOLE_FOR.clearance("M4")).toBe(4.5);
-    expect(HOLE_FOR.heatSetInsert("M4")).not.toBe(HOLE_FOR.tapped("M4"));
+    // insert, not part of one. Asserted against METRIC directly — the HOLE_FOR
+    // lambdas that used to wrap it had no caller but this test.
+    expect(METRIC.M4!.insertD).toBe(5.6);
+    expect(METRIC.M4!.tap).toBe(3.3);
+    expect(METRIC.M4!.clearance).toBe(4.5);
+    expect(METRIC.M4!.insertD).not.toBe(METRIC.M4!.tap);
   });
 
   it("names the slip fit in the direction people get backwards", () => {

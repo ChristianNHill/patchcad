@@ -16,7 +16,6 @@ import { App } from "./App.js";
 // identical stack traces. Repeats now increment a count instead of stacking,
 // and the history is capped.
 const FATAL_MAX = 12;
-const seen: string[] = [];
 const counts = new Map<string, number>();
 
 function showFatal(message: string) {
@@ -27,17 +26,9 @@ function showFatal(message: string) {
     el.className = "fatal-error";
     document.body.appendChild(el);
   }
-  if (!counts.has(message)) {
-    seen.push(message);
-    if (seen.length > FATAL_MAX) counts.delete(seen.shift()!);
-  }
   counts.set(message, (counts.get(message) ?? 0) + 1);
-  el.textContent = seen
-    .map((m) => {
-      const n = counts.get(m) ?? 1;
-      return n > 1 ? `${m}\n  (×${n})` : m;
-    })
-    .join("\n");
+  if (counts.size > FATAL_MAX) counts.delete(counts.keys().next().value!);
+  el.textContent = [...counts].map(([m, c]) => (c > 1 ? `${m}\n  (×${c})` : m)).join("\n");
 }
 window.addEventListener("error", (e) => showFatal(`${e.message}\n  at ${e.filename}:${e.lineno}`));
 window.addEventListener("unhandledrejection", (e) =>

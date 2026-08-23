@@ -102,18 +102,6 @@ export function engagementLength(kind: string, thread: string): number | null {
  */
 export const FDM_SLIP_FIT_MM = 0.3;
 
-/** Which hole a screw wants in the mating part, by strategy. */
-export const HOLE_FOR = {
-  /** Passes through: clearance, from the table. */
-  clearance: (thread: string) => METRIC[thread]?.clearance,
-  /** Threads directly into plastic. Weaker than an insert and the reason
-   *  inserts exist; this is NOT the hole for a heat-set insert. */
-  tapped: (thread: string) => METRIC[thread]?.tap,
-  /** Receives a heat-set insert: sized for the insert's own outer diameter, not
-   *  for the thread. Confusing these silently measures the wrong feature. */
-  heatSetInsert: (thread: string) => METRIC[thread]?.insertD,
-} as const;
-
 /** Rendered for the architect, because a number it cannot read is a number it
  *  will guess. Kept to the facts above, in the units the contract uses. */
 export function groundingLines(): string[] {

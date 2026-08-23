@@ -1,4 +1,7 @@
-import type { Contract, GraphDoc } from "@patchcad/shared";
+import type { Contract } from "@patchcad/shared";
+// Pure graph traversal, so it lives in shared where the studio can reach it
+// too — re-exported here because this has been its import path all along.
+export { computeDirtySet } from "@patchcad/shared";
 import { hashValue } from "@patchcad/shared";
 
 /**
@@ -79,33 +82,4 @@ export function diffContract(before: Contract, after: Contract): ContractDiff {
   return { changed: valueChanged, shapeChanged, shapeChangedProvides, notes };
 }
 
-/**
- * Port-granular dirty set: BFS downstream, but only along edges whose
- * fromPort is one of the shape-changed provides. Untouched siblings stay
- * ready. Transitive spread uses ALL provides of a dirtied node (its own
- * regeneration may change anything it emits — conservative but correct;
- * refined when its own re-cook produces an actual diff).
- */
-export function computeDirtySet(
-  graph: GraphDoc,
-  originId: string,
-  changedProvides: string[],
-): Set<string> {
-  const dirty = new Set<string>();
-  const queue: { nodeId: string; ports: Set<string> | null }[] = [
-    { nodeId: originId, ports: new Set(changedProvides) },
-  ];
 
-  while (queue.length > 0) {
-    const { nodeId, ports } = queue.shift()!;
-    for (const edge of graph.edges) {
-      if (edge.from !== nodeId) continue;
-      if (ports !== null && !ports.has(edge.fromPort)) continue;
-      if (dirty.has(edge.to) || edge.to === originId) continue;
-      dirty.add(edge.to);
-      // ports: null → all provides of the newly-dirty node are suspect.
-      queue.push({ nodeId: edge.to, ports: null });
-    }
-  }
-  return dirty;
-}

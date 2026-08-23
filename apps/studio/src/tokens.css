@@ -64,15 +64,11 @@
   --space-sm:  0.75rem;
   --space-md:  1rem;
   --space-lg:  1.5rem;
-  --space-xl:  2rem;      /* promised by design.md; was never defined */
 
   /* ---- motion ---- */
   --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-in:     cubic-bezier(0.7, 0, 0.84, 0);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --dur-micro:   120ms;
-  --dur-base:    220ms;   /* the stated ladder's middle rung; studio.css reached
-                             for an undefined --dur-quick in its place */
   --dur-long:    320ms;
   --dur-pulse:   1.2s;    /* status-LED, per design.md's motion budget */
 
@@ -83,6 +79,5 @@
 
   /* ---- z · named layers ---- */
   --z-sticky:  200;
-  --z-modal:   400;
   --z-fatal:   600;   /* uncaught-error surface — above everything */
 }

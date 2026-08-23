@@ -40,9 +40,7 @@ function part(id: string, ports: { name: string; origin: number[]; zAxis?: numbe
       },
       hash: "",
     },
-    pinned: false,
     params: {},
-    deps: [],
     artifact: { code: "def build(p): pass", testCode: "", hash: `h-${id}` },
     thread: [],
     status: "ready",
@@ -67,7 +65,6 @@ function clamp(hidden: Record<string, boolean> = {}) {
     nodes: Object.fromEntries(nodes.map((n) => [n.id, n])),
     edges: [{ id: "e0", from: "plate", fromPort: "top", to: "bracket", toPort: "bottom" }],
     assembly: { entryNodeId: "plate" },
-    layout: {},
     rev: 0,
   });
 }

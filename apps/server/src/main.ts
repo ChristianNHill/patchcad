@@ -7,7 +7,7 @@ import websocket from "@fastify/websocket";
 import chokidar, { type FSWatcher } from "chokidar";
 import { z } from "zod";
 import os from "node:os";
-import { Contract, GraphDoc, hashValue, ParamValue } from "@patchcad/shared";
+import { Contract, GraphDoc, hashValue, isCooking, ParamValue } from "@patchcad/shared";
 import {
   classifyReprompt,
   computeDirtySet,
@@ -62,7 +62,6 @@ interface ActiveProject extends LoadedProject {
 }
 
 const UNDO_CAP = 30;
-const COOKING_STATUSES = ["queued", "generating", "building", "verifying", "repairing"];
 
 async function main() {
   const bus = new EventBus();
@@ -177,7 +176,7 @@ async function main() {
     // cook as interrupted).
     if (!liveCooks.has(dir)) project.store.applyOp((g) => {
       for (const n of Object.values(g.nodes)) {
-        if (COOKING_STATUSES.includes(n.status)) {
+        if (isCooking(n.status)) {
           n.status = "error_code";
           n.statusDetail = {
             stage: "interrupted",
@@ -190,7 +189,7 @@ async function main() {
     const backend = backends[project.store.doc.backend] ?? codeBackend;
     const workspace: Workspace = { root: path.join(dir, ".preview") };
     await backend.assemble(project.store.doc, workspace);
-    const { url } = (await backend.previewAdapter?.start(project.store.doc, workspace)) ?? { url: "" };
+    const { url } = (await backend.previewAdapter?.start(workspace)) ?? { url: "" };
 
     const watcher = chokidar.watch(path.join(dir, "nodes"), { ignoreInitial: true });
     // Disk-edit hot-swap is a web-code affordance (Vite modules); CAD edits
@@ -241,14 +240,13 @@ async function main() {
       nodes: {},
       edges: [],
       assembly: { entryNodeId: "" },
-      layout: {},
       rev: 0,
     });
     const store = new GraphStore(graph, bus, async () => {});
     const backend = codeBackend;
     const workspace: Workspace = { root: path.join(os.tmpdir(), "patchcad-untitled-preview") };
     await backend.assemble(graph, workspace);
-    await backend.previewAdapter?.start(graph, workspace);
+    await backend.previewAdapter?.start(workspace);
     const watcher = chokidar.watch([], { ignoreInitial: true });
     bus.emit({ type: "graph:replaced", projectId: graph.id, graph });
     bus.emit({ type: "undo:stack", projectId: graph.id, depth: 0, label: "" });
@@ -392,17 +390,14 @@ async function main() {
     if (!doc.nodes[nid]) return reply.code(404).send({ error: "unknown node" });
     if (liveCooks.size > 0) return reply.code(409).send({ error: "wait for the cook to finish" });
 
-    // Everything downstream, before the edges go.
-    const downstream = new Set<string>();
-    const queue = [nid];
-    while (queue.length) {
-      const id = queue.shift()!;
-      for (const e of doc.edges) {
-        if (e.from !== id || downstream.has(e.to) || e.to === nid) continue;
-        downstream.add(e.to);
-        queue.push(e.to);
-      }
-    }
+    // Everything downstream, before the edges go. Deleting a node invalidates
+    // every port it provided, so the dirty set is the one computed from all of
+    // its outgoing ports.
+    const downstream = computeDirtySet(
+      doc,
+      nid,
+      doc.edges.filter((e) => e.from === nid).map((e) => e.fromPort),
+    );
 
     checkpoint(`delete ${nid}`);
     active.store.applyOp(
@@ -412,7 +407,6 @@ async function main() {
         if (g.assembly.entryNodeId === nid) {
           g.assembly.entryNodeId = Object.keys(g.nodes)[0] ?? "";
         }
-        delete g.layout[nid];
       },
       { immediate: true },
     );
@@ -428,7 +422,7 @@ async function main() {
       nodeId: nid,
       line: `deleted — ${downstream.size} downstream node(s) now stale`,
     });
-    return { ok: true, stale: [...downstream] };
+    return { ok: true };
   });
 
   app.post("/api/project/nodes/:nodeId/params", async (req, reply) => {
@@ -752,9 +746,7 @@ async function main() {
           },
           hash: "",
         },
-        pinned: false,
         params: {},
-        deps: [],
         artifact: null,
         thread: [],
         status: "planned",
@@ -811,7 +803,6 @@ async function main() {
       nodes,
       edges: built.edges,
       assembly: { entryNodeId: "piece-0" },
-      layout: {},
       rev: 0,
     };
     await writeFile(path.join(dir, "patchcad.json"), JSON.stringify(graph, null, 2), "utf8");
@@ -1223,7 +1214,7 @@ async function main() {
 
   app.post("/api/project/undo", async (_req, reply) => {
     const cooking = Object.values(active.store.doc.nodes).some((n) =>
-      COOKING_STATUSES.includes(n.status),
+      isCooking(n.status),
     );
     if (cooking) {
       return reply.code(409).send({ error: "a cook is in progress — undo after it settles" });
@@ -1292,7 +1283,7 @@ async function main() {
    */
   app.post("/api/project/cook/cancel", async (_req, reply) => {
     const inFlight = Object.values(active.store.doc.nodes).filter((n) =>
-      COOKING_STATUSES.includes(n.status),
+      isCooking(n.status),
     );
     if (inFlight.length === 0 && liveCooks.size === 0 && !planning) {
       return reply.code(409).send({ error: "nothing is cooking" });

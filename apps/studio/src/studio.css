@@ -139,9 +139,6 @@ body {
   transform: none;
 }
 .btn[data-state="loading"] { cursor: progress; opacity: 0.8; }
-/* No .btn error/success states: failures surface in the problem bar or inline
-   next to the control, never by recolouring the button. Styling states nothing
-   can produce is how CSS rots. */
 
 .btn--primary {
   background: var(--color-accent);
@@ -585,8 +582,6 @@ body {
   /* Pinned explicitly: a stray margin is how a <dialog> ends up in the corner. */
   position: fixed;
   inset: 0;
-  width: 100%;
-  height: 100%;
   display: grid;
   place-items: center;
   overflow: visible;

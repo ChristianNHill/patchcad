@@ -360,10 +360,8 @@ export function architectOutputToGraph(
       title: n.title,
       spec: n.spec,
       contract,
-      pinned: false,
       params: {},
       hidden: false,
-      deps: [],
       artifact: null,
       thread: [],
       status: "planned",
@@ -380,10 +378,6 @@ export function architectOutputToGraph(
     to: e.to,
     toPort: e.toPort,
   }));
-  for (const e of edges) {
-    const node = nodes[e.to];
-    if (node && !node.deps.includes(e.from)) node.deps.push(e.from);
-  }
   return GraphDoc.parse({
     schemaVersion: 1,
     id: projectIdValue,
@@ -392,7 +386,6 @@ export function architectOutputToGraph(
     nodes,
     edges,
     assembly: { entryNodeId: out.entryNodeId },
-    layout: {},
     rev: 0,
   });
 }
@@ -418,7 +411,7 @@ export async function planGraph(opts: {
   goal: string;
   /** Progress narration. The architect runs one long call plus up to three
    *  lint-repair rounds, and none of that was visible to the user. */
-  onPhase?: (phase: "drafting" | "checking" | "repairing" | "done" | "failed", detail?: string) => void;
+  onPhase?: (phase: "drafting" | "checking" | "repairing", detail?: string) => void;
   signal?: AbortSignal;
 }): Promise<PlanResult> {
   const kinds = opts.backend.planning.nodeKinds.map((k) => k.kind);
@@ -475,7 +468,7 @@ ${payloadDoc}`;
     return problems;
   };
 
-  opts.onPhase?.("checking", `${Object.keys(out.nodes ?? {}).length || out.nodes?.length || 0} parts drafted`);
+  opts.onPhase?.("checking", `${out.nodes.length} parts drafted`);
   let problems = lint(out);
   // 3 rounds: weaker local models need more than one shot at the lints.
   const maxRepairs = 3;
@@ -516,11 +509,8 @@ ${payloadDoc}`;
     problems = lint(out);
   }
   if (problems.length > 0) {
-    opts.onPhase?.("failed", `${problems.length} issue(s) the architect could not fix`);
     throw new Error(`architect graph failed lints after ${maxRepairs} repairs:\n${problems.join("\n")}`);
   }
-  opts.onPhase?.("done");
-
   return {
     graph: architectOutputToGraph(out, opts.projectId, opts.backend.id, opts.goal, opts.backend.planning.paramUnit),
     rationale: out.rationale,

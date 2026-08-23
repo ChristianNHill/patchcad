@@ -39,9 +39,7 @@ function node(id: string, kind: string, ports: { name: string; type: string }[])
       payload: { ...payloadBase, ports: ports.map((p) => ({ ...p, pose, params: {} })) },
       hash: "",
     },
-    pinned: false,
     params: {},
-    deps: [],
     artifact: null,
     thread: [],
     status: "ready",
@@ -63,7 +61,6 @@ function graph(
     nodes: Object.fromEntries(nodes.map((n) => [n.id, n])),
     edges: edges.map((e, i) => ({ id: `e${i}`, ...e })),
     assembly: { entryNodeId: nodes[0]!.id },
-    layout: {},
     rev: 0,
   });
 }

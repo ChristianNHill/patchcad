@@ -27,24 +27,17 @@ export function Modal({
     if (el && !el.open) el.showModal();
   }, []);
 
-  // Esc fires `cancel` before `close`; intercepting it is how a busy modal
-  // refuses to be dismissed mid-request.
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const onCancel = (e: Event) => {
-      e.preventDefault();
-      if (closable) onClose();
-    };
-    el.addEventListener("cancel", onCancel);
-    return () => el.removeEventListener("cancel", onCancel);
-  }, [closable, onClose]);
-
   return (
     <dialog
       ref={ref}
       className="modal-host"
       aria-label={label}
+      // Esc fires `cancel` before `close`; intercepting it is how a busy modal
+      // refuses to be dismissed mid-request.
+      onCancel={(e) => {
+        e.preventDefault();
+        if (closable) onClose();
+      }}
       // A click that lands on the dialog element itself is a backdrop click:
       // the content sits in a child, so it never matches.
       onClick={(e) => {

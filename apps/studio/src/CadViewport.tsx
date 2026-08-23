@@ -28,34 +28,23 @@ function statusTint(status: NodeStatus | undefined, selected: boolean): string |
   return null;
 }
 
-// three.js needs literal colours, so these are READ FROM the tokens at first
-// use rather than hand-copied. The hand-copied set had drifted: the "accent"
-// literal was 25% lower chroma than --color-accent, "warn" was 7° off hue, and
-// the part base and grid were invented values on a hue the palette never uses.
-let tokenCache: Record<string, THREE.Color> | null = null;
-
-function tokens(): Record<string, THREE.Color> {
-  if (tokenCache) return tokenCache;
-  const style = getComputedStyle(document.documentElement);
-  const read = (name: string, fallback: string) => {
-    const raw = style.getPropertyValue(name).trim();
-    try {
-      return new THREE.Color(raw || fallback);
-    } catch {
-      // A browser that cannot parse oklch() in a Color still gets the palette.
-      return new THREE.Color(fallback);
-    }
-  };
-  tokenCache = {
-    "var-accent": read("--color-accent", "#2ccceb"),
-    "var-warn": read("--color-warn", "#e8aa4e"),
-    "var-danger": read("--color-danger", "#e8605b"),
-    base: read("--color-ink-2", "#a6b0b3"),
-    grid: read("--color-rule", "#263033"),
-    "grid-2": read("--color-rule-2", "#2c3437"),
-  };
-  return tokenCache;
-}
+// three.js CANNOT read these from CSS: Color.setStyle has no oklch branch, and
+// it does not throw on one — it warns "Unknown color model" and leaves the
+// colour at its default WHITE. A getComputedStyle bridge therefore silently
+// blanks every part in the viewport, which is exactly what it did until this
+// was reverted to constants.
+//
+// So: literals, but the CORRECT literals, each the exact sRGB of its token.
+// Regenerate with the oklch->sRGB conversion if a token moves; the values are
+// asserted against tokens.css in viewport-colors.test.ts.
+const TINTS: Record<string, THREE.Color> = {
+  "var-accent": new THREE.Color("#2ccceb"), // --color-accent  oklch(78% 0.13 215)
+  "var-warn": new THREE.Color("#e8aa4e"), //   --color-warn    oklch(78% 0.13 75)
+  "var-danger": new THREE.Color("#e8605b"), // --color-danger  oklch(66% 0.17 25)
+};
+const BASE = new THREE.Color("#a6b0b3"); //    --color-ink-2   oklch(75% 0.012 220)
+const GRID = "#263033"; //                     --color-rule    oklch(30% 0.014 220)
+const GRID_2 = "#2c3437"; //                   --color-rule-2  oklch(32% 0.012 220)
 
 function PartMesh({
   id,
@@ -82,7 +71,7 @@ function PartMesh({
       const cloned = gltf.scene;
       cloned.traverse((child) => {
         if (child instanceof THREE.Mesh) {
-          child.material = new THREE.MeshStandardMaterial({ color: tokens().base, metalness: 0.1, roughness: 0.6 });
+          child.material = new THREE.MeshStandardMaterial({ color: BASE, metalness: 0.1, roughness: 0.6 });
         }
       });
       setObject(cloned);
@@ -97,9 +86,8 @@ function PartMesh({
     object.traverse((child) => {
       if (child instanceof THREE.Mesh) {
         const m = child.material as THREE.MeshStandardMaterial;
-        const t = tokens();
-        m.color.copy(tint ? t[tint]! : t.base!);
-        m.emissive.copy(tint ? t[tint]!.clone().multiplyScalar(0.25) : new THREE.Color(0));
+        m.color.copy(tint ? TINTS[tint]! : BASE);
+        m.emissive.copy(tint ? TINTS[tint]!.clone().multiplyScalar(0.25) : new THREE.Color(0));
       }
     });
   }, [object, tint]);
@@ -243,8 +231,7 @@ function CadViewportInner() {
   }, [graph?.rev, sceneRev, reloadKey]);
 
   const grid = useMemo(() => {
-    const t = tokens();
-    const g = new THREE.GridHelper(400, 40, t.grid, t["grid-2"]);
+    const g = new THREE.GridHelper(400, 40, GRID, GRID_2);
     g.rotation.x = Math.PI / 2; // XZ default → our XY ground (z-up)
     return g;
   }, []);

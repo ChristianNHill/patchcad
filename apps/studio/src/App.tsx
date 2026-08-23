@@ -1,15 +1,14 @@
 import { useEffect, useRef, useState } from "react";
+import { isCooking } from "@patchcad/shared";
 import { fmtTokens, useStudio } from "./store.js";
 import { Canvas } from "./canvas/Canvas.js";
+import { BusyButton } from "./BusyButton.js";
 import { Modal } from "./Modal.js";
 import { CadViewport } from "./CadViewport.js";
 import { Inspector } from "./Inspector.js";
 import { PlanBar, PlanOverlay, PlanProgress } from "./PlanBar.js";
 import { ImportButton } from "./ImportButton.js";
 import { Welcome } from "./Welcome.js";
-
-/** Statuses that mean the server is mid-flight on this node. */
-const COOKING = new Set(["queued", "generating", "building", "verifying", "repairing"]);
 
 /** One failure channel, per design.md:80 ("toasts for failures only"). */
 function ProblemBar() {
@@ -84,7 +83,7 @@ export function App() {
       if (t && (["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName) || t.isContentEditable)) return;
       // The button is disabled while cooking; the shortcut was not.
       const st = useStudio.getState();
-      if (Object.values(st.statuses).some((v) => COOKING.has(v))) return;
+      if (Object.values(st.statuses).some(isCooking)) return;
       e.preventDefault();
       void st.undoLast();
     };
@@ -187,7 +186,7 @@ function UndoButton() {
   const undoLast = useStudio((s) => s.undoLast);
   const statuses = useStudio((s) => s.statuses);
   const cooking = Object.values(statuses).some((s) =>
-    ["queued", "generating", "building", "verifying", "repairing"].includes(s),
+    isCooking(s),
   );
   if (undo.depth === 0) return null;
   return (
@@ -270,12 +269,8 @@ function ProjectPicker() {
 function CookProgress() {
   const statuses = useStudio((s) => s.statuses);
   const cancelCook = useStudio((s) => s.cancelCook);
-  const [stopping, setStopping] = useState(false);
   const all = Object.values(statuses);
-  const busy = all.filter((s) => COOKING.has(s)).length;
-  useEffect(() => {
-    if (busy === 0) setStopping(false);
-  }, [busy]);
+  const busy = all.filter(isCooking).length;
   if (busy === 0) return null;
   const done = all.filter((s) => s === "ready").length;
   return (
@@ -283,18 +278,13 @@ function CookProgress() {
       <span className="cook-progress__count">
         {done}/{all.length} ready · {busy} working
       </span>
-      <button
-        className="btn btn--quiet btn--tiny"
-        disabled={stopping}
-        data-state={stopping ? "loading" : undefined}
-        onClick={() => {
-          setStopping(true);
-          void cancelCook();
-        }}
+      <BusyButton
+        onClick={cancelCook}
+        busyLabel="stopping…"
         title="Stops every node still working. Finished nodes keep their result; stopped ones can be re-cooked."
       >
-        {stopping ? "stopping…" : "stop"}
-      </button>
+        stop
+      </BusyButton>
     </span>
   );
 }
@@ -307,7 +297,7 @@ function DirtyButton() {
   const stale = Object.values(statuses).filter((s) =>
     ["planned", "dirty", "error_code", "error_contract", "cancelled"].includes(s),
   ).length;
-  const cooking = Object.values(statuses).some((s) => COOKING.has(s));
+  const cooking = Object.values(statuses).some(isCooking);
   if (stale === 0) return null;
   return (
     <button

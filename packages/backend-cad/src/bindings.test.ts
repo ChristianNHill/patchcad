@@ -26,9 +26,7 @@ function makeGraph(bracketBindings: Record<string, string>, plateParams: Record<
       payload: { ...payloadBase, paramBindings: bindings },
       hash: "",
     },
-    pinned: false,
     params: id === "plate" ? plateParams : {},
-    deps: [],
     artifact: null,
     thread: [],
     status: "ready",
@@ -50,7 +48,6 @@ function makeGraph(bracketBindings: Record<string, string>, plateParams: Record<
     },
     edges: [],
     assembly: { entryNodeId: "plate" },
-    layout: {},
     rev: 0,
   });
 }

@@ -27,9 +27,7 @@ function storeWith(status: NodeStatus) {
           payload: {},
           hash: "",
         },
-        pinned: false,
         params: {},
-        deps: [],
         artifact: null,
         thread: [],
         status,
@@ -40,7 +38,6 @@ function storeWith(status: NodeStatus) {
     },
     edges: [],
     assembly: { entryNodeId: "widget" },
-    layout: {},
     rev: 0,
   });
   return new GraphStore(graph, new EventBus(), async () => {});

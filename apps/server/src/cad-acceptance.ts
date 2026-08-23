@@ -49,7 +49,6 @@ function partNode(opts: {
       payload: { ...payloadDefaults, ...opts.payload },
       hash: "",
     },
-    pinned: false,
     params: opts.paramOverrides ?? {},
     deps: opts.deps ?? [],
     artifact: null,
@@ -126,7 +125,6 @@ const lBracket = partNode({
       clearance: 0.4,
     },
   },
-  deps: ["base-plate"],
 });
 
 // M4 SHCS — registry-only; the LLM must never be consulted for this node.
@@ -148,7 +146,6 @@ const m4Screw = {
       // Head z∈[0,4] Ø7, shank z∈[−12,0] Ø4 → cylinder z∈[−12.25, 4.25].
       envelope: { volumes: [{ kind: "cylinder", pose: pose([0, 0, -4]), d: 7.2, h: 16.5 }], clearance: 0.4 },
     },
-    deps: ["base-plate"],
   }),
 };
 m4Screw.contract.params.push({ type: "enum", name: "thread", description: "", default: "M4", options: ["M3", "M4", "M5"] } as never);
@@ -164,7 +161,6 @@ const graph = GraphDoc.parse({
     { id: "e1", from: "base-plate", fromPort: "back_right_hole", to: "m4-screw", toPort: "head_seat" },
   ],
   assembly: { entryNodeId: "base-plate" },
-  layout: {},
   rev: 0,
 });
 

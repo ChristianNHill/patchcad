@@ -25,7 +25,7 @@ export class VitePreviewAdapter implements PreviewAdapter {
     this.opts = opts;
   }
 
-  async start(graph: GraphDoc, ws: Workspace): Promise<{ url: string }> {
+  async start(ws: Workspace): Promise<{ url: string }> {
     if (this.server && this.currentRoot === ws.root) return { url: this.url() };
     // Switching projects: tear down and re-root on the same port.
     if (this.server) await this.stop();

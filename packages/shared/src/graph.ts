@@ -140,6 +140,18 @@ export const NodeStatus = z.enum([
 ]);
 export type NodeStatus = z.infer<typeof NodeStatus>;
 
+/** Statuses that mean the server is mid-flight on a node. Written out in five
+ *  places before this — and it had already drifted: `cancelled` had to be added
+ *  to the sibling stale-set by hand. */
+export const COOKING_STATUSES: readonly NodeStatus[] = [
+  "queued",
+  "generating",
+  "building",
+  "verifying",
+  "repairing",
+];
+export const isCooking = (s: NodeStatus): boolean => COOKING_STATUSES.includes(s);
+
 export const CookFailure = z.object({
   stage: z.string(),
   message: z.string(),
@@ -201,15 +213,12 @@ export const NodeRecord = z.object({
   /** The architect's natural-language spec for this node. */
   spec: z.string(),
   contract: Contract,
-  /** After first cook, contracts are pinned: only architect-approved diffs change them. */
-  pinned: z.boolean().default(false),
   /** Current T0 values (defaults come from contract.params). */
   params: z.record(ParamValue).default({}),
   /** Excluded from export and from the rendered scene, but STILL SOLVED — a
    *  hidden node keeps its pose so anything mated to it stays put. Changes no
    *  contract and no hash, so hiding never dirties anything. */
   hidden: z.boolean().default(false),
-  deps: z.array(z.string()).default([]),
   artifact: Artifact.nullable().default(null),
   thread: z.array(ChatMessage).default([]),
   status: NodeStatus.default("planned"),
@@ -234,13 +243,6 @@ export type Edge = z.infer<typeof Edge>;
 
 // ---------- GraphDoc ----------
 
-export const NodeLayout = z.object({
-  x: z.number(),
-  y: z.number(),
-  manual: z.boolean().default(false),
-});
-export type NodeLayout = z.infer<typeof NodeLayout>;
-
 export const GraphDoc = z.object({
   schemaVersion: z.literal(1),
   id: z.string(),
@@ -258,8 +260,38 @@ export const GraphDoc = z.object({
   nodes: z.record(NodeRecord),
   edges: z.array(Edge),
   assembly: z.object({ entryNodeId: z.string() }),
-  layout: z.record(NodeLayout).default({}),
   /** Bumped on every applyOp — optimistic-concurrency + persistence stamp. */
   rev: z.number().default(0),
 });
 export type GraphDoc = z.infer<typeof GraphDoc>;
+
+/**
+ * Port-granular dirty set: BFS downstream, but only along edges whose
+ * fromPort is one of the shape-changed provides. Untouched siblings stay
+ * ready. Transitive spread uses ALL provides of a dirtied node (its own
+ * regeneration may change anything it emits — conservative but correct;
+ * refined when its own re-cook produces an actual diff).
+ */
+export function computeDirtySet(
+  graph: GraphDoc,
+  originId: string,
+  changedProvides: string[],
+): Set<string> {
+  const dirty = new Set<string>();
+  const queue: { nodeId: string; ports: Set<string> | null }[] = [
+    { nodeId: originId, ports: new Set(changedProvides) },
+  ];
+
+  while (queue.length > 0) {
+    const { nodeId, ports } = queue.shift()!;
+    for (const edge of graph.edges) {
+      if (edge.from !== nodeId) continue;
+      if (ports !== null && !ports.has(edge.fromPort)) continue;
+      if (dirty.has(edge.to) || edge.to === originId) continue;
+      dirty.add(edge.to);
+      // ports: null → all provides of the newly-dirty node are suspect.
+      queue.push({ nodeId: edge.to, ports: null });
+    }
+  }
+  return dirty;
+}

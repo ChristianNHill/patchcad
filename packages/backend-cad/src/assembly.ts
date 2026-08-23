@@ -184,11 +184,3 @@ export function solveAssembly(
   return { world, problems };
 }
 
-/** Apply a rigid transform to a point — test/probe helper. */
-export function apply(m: Mat4, p: [number, number, number]): [number, number, number] {
-  return [
-    m[0]! * p[0] + m[4]! * p[1] + m[8]! * p[2] + m[12]!,
-    m[1]! * p[0] + m[5]! * p[1] + m[9]! * p[2] + m[13]!,
-    m[2]! * p[0] + m[6]! * p[1] + m[10]! * p[2] + m[14]!,
-  ];
-}

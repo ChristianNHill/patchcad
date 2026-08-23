@@ -21,7 +21,7 @@ function nodeHeight(paramCount: number): number {
   return 88 + rows * 34 + overflow;
 }
 
-/** ELK layered layout, left→right. Manual positions in graph.layout win. */
+/** ELK layered layout, left→right. */
 export async function layoutGraph(graph: GraphDoc): Promise<Positioned[]> {
   const elkGraph = {
     id: "root",
@@ -44,10 +44,5 @@ export async function layoutGraph(graph: GraphDoc): Promise<Positioned[]> {
   };
 
   const result = await elk.layout(elkGraph);
-  return (result.children ?? []).map((c) => {
-    const manual = graph.layout[c.id];
-    return manual?.manual
-      ? { id: c.id, x: manual.x, y: manual.y }
-      : { id: c.id, x: c.x ?? 0, y: c.y ?? 0 };
-  });
+  return (result.children ?? []).map((c) => ({ id: c.id, x: c.x ?? 0, y: c.y ?? 0 }));
 }

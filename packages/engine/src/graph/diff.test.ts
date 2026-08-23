@@ -97,7 +97,6 @@ describe("computeDirtySet", () => {
       { id: "e4", from: "grid", fromPort: "main", to: "shell", toPort: "grid" },
     ],
     assembly: { entryNodeId: "shell" },
-    layout: {},
     rev: 0,
   } as unknown as GraphDoc;
 

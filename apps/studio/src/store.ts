@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { Contract, CookFailure, EngineEvent, GraphDoc, NodeStatus, ParamValue } from "@patchcad/shared";
 import { API, WS_API } from "./api";
 
-export type PlanPhase = "drafting" | "checking" | "repairing" | "done" | "failed";
+export type PlanPhase = Extract<EngineEvent, { type: "plan:phase" }>["phase"];
 
 export type PlanState =
   | { status: "idle" }
@@ -107,20 +107,34 @@ async function reason(res: Response, fallback: string): Promise<string> {
   return `${fallback} (${res.status})`;
 }
 
+/** POST/DELETE + report the failure into the one problem channel. Returns
+ *  whether it worked, so callers only write their success path. `expect` lets
+ *  a caller treat a status as normal — cancel's 409 means "nothing was
+ *  cooking", which is not worth a banner. */
+async function send(
+  path: string,
+  fallback: string,
+  opts: { method?: string; body?: unknown; expect?: number[] } = {},
+): Promise<boolean> {
+  const res = await fetch(`${API}${path}`, {
+    method: opts.method ?? "POST",
+    ...(opts.body === undefined
+      ? {}
+      : { headers: { "content-type": "application/json" }, body: JSON.stringify(opts.body) }),
+  });
+  if (res.ok || opts.expect?.includes(res.status)) return res.ok;
+  useStudio.setState({ problem: await reason(res, fallback) });
+  return false;
+}
+
 /** Raw NodeStatus values leaked to the UI as tooltips — "error_code",
  *  "verifying". These are what a person should read instead. */
-export const STATUS_LABEL: Record<NodeStatus, string> = {
-  planned: "planned",
-  queued: "queued",
+export const STATUS_LABEL: Partial<Record<NodeStatus, string>> = {
   generating: "writing",
-  building: "building",
   verifying: "checking",
-  repairing: "repairing",
-  ready: "ready",
   dirty: "stale",
   error_code: "failed",
   error_contract: "blocked",
-  cancelled: "cancelled",
 };
 
 /** 1234 → "1.2k", 40 → "40". Token counts everywhere in the cost UI. */
@@ -313,8 +327,7 @@ export const useStudio = create<StudioState>((set, get) => ({
   },
 
   async discardPlan() {
-    const res = await fetch(`${API}/api/project/plan`, { method: "DELETE" });
-    if (!res.ok) set({ problem: await reason(res, "could not discard the plan") });
+    await send("/api/project/plan", "could not discard the plan", { method: "DELETE" });
     set({ planState: { status: "idle" } });
   },
 
@@ -343,11 +356,7 @@ export const useStudio = create<StudioState>((set, get) => ({
     if (!proposal) return;
     // Clear AFTER the server accepts. Clearing first meant a 500 looked exactly
     // like success: the card vanished and nothing cooked.
-    const res = await fetch(`${API}/api/project/nodes/${proposal.nodeId}/proposal/accept`, { method: "POST" });
-    if (!res.ok) {
-      set({ problem: await reason(res, "could not apply the proposal") });
-      return;
-    }
+    if (!(await send(`/api/project/nodes/${proposal.nodeId}/proposal/accept`, "could not apply the proposal"))) return;
     set({ proposal: null });
     // Statuses + committed versions stream over the WS as the wave cooks.
   },
@@ -355,11 +364,7 @@ export const useStudio = create<StudioState>((set, get) => ({
   async rejectProposal() {
     const proposal = get().proposal;
     if (!proposal) return;
-    const res = await fetch(`${API}/api/project/nodes/${proposal.nodeId}/proposal`, { method: "DELETE" });
-    if (!res.ok) {
-      set({ problem: await reason(res, "could not discard the proposal") });
-      return;
-    }
+    if (!(await send(`/api/project/nodes/${proposal.nodeId}/proposal`, "could not discard the proposal", { method: "DELETE" }))) return;
     set({ proposal: null });
   },
 
@@ -374,25 +379,13 @@ export const useStudio = create<StudioState>((set, get) => ({
   },
 
   async openProject(dir) {
-    const res = await fetch(`${API}/api/project/open`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ dir }),
-    });
-    if (!res.ok) {
-      set({ problem: await reason(res, "could not open that project") });
-      return;
-    }
+    if (!(await send("/api/project/open", "could not open that project", { body: { dir } }))) return;
     set({ projectDir: dir, projectPickerOpen: false, selectedNodeId: null, proposal: null });
     // graph:replaced arrives over the WS with the new project's nodes.
   },
 
   async closeProject() {
-    const res = await fetch(`${API}/api/project/close`, { method: "POST" });
-    if (!res.ok) {
-      set({ problem: await reason(res, "could not close the project") });
-      return;
-    }
+    if (!(await send("/api/project/close", "could not close the project"))) return;
     set({ projectDir: null, projectPickerOpen: false, selectedNodeId: null, proposal: null });
     // graph:replaced arrives over the WS with the empty graph -> welcome renders.
   },
@@ -464,46 +457,25 @@ export const useStudio = create<StudioState>((set, get) => ({
   },
 
   async cookDirty() {
-    const res = await fetch(`${API}/api/project/cook-dirty`, { method: "POST" });
-    if (!res.ok) set({ problem: await reason(res, "could not start the re-cook") });
+    await send("/api/project/cook-dirty", "could not start the re-cook");
   },
 
   async setHidden(nodeIdValue, hidden) {
-    const res = await fetch(`${API}/api/project/nodes/${nodeIdValue}/hidden`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ hidden }),
-    });
-    if (!res.ok) set({ problem: await reason(res, hidden ? "could not hide it" : "could not show it") });
+    await send(`/api/project/nodes/${nodeIdValue}/hidden`, hidden ? "could not hide it" : "could not show it", { body: { hidden } });
   },
 
   async deleteNode(nodeIdValue) {
-    const res = await fetch(`${API}/api/project/nodes/${nodeIdValue}`, { method: "DELETE" });
-    if (!res.ok) {
-      set({ problem: await reason(res, "could not delete that node") });
-      return;
-    }
+    if (!(await send(`/api/project/nodes/${nodeIdValue}`, "could not delete that node", { method: "DELETE" }))) return;
     if (get().selectedNodeId === nodeIdValue) set({ selectedNodeId: null, selectedCode: "" });
   },
 
   async cancelCook() {
-    const res = await fetch(`${API}/api/project/cook/cancel`, { method: "POST" });
     // 409 = nothing was cooking. Not worth a banner; the button is already gone.
-    if (!res.ok && res.status !== 409) {
-      set({ problem: await reason(res, "could not stop the cook") });
-    }
+    await send("/api/project/cook/cancel", "could not stop the cook", { expect: [409] });
   },
 
   async revert(nodeIdValue, version) {
-    const res = await fetch(`${API}/api/project/nodes/${nodeIdValue}/revert`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ version }),
-    });
-    if (!res.ok) {
-      set({ problem: await reason(res, `could not revert to v${version}`) });
-      return;
-    }
+    if (!(await send(`/api/project/nodes/${nodeIdValue}/revert`, `could not revert to v${version}`, { body: { version } }))) return;
     if (get().selectedNodeId === nodeIdValue) void get().selectNode(nodeIdValue);
   },
 

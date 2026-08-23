@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { apply, invertRigid, mateTransform, mul, poseToMat, solveAssembly, IDENTITY } from "./assembly.js";
+import { invertRigid, mateTransform, mul, poseToMat, solveAssembly, IDENTITY, type Mat4 } from "./assembly.js";
 import type { NumericPose as Pose } from "./bindings.js";
 
 /** Mating two +z-out port frames must bring them coincident and opposed —
@@ -9,6 +9,16 @@ const closeTo = (a: number[], b: number[], tol = 1e-9) =>
   a.every((v, i) => Math.abs(v - b[i]!) < tol);
 
 const topFace = (z: number): Pose => ({ origin: [0, 0, z], zAxis: [0, 0, 1], xAxis: [1, 0, 0] });
+
+/** Apply a rigid transform to a point. Lived in assembly.ts as an exported
+ *  "test/probe helper" with no production caller; it belongs here. */
+function apply(m: Mat4, p: [number, number, number]): [number, number, number] {
+  return [
+    m[0]! * p[0] + m[4]! * p[1] + m[8]! * p[2] + m[12]!,
+    m[1]! * p[0] + m[5]! * p[1] + m[9]! * p[2] + m[13]!,
+    m[2]! * p[0] + m[6]! * p[1] + m[10]! * p[2] + m[14]!,
+  ];
+}
 
 describe("mateTransform", () => {
   it("brings the two port origins coincident with opposed z", () => {

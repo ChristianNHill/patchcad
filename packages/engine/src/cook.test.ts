@@ -32,9 +32,7 @@ function makeGraph(thread: { role: "user"; content: string; at: number }[] = [])
           payload: {},
           hash: "",
         },
-        pinned: false,
         params: {},
-        deps: [],
         artifact: null,
         thread,
         status: "planned",
@@ -45,7 +43,6 @@ function makeGraph(thread: { role: "user"; content: string; at: number }[] = [])
     },
     edges: [],
     assembly: { entryNodeId: "widget" },
-    layout: {},
     rev: 0,
   });
 }

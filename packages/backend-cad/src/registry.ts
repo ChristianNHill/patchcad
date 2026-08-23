@@ -6,7 +6,7 @@ import type { NodeRecord } from "@patchcad/shared";
  *    codegen'd — an LLM never invents a screw, a nut, or an insert. Every part
  *    class moved in here is one that can no longer fail generation, costs no
  *    tokens, and is standards-exact.
- *  - Parametric factories (plate, L-bracket) give the architect known-good
+ *  - Parametric factories (plate) give the architect known-good
  *    exemplars and give tests deterministic geometry.
  * Registry output is ordinary node code (`def build(p)`), so it flows through
  * the exact same execute/verify gates as generated code.
@@ -145,21 +145,6 @@ def build(p):
 `;
 }
 
-/** L-bracket: base leg in XY (top at z=thickness), upright leg at +Y face. */
-export function lBracketCode(): string {
-  return `from build123d import *
-
-def build(p):
-    t = p.thickness
-    base = Pos(0, 0, t / 2) * Box(p.width, p.depth, t)
-    wall = Pos(0, p.depth / 2 - t / 2, p.height / 2) * Box(p.width, t, p.height)
-    bracket = base + wall
-    base_hole = Pos(0, -p.depth / 2 + p.hole_inset, t / 2) * Cylinder(p.hole_diameter / 2, t)
-    wall_hole = Pos(0, p.depth / 2 - t / 2, p.height - p.hole_inset) * \\
-        Rot(90, 0, 0) * Cylinder(p.hole_diameter / 2, t)
-    return bracket - base_hole - wall_hole
-`;
-}
 
 /** The thread spec comes from contract params (`thread` enum) — live value
  *  first, contract default second, never from generated code. */

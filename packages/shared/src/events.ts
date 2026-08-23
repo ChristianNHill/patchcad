@@ -25,7 +25,7 @@ export const EngineEvent = z.discriminatedUnion("type", [
      *  "planning…" for its whole duration. */
     type: z.literal("plan:phase"),
     projectId: z.string(),
-    phase: z.enum(["drafting", "checking", "repairing", "done", "failed"]),
+    phase: z.enum(["drafting", "checking", "repairing"]),
     detail: z.string().default(""),
   }),
   z.object({

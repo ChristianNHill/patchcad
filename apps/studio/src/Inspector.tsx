@@ -1,13 +1,14 @@
 import { useState } from "react";
-import type { GraphDoc, NodeRecord } from "@patchcad/shared";
+import { computeDirtySet, isCooking, type CookFailure, type GraphDoc, type NodeRecord } from "@patchcad/shared";
 import { fmtTokens, useStudio } from "./store.js";
+import { BusyButton } from "./BusyButton.js";
 import { groupParams, ParamRow } from "./params.js";
 import { MeasurementsSection, RenderSheet } from "./measurements.js";
 
 /** What the attribution means, in words. The engine decides whether a stuck
  *  node is the generator's fault or the architect's; that verdict determines
  *  what the user should DO next, so it has to be legible. */
-const ATTRIBUTION: Record<string, string> = {
+const ATTRIBUTION: Record<CookFailure["attribution"], string> = {
   "code-invalid": "the generated code was wrong — re-cooking may fix it",
   "contract-infeasible": "the pinned interface may not be buildable — try changing it",
   unknown: "the cause could not be attributed",
@@ -26,31 +27,12 @@ function FailurePanel({ nodeId }: { nodeId: string }) {
         <div className="failure__head">
           <span className="failure__stage">{failure.stage}</span>
           <span className="failure__attribution">
-            {ATTRIBUTION[failure.attribution] ?? failure.attribution}
+            {ATTRIBUTION[failure.attribution]}
           </span>
         </div>
         <pre className="failure__message">{failure.message}</pre>
       </div>
     </div>
-  );
-}
-
-/** Was spam-clickable with no busy state and no completion signal. */
-function RevertButton({ nodeId, version }: { nodeId: string; version: number }) {
-  const revertTo = useStudio((s) => s.revert);
-  const [busy, setBusy] = useState(false);
-  return (
-    <button
-      className="btn btn--quiet btn--tiny"
-      disabled={busy}
-      data-state={busy ? "loading" : undefined}
-      onClick={() => {
-        setBusy(true);
-        void revertTo(nodeId, version).finally(() => setBusy(false));
-      }}
-    >
-      {busy ? "reverting…" : "revert"}
-    </button>
   );
 }
 
@@ -62,10 +44,8 @@ function NodeActions({ node, graph }: { node: NodeRecord; graph: GraphDoc }) {
   const setHidden = useStudio((s) => s.setHidden);
   const deleteNode = useStudio((s) => s.deleteNode);
   const [confirming, setConfirming] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const wave = downstreamOf(graph, node.id);
-
   if (confirming) {
+    const wave = downstreamOf(graph, node.id);
     return (
       <div className="node-actions node-actions--confirm">
         <div className="node-actions__warn">
@@ -74,18 +54,14 @@ function NodeActions({ node, graph }: { node: NodeRecord; graph: GraphDoc }) {
           {" "}⌘Z undoes it.
         </div>
         <div className="node-actions__row">
-          <button
+          <BusyButton
             className="btn btn--warn btn--tiny"
-            disabled={busy}
-            data-state={busy ? "loading" : undefined}
-            onClick={() => {
-              setBusy(true);
-              void deleteNode(node.id).finally(() => setBusy(false));
-            }}
+            onClick={() => deleteNode(node.id)}
+            busyLabel="deleting…"
           >
-            {busy ? "deleting…" : "delete"}
-          </button>
-          <button className="btn btn--quiet btn--tiny" disabled={busy} onClick={() => setConfirming(false)}>
+            delete
+          </BusyButton>
+          <button className="btn btn--quiet btn--tiny" onClick={() => setConfirming(false)}>
             keep it
           </button>
         </div>
@@ -95,10 +71,10 @@ function NodeActions({ node, graph }: { node: NodeRecord; graph: GraphDoc }) {
 
   return (
     <div className="node-actions">
-      <button
-        className="btn btn--quiet btn--tiny"
+      <BusyButton
         aria-pressed={node.hidden}
-        onClick={() => void setHidden(node.id, !node.hidden)}
+        onClick={() => setHidden(node.id, !node.hidden)}
+        busyLabel="…"
         title={
           node.hidden
             ? "Include this part in the export and the viewport again"
@@ -106,7 +82,7 @@ function NodeActions({ node, graph }: { node: NodeRecord; graph: GraphDoc }) {
         }
       >
         {node.hidden ? "show" : "hide"}
-      </button>
+      </BusyButton>
       <button
         className="btn btn--quiet btn--tiny"
         onClick={() => setConfirming(true)}
@@ -121,6 +97,7 @@ function NodeActions({ node, graph }: { node: NodeRecord; graph: GraphDoc }) {
 export function Inspector({ graph }: { graph: GraphDoc }) {
   const selectedNodeId = useStudio((s) => s.selectedNodeId);
   const code = useStudio((s) => s.selectedCode);
+  const revertTo = useStudio((s) => s.revert);
   const codeLoading = useStudio((s) => s.codeLoading);
   const node = selectedNodeId ? graph.nodes[selectedNodeId] : null;
 
@@ -232,7 +209,12 @@ export function Inspector({ graph }: { graph: GraphDoc }) {
                   v{h.version} · {h.cause}
                 </span>
                 {h.version !== node.version ? (
-                  <RevertButton nodeId={node.id} version={h.version} />
+                  <BusyButton
+                    onClick={() => revertTo(node.id, h.version)}
+                    busyLabel="reverting…"
+                  >
+                    revert
+                  </BusyButton>
                 ) : (
                   <span className="history__current">current</span>
                 )}
@@ -335,23 +317,16 @@ function PrintabilityLine({ nodeId }: { nodeId: string }) {
 
 /** T2 surface: edit the contract as JSON. A shape change marks this node and
  * its port-affected descendants dirty (amber) for the re-cook wave. */
-/** Everything reachable downstream. The server's real dirty set is
- *  port-granular and usually smaller, so this is an upper bound and is worded
- *  as one — but an upper bound beats the nothing that was shown before. */
+/** The same traversal the server runs, so the blast radius shown here is the
+ *  one that will actually happen — not a second implementation that can drift. */
 function downstreamOf(graph: GraphDoc, nodeId: string): string[] {
-  const out: string[] = [];
-  const seen = new Set([nodeId]);
-  const queue = [nodeId];
-  while (queue.length) {
-    const id = queue.shift()!;
-    for (const e of graph.edges) {
-      if (e.from !== id || seen.has(e.to)) continue;
-      seen.add(e.to);
-      out.push(e.to);
-      queue.push(e.to);
-    }
-  }
-  return out;
+  return [
+    ...computeDirtySet(
+      graph,
+      nodeId,
+      graph.edges.filter((e) => e.from === nodeId).map((e) => e.fromPort),
+    ),
+  ];
 }
 
 function ContractEditor({ node, graph }: { node: GraphDoc["nodes"][string]; graph: GraphDoc }) {
@@ -359,6 +334,7 @@ function ContractEditor({ node, graph }: { node: GraphDoc["nodes"][string]; grap
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const wave = downstreamOf(graph, node.id);
 
   if (!open) {
     return (
@@ -392,22 +368,17 @@ function ContractEditor({ node, graph }: { node: GraphDoc["nodes"][string]; grap
           {error}
         </div>
       )}
-      {(() => {
-        // The T3 proposal card shows exactly this before the architect's change;
-        // the manual editor dirtied the same wave and said nothing.
-        const wave = downstreamOf(graph, node.id);
-        return (
-          <div className="proposal__impact">
-            a shape change re-cooks this node
-            {wave.length > 0 && (
-              <>
-                {" "}
-                and up to {wave.length} downstream — <code>{wave.join(", ")}</code>
-              </>
-            )}
-          </div>
-        );
-      })()}
+      {/* The T3 proposal card shows exactly this before the architect's change;
+          the manual editor dirtied the same wave and said nothing. */}
+      <div className="proposal__impact">
+        a shape change re-cooks this node
+        {wave.length > 0 && (
+          <>
+            {" "}
+            and up to {wave.length} downstream — <code>{wave.join(", ")}</code>
+          </>
+        )}
+      </div>
       <div className="contract-editor__actions">
         <button
           className="btn btn--primary btn--tiny"
@@ -446,9 +417,7 @@ function RepromptBox({ nodeId }: { nodeId: string }) {
   const [text, setText] = useState("");
   const [routing, setRouting] = useState(false);
   const [routed, setRouted] = useState<{ tier: "T2" | "T3"; reason: string } | null>(null);
-  const cooking = ["queued", "generating", "building", "verifying", "repairing"].includes(
-    status ?? "",
-  );
+  const cooking = !!status && isCooking(status);
   const busy = cooking || routing;
 
   return (
@@ -510,7 +479,6 @@ function ProposalCard({ nodeId }: { nodeId: string }) {
   const proposal = useStudio((s) => s.proposal);
   const acceptProposal = useStudio((s) => s.acceptProposal);
   const rejectProposal = useStudio((s) => s.rejectProposal);
-  const [busy, setBusy] = useState(false);
   if (!proposal || proposal.nodeId !== nodeId) return null;
 
   const waveSize = 1 + proposal.dirtied.length;
@@ -547,22 +515,14 @@ function ProposalCard({ nodeId }: { nodeId: string }) {
         )}
       </div>
       <div className="proposal__actions">
-        <button
+        <BusyButton
           className="btn btn--primary btn--tiny"
-          disabled={busy}
-          data-state={busy ? "loading" : undefined}
-          onClick={() => {
-            setBusy(true);
-            void acceptProposal().finally(() => setBusy(false));
-          }}
+          onClick={acceptProposal}
+          busyLabel="applying…"
         >
-          {busy ? "applying…" : "apply & re-cook"}
-        </button>
-        <button
-          className="btn btn--quiet btn--tiny"
-          disabled={busy}
-          onClick={() => void rejectProposal()}
-        >
+          apply &amp; re-cook
+        </BusyButton>
+        <button className="btn btn--quiet btn--tiny" onClick={() => void rejectProposal()}>
           discard
         </button>
       </div>

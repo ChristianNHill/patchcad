@@ -33,8 +33,7 @@ function makeGraph(consumerCode: string, tokensDts?: string) {
           provides: [{ key: "tokens", type: "tokens", description: "" }], requires: [],
           payload: { module: "@nodes/tokens", exports: [{ name: "tokens", exportKind: "const", signature: "tokens" }], propsType: "", postconditions: [] },
           hash: "t1",
-        },
-        pinned: true, params: {}, deps: [],
+        }, params: {}, deps: [],
         artifact: { code: TOKENS_CODE, testCode: "", dts: tokensDts, hash: "x" },
         thread: [], status: "ready", version: 1, history: [],
         cost: { calls: 0, inputTokens: 0, outputTokens: 0, usd: 0 },
@@ -45,8 +44,7 @@ function makeGraph(consumerCode: string, tokensDts?: string) {
           name: "consumer", summary: "", params: [], provides: [], requires: [{ key: "tokens", type: "tokens", description: "" }],
           payload: { module: "@nodes/consumer", exports: [{ name: "Consumer", exportKind: "component", signature: "" }], propsType: "", postconditions: [] },
           hash: "c1",
-        },
-        pinned: true, params: {}, deps: ["tokens"],
+        }, params: {}, deps: ["tokens"],
         artifact: { code: consumerCode, testCode: "", hash: "y" },
         thread: [], status: "ready", version: 1, history: [],
         cost: { calls: 0, inputTokens: 0, outputTokens: 0, usd: 0 },
@@ -54,7 +52,6 @@ function makeGraph(consumerCode: string, tokensDts?: string) {
     },
     edges: [{ id: "e0", from: "tokens", fromPort: "tokens", to: "consumer", toPort: "tokens" }],
     assembly: { entryNodeId: "consumer" },
-    layout: {},
     rev: 0,
   });
 }

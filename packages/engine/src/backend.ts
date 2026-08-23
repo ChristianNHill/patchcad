@@ -123,7 +123,7 @@ export interface Workspace {
 
 export interface PreviewAdapter {
   /** Start (or attach to) the live preview; returns the URL the studio iframes. */
-  start(graph: GraphDoc, ws: Workspace): Promise<{ url: string }>;
+  start(ws: Workspace): Promise<{ url: string }>;
   /** One node's artifact changed — swap just that module. */
   hotSwap(graph: GraphDoc, ws: Workspace, nodeIds: string[]): Promise<void>;
   stop(): Promise<void>;

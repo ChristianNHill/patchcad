@@ -4,7 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import { z } from "zod";
 import type { LlmProvider, LlmRequest, LlmResult, LlmRole } from "@patchcad/engine";
-import { ClaudeProvider } from "@patchcad/llm-claude";
+import { ClaudeProvider, PRICES } from "@patchcad/llm-claude";
 import { OpenAiCompatProvider } from "@patchcad/llm-openai-compat";
 
 /**
@@ -27,15 +27,15 @@ import { OpenAiCompatProvider } from "@patchcad/llm-openai-compat";
 
 const ProviderName = z.enum(["claude", "openrouter", "local"]);
 
-/** List prices per MTok for the Anthropic models routed through OpenRouter,
- *  keyed by OpenRouter's slugs. Attribution only — OpenRouter's own margin is
- *  not modelled, and an unlisted model falls back to the opus rate so it reads
- *  high rather than free. Mirrors the PRICES table in @patchcad/llm-claude. */
+/** The same list prices, keyed by OpenRouter's slugs. DERIVED from the one
+ *  table rather than re-typed beside it: two hand-maintained copies of the same
+ *  numbers drift into a silently wrong cost ledger, not a crash. Attribution
+ *  only — OpenRouter's own margin is not modelled, and an unlisted model falls
+ *  back to the opus rate so it reads high rather than free. */
 const OPENROUTER_PRICES: Record<string, { in: number; out: number }> = {
-  "anthropic/claude-opus-5": { in: 5, out: 25 },
-  "anthropic/claude-sonnet-5": { in: 3, out: 15 },
-  "anthropic/claude-haiku-4.5": { in: 1, out: 5 },
-  "anthropic/claude-haiku-4-5": { in: 1, out: 5 },
+  ...Object.fromEntries(Object.entries(PRICES).map(([m, p]) => [`anthropic/${m}`, p])),
+  // OpenRouter spells this one with a dot where the Anthropic API uses a dash.
+  "anthropic/claude-haiku-4.5": PRICES["claude-haiku-4-5"]!,
 };
 
 /** Per-role model overrides. Every role is optional; an omitted role falls back
