@@ -357,6 +357,80 @@ async function main() {
   });
 
   const ParamsBody = z.object({ params: z.record(ParamValue) });
+  const HiddenBody = z.object({ hidden: z.boolean() });
+
+  /**
+   * Exclude a part from export and from the rendered scene without deleting it.
+   * Deliberately NOT a contract change: no hash moves, nothing goes dirty, no
+   * cook runs. The assembly solve still sees the node, so hiding a base plate
+   * leaves everything mated to it exactly where it was.
+   */
+  app.post("/api/project/nodes/:nodeId/hidden", async (req, reply) => {
+    const { nodeId: nid } = req.params as { nodeId: string };
+    const body = HiddenBody.safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: body.error.message });
+    if (!active.store.doc.nodes[nid]) return reply.code(404).send({ error: "unknown node" });
+    checkpoint(`${body.data.hidden ? "hide" : "show"} ${nid}`);
+    active.store.applyOp((g) => {
+      g.nodes[nid]!.hidden = body.data.hidden;
+    });
+    bus.emit({ type: "graph:replaced", projectId: active.store.doc.id, graph: active.store.doc });
+    bus.emit({ type: "preview:reload", projectId: active.store.doc.id });
+    return { ok: true, hidden: body.data.hidden };
+  });
+
+  /**
+   * Remove a node. The same surgery the split path does, minus the pieces:
+   * drop its edges, hand the entry role on if it held it, and mark every
+   * downstream consumer stale — a node whose `requires` port lost its provider
+   * cannot cook, and should say so through the normal re-cook flow rather than
+   * failing mysteriously later.
+   */
+  app.delete("/api/project/nodes/:nodeId", async (req, reply) => {
+    const { nodeId: nid } = req.params as { nodeId: string };
+    const doc = active.store.doc;
+    if (!doc.nodes[nid]) return reply.code(404).send({ error: "unknown node" });
+    if (liveCooks.size > 0) return reply.code(409).send({ error: "wait for the cook to finish" });
+
+    // Everything downstream, before the edges go.
+    const downstream = new Set<string>();
+    const queue = [nid];
+    while (queue.length) {
+      const id = queue.shift()!;
+      for (const e of doc.edges) {
+        if (e.from !== id || downstream.has(e.to) || e.to === nid) continue;
+        downstream.add(e.to);
+        queue.push(e.to);
+      }
+    }
+
+    checkpoint(`delete ${nid}`);
+    active.store.applyOp(
+      (g) => {
+        delete g.nodes[nid];
+        g.edges = g.edges.filter((e) => e.from !== nid && e.to !== nid);
+        if (g.assembly.entryNodeId === nid) {
+          g.assembly.entryNodeId = Object.keys(g.nodes)[0] ?? "";
+        }
+        delete g.layout[nid];
+      },
+      { immediate: true },
+    );
+    for (const id of downstream) {
+      const n = active.store.doc.nodes[id];
+      if (n && n.status === "ready") active.store.setStatus(id, "dirty");
+    }
+    bus.emit({ type: "graph:replaced", projectId: active.store.doc.id, graph: active.store.doc });
+    bus.emit({ type: "preview:reload", projectId: active.store.doc.id });
+    bus.emit({
+      type: "job:log",
+      projectId: active.store.doc.id,
+      nodeId: nid,
+      line: `deleted — ${downstream.size} downstream node(s) now stale`,
+    });
+    return { ok: true, stale: [...downstream] };
+  });
+
   app.post("/api/project/nodes/:nodeId/params", async (req, reply) => {
     const { nodeId: nid } = req.params as { nodeId: string };
     const body = ParamsBody.safeParse(req.body);
@@ -473,7 +547,9 @@ async function main() {
     // cache (instant for anything already executed this session).
     const meshes: Record<string, { glb: string; status: string; printability?: unknown }> = {};
     for (const node of Object.values(active.store.doc.nodes)) {
-      if (!node.artifact?.code) continue;
+      // Hidden: no mesh, so nothing renders. The scene's matrices above still
+      // cover every node, so the parts that remain do not move.
+      if (!node.artifact?.code || node.hidden) continue;
       const params: Record<string, unknown> = {};
       for (const p of node.contract.params) params[p.name] = p.default;
       Object.assign(params, node.params);
@@ -494,6 +570,9 @@ async function main() {
   // ---------- Planning + cooking ----------
 
   let pendingPlan: { graph: GraphDoc; rationale: string; goal: string } | null = null;
+  /** A plan in flight has no in-flight NODES, so /cook/cancel needs this to
+   *  know there is something to abort. */
+  let planning = false;
 
   const PlanBody = z.object({
     goal: z.string().min(4),
@@ -504,6 +583,7 @@ async function main() {
     if (!resolved) return reply.code(503).send({ error: NO_PROVIDER_HELP });
     const body = PlanBody.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: body.error.message });
+    planning = true;
     try {
       const slug = slugify(body.data.goal);
       const result = await planGraph({
@@ -511,6 +591,13 @@ async function main() {
         backend: backends[body.data.backend]!,
         projectId: slug,
         goal: body.data.goal,
+        onPhase: (phase, detail) =>
+          bus.emit({
+            type: "plan:phase",
+            projectId: slug,
+            phase,
+            detail: detail ?? "",
+          }),
         // The architect is the longest single call in the system and was the one
         // thing /cook/cancel could not reach.
         signal: cookSignal(),
@@ -524,6 +611,8 @@ async function main() {
       };
     } catch (err) {
       return reply.code(500).send({ error: (err as Error).message });
+    } finally {
+      planning = false;
     }
   });
 
@@ -1205,7 +1294,7 @@ async function main() {
     const inFlight = Object.values(active.store.doc.nodes).filter((n) =>
       COOKING_STATUSES.includes(n.status),
     );
-    if (inFlight.length === 0 && liveCooks.size === 0) {
+    if (inFlight.length === 0 && liveCooks.size === 0 && !planning) {
       return reply.code(409).send({ error: "nothing is cooking" });
     }
     cookAbort.abort();

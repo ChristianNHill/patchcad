@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { PlanForm } from "./PlanBar.js";
+import { PlanForm, PlanProgress } from "./PlanBar.js";
 import { useStudio } from "./store.js";
 
 /** The front door: an empty project shows nothing but the question that
@@ -43,6 +43,8 @@ export function Welcome() {
           requireGoal
         />
 
+        <PlanProgress />
+
         <div className="welcome__or">or</div>
 
         <input
@@ -84,8 +86,9 @@ export function Welcome() {
         )}
 
         <p className="welcome__how">
-          An architect model breaks your idea into parts with pinned interfaces; each part is
-          built, verified, and shown live — then you reshape any single part without breaking the rest.
+          An architect model breaks your idea into parts with pinned interfaces, then
+          <em> cooks</em> each one — writes its geometry, verifies it against the interface, and
+          shows it live. Reshape any single part afterwards and the rest stays as it was.
         </p>
       </div>
     </div>

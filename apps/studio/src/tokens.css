@@ -12,18 +12,30 @@
 :root {
   /* ---- colour · cyan-anchored dark, per design.md ---- */
   --color-paper:      oklch(15% 0.012 220);  /* canvas ground            */
-  --minimap-mask:     oklch(15% 0.012 220 / 0.78); /* plain value: minimap SVG fill */
+  /* derived, not re-typed: a hand-copy silently desyncs when paper moves */
+  --minimap-mask:     oklch(from var(--color-paper) l c h / 0.78);
   --color-paper-2:    oklch(19% 0.014 220);  /* panels: header, nodes    */
   --color-paper-3:    oklch(23% 0.015 220);  /* elevated: modal, hover   */
   --color-well:       oklch(12% 0.010 220);  /* recessed: inputs, code   */
   --color-ink:        oklch(93% 0.010 220);  /* primary text             */
   --color-ink-2:      oklch(75% 0.012 220);  /* secondary text           */
-  --color-muted:      oklch(58% 0.014 220);  /* tertiary text, ≥12px only */
+  /* 62%, not 58%: calibrated to the DARKEST surface it failed AA on both of
+     the ones it is actually used on — 4.32 on paper-2, 3.95 on paper-3.
+     Now 5.08 / 4.65. Elevation-by-lightness means every step up costs contrast,
+     so this is measured against paper-3, not paper. */
+  --color-muted:      oklch(62% 0.014 220);  /* tertiary text            */
   --color-rule:       oklch(30% 0.014 220);  /* borders, dividers        */
-  --color-rule-2:     oklch(25% 0.012 220);  /* faint dividers           */
+  /* 32%: at 25% the inspector's section dividers were 1.15:1 and simply not
+     visible. Component BOUNDARIES here are carried by the surface lightness
+     step (design.md:50), not the hairline, so these are not held to 3:1. */
+  --color-rule-2:     oklch(32% 0.012 220);  /* faint dividers           */
   --color-accent:     oklch(78% 0.13 215);   /* wire cyan — the signal   */
   --color-accent-ink: oklch(16% 0.020 220);  /* text on accent fill      */
   --color-focus:      oklch(82% 0.17 215);   /* :focus-visible only      */
+  /* modal scrim. A plain value, not a relative colour: ::backdrop lives in the
+     top layer and relative-colour resolution there is not reliable everywhere
+     (the same trap that once rendered the minimap white). */
+  --color-scrim:      oklch(12% 0.010 220 / 0.78);
 
   /* semantic status hues — data encoding, distinct from accent */
   --color-ok:     oklch(76% 0.13 150);       /* ready                    */
@@ -40,22 +52,29 @@
   --text-sm:  0.8125rem;  /* 13px — controls, secondary UI   */
   --text-md:  0.875rem;   /* 14px — UI base                  */
   --text-lg:  1rem;       /* 16px — panel titles             */
-  --text-xl:  1.25rem;
-  --text-3xl:  2.25rem;   /* welcome hero ask */    /* 20px — modal headings           */
+  --text-xl:  1.25rem;    /* 20px — modal headings           */
+  --text-3xl: 2.25rem;    /* 36px — welcome hero ask         */
 
   /* ---- space · 4-pt named scale ---- */
+  /* 2px half-step. Off the 4-pt grid on purpose, for icon/LED gaps where 4px
+     is visibly loose; design.md records the exception. */
   --space-3xs: 0.125rem;
   --space-2xs: 0.25rem;
   --space-xs:  0.5rem;
   --space-sm:  0.75rem;
   --space-md:  1rem;
   --space-lg:  1.5rem;
+  --space-xl:  2rem;      /* promised by design.md; was never defined */
 
   /* ---- motion ---- */
   --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in:     cubic-bezier(0.7, 0, 0.84, 0);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --dur-micro:   120ms;
+  --dur-base:    220ms;   /* the stated ladder's middle rung; studio.css reached
+                             for an undefined --dur-quick in its place */
   --dur-long:    320ms;
+  --dur-pulse:   1.2s;    /* status-LED, per design.md's motion budget */
 
   /* ---- geometry ---- */
   --radius-node:  10px;
@@ -65,4 +84,5 @@
   /* ---- z · named layers ---- */
   --z-sticky:  200;
   --z-modal:   400;
+  --z-fatal:   600;   /* uncaught-error surface — above everything */
 }

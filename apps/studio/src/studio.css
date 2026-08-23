@@ -53,7 +53,8 @@ body {
   padding: var(--space-xs) var(--space-md);
   border-bottom: 1px solid var(--color-rule);
   background: var(--color-paper-2);
-  z-index: var(--z-sticky);
+  z-index: var(--z-sticky);  /* anchors .log-panel */
+  position: relative;
 }
 .wordmark--home {
   background: none;
@@ -90,7 +91,15 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 22rem;
+  /* now a button onto the full buffer */
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
 }
+.header__log:hover { color: var(--color-ink); }
 
 /* checker chip — semantic status, text carries the state (not colour-only) */
 .checker {
@@ -121,7 +130,7 @@ body {
   transition:
     background-color var(--dur-micro) var(--ease-out),
     color var(--dur-micro) var(--ease-out),
-    transform 100ms var(--ease-out);
+    transform var(--dur-micro) var(--ease-out);
 }
 .btn:active { transform: translateY(1px); }
 .btn[disabled], .btn[aria-disabled="true"] {
@@ -130,8 +139,9 @@ body {
   transform: none;
 }
 .btn[data-state="loading"] { cursor: progress; opacity: 0.8; }
-.btn[data-state="error"]   { border-color: var(--color-danger); color: var(--color-danger); }
-.btn[data-state="success"] { border-color: var(--color-ok); color: var(--color-ok); }
+/* No .btn error/success states: failures surface in the problem bar or inline
+   next to the control, never by recolouring the button. Styling states nothing
+   can produce is how CSS rots. */
 
 .btn--primary {
   background: var(--color-accent);
@@ -207,10 +217,38 @@ body {
   color: var(--color-ink);
   transition: border-color var(--dur-micro) var(--ease-out);
 }
+/* The canvas's primary object had neither a hover nor a focus rule. */
+@media (hover: hover) {
+  .node:hover { border-color: var(--color-ink-2); }
+}
+.node:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
 .node--selected {
   border-color: var(--color-accent);
   box-shadow: 0 0 0 3px oklch(from var(--color-accent) l c h / 0.18);
 }
+/* A failed node used to be identical to a healthy one except for a 9px dot.
+   The card itself carries it now. data-proposal still wins — a pending diff is
+   the more urgent thing to read. */
+.node[data-status="error_code"],
+.node[data-status="error_contract"] {
+  border-color: var(--color-danger);
+  background: oklch(from var(--color-danger) l c h / 0.07);
+}
+.node[data-status="cancelled"] {
+  border-style: dashed;
+}
+
+/* Hidden: still in the model and still solved, just not in the output. Reads as
+   present-but-inert rather than broken. */
+.node[data-hidden] {
+  opacity: 0.45;
+  border-style: dashed;
+}
+.node[data-hidden] .node__status { color: var(--color-ink-2); }
+
 /* T3 diff overlay: dashed amber = re-cooks if the pending proposal is accepted */
 .node[data-proposal] {
   border-color: var(--color-warn);
@@ -250,6 +288,15 @@ body {
   text-transform: uppercase;
 }
 .node__params { padding: 0 var(--space-sm) var(--space-sm); display: grid; gap: var(--space-2xs); }
+.node__status {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-2);
+}
+.node[data-status="error_code"] .node__status,
+.node[data-status="error_contract"] .node__status { color: var(--color-danger); }
 
 /* status LED — colour + title-text carry state together (not colour-only) */
 .led {
@@ -260,11 +307,13 @@ body {
   background: var(--color-muted);
 }
 .led[data-status="ready"] { background: var(--color-ok); }
-.led[data-status="dirty"], .led[data-status="repairing"] { background: var(--color-warn); }
+.led[data-status="dirty"], .led[data-status="repairing"], .led[data-status="cancelled"] {
+  background: var(--color-warn);
+}
 .led[data-status="error_code"], .led[data-status="error_contract"] { background: var(--color-danger); }
 .led[data-status="generating"], .led[data-status="building"], .led[data-status="verifying"] {
   background: var(--color-accent);
-  animation: led-pulse 1.2s var(--ease-in-out) infinite;
+  animation: led-pulse var(--dur-pulse) var(--ease-in-out) infinite;
 }
 @keyframes led-pulse {
   0%, 100% { opacity: 1; }
@@ -369,7 +418,7 @@ body {
 .param-group { display: grid; gap: var(--space-2xs); }
 .param-group + .param-group { margin-top: var(--space-sm); }
 .param-group__label {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: var(--text-2xs);
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -466,7 +515,7 @@ body {
 .code-view { max-height: 26rem; overflow: auto; }
 .section__label {
   display: block;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: var(--text-2xs);
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -493,7 +542,7 @@ body {
 .thread { margin-top: var(--space-xs); display: grid; gap: var(--space-2xs); }
 .thread__msg { font-size: var(--text-xs); color: var(--color-muted); }
 .thread__msg--user { color: var(--color-ink-2); }
-.thread__who { color: var(--color-accent); font-family: var(--font-mono); font-size: var(--text-2xs); }
+.thread__who { color: var(--color-accent); font-family: var(--font-body); font-size: var(--text-2xs); }
 
 .reprompt { display: flex; gap: var(--space-2xs); }
 .reprompt .input { flex: 1; }
@@ -524,13 +573,26 @@ body {
 
 /* ---------- plan overlay ---------- */
 
-.overlay {
+/* Native <dialog>. showModal() puts it in the top layer, so it needs no
+   z-index and cannot be trapped by an ancestor's stacking context — and Esc,
+   the focus trap and inertness of the page behind come for free. */
+.modal-host {
+  border: 0;
+  padding: 0;
+  background: none;
+  max-width: none;
+  max-height: none;
+  /* Pinned explicitly: a stray margin is how a <dialog> ends up in the corner. */
   position: fixed;
   inset: 0;
-  background: oklch(from var(--color-well) l c h / 0.78);
+  width: 100%;
+  height: 100%;
   display: grid;
   place-items: center;
-  z-index: var(--z-modal);
+  overflow: visible;
+}
+.modal-host::backdrop {
+  background: var(--color-scrim);
 }
 .modal {
   width: min(40rem, calc(100vw - 2 * var(--space-lg)));
@@ -607,7 +669,7 @@ body {
 }
 .proposal__head { display: flex; align-items: baseline; gap: var(--space-2xs); }
 .proposal__title {
-  font-family: var(--font-mono);
+  font-family: var(--font-display);
   font-size: var(--text-2xs);
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -622,7 +684,7 @@ body {
   display: grid;
   gap: var(--space-3xs);
 }
-.proposal__guard { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--color-muted); }
+.proposal__guard { font-family: var(--font-body); font-size: var(--text-2xs); color: var(--color-muted); }
 .proposal__impact { font-size: var(--text-xs); color: var(--color-ink-2); }
 .proposal__impact code {
   font-family: var(--font-mono);
@@ -665,7 +727,7 @@ body {
   text-align: left;
   cursor: pointer;
   border-radius: var(--radius-input);
-  transition: background var(--dur-quick) var(--ease-out);
+  transition: background var(--dur-micro) var(--ease-out);
 }
 .project-list__row:first-child { border-top: none; }
 @media (hover: hover) {
@@ -746,7 +808,7 @@ body {
 }
 .welcome__form { display: flex; gap: var(--space-xs); width: 100%; }
 .welcome__input { flex: 1; font-size: var(--text-md); padding: var(--space-sm) var(--space-md); }
-.welcome__or { color: var(--color-muted); font-family: var(--font-mono); font-size: var(--text-2xs); text-transform: uppercase; letter-spacing: 0.12em; }
+.welcome__or { color: var(--color-muted); font-family: var(--font-body); font-size: var(--text-2xs); text-transform: uppercase; letter-spacing: 0.12em; }
 .welcome__import { font-size: var(--text-sm); }
 .welcome__recent {
   display: flex;
@@ -806,7 +868,196 @@ body {
 /* export control in the viewport bar — a format and a verb, nothing more */
 .cad-viewport__export { display: inline-flex; align-items: center; gap: var(--space-2xs); }
 .cad-viewport__export .input {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: var(--text-2xs);
   padding: var(--space-3xs) var(--space-2xs);
 }
+
+/* ---- failure panel (inspector) ------------------------------------------ */
+.failure {
+  border: 1px solid oklch(from var(--color-danger) l c h / 0.4);
+  border-radius: var(--radius-input);
+  background: oklch(from var(--color-danger) l c h / 0.07);
+  padding: var(--space-sm);
+  display: grid;
+  gap: var(--space-xs);
+}
+.failure__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+}
+.failure__stage {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.08em;
+  color: var(--color-danger);
+  border: 1px solid oklch(from var(--color-danger) l c h / 0.5);
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-xs);
+}
+.failure__attribution {
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+  color: var(--color-ink-2);
+}
+.failure__message {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--color-ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- problem bar -------------------------------------------------------- */
+.problem-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-md);
+  border-bottom: 1px solid oklch(from var(--color-danger) l c h / 0.4);
+  background: oklch(from var(--color-danger) l c h / 0.12);
+  color: var(--color-ink);
+  font-size: var(--text-xs);
+}
+.problem-bar[data-kind="offline"] {
+  border-bottom-color: oklch(from var(--color-warn) l c h / 0.4);
+  background: oklch(from var(--color-warn) l c h / 0.12);
+}
+.problem-bar__text { flex: 1; overflow-wrap: anywhere; }
+
+/* ---- log panel ---------------------------------------------------------- */
+.log-panel {
+  position: absolute;
+  top: 100%;
+  right: var(--space-md);
+  z-index: var(--z-sticky);
+  width: min(46rem, calc(100vw - 2 * var(--space-md)));
+  max-height: 22rem;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-node);
+  background: var(--color-paper-3);
+}
+.log-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  border-bottom: 1px solid var(--color-rule-2);
+}
+.log-panel__body {
+  margin: 0;
+  padding: var(--space-sm);
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: 1.55;
+  color: var(--color-ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- uncaught-error surface --------------------------------------------- */
+/* Last resort, painted by main.tsx before React can help. Tokens only — this
+   was the one block in the app that bypassed the design system entirely. */
+.fatal-error {
+  position: fixed;
+  inset: auto var(--space-sm) var(--space-sm) var(--space-sm);
+  z-index: var(--z-fatal);
+  margin: 0;
+  padding: var(--space-sm);
+  border: 1px solid oklch(from var(--color-danger) l c h / 0.5);
+  border-radius: var(--radius-input);
+  background: oklch(from var(--color-danger) l c h / 0.14);
+  color: var(--color-ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  max-height: 45vh;
+  overflow: auto;
+}
+
+/* ---- cook progress + stop ------------------------------------------------ */
+.cook-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+.cook-progress__count {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- node actions (hide / delete) --------------------------------------- */
+.node-actions {
+  display: flex;
+  gap: var(--space-2xs);
+  margin-top: var(--space-2xs);
+}
+.node-actions--confirm {
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-xs);
+  border: 1px solid oklch(from var(--color-warn) l c h / 0.45);
+  border-radius: var(--radius-input);
+  background: oklch(from var(--color-warn) l c h / 0.1);
+}
+.node-actions__warn {
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--color-ink);
+}
+.node-actions__row { display: flex; gap: var(--space-2xs); }
+.cad-viewport__hidden { color: var(--color-warn); }
+
+/* ---- plan progress ------------------------------------------------------ */
+.plan-progress {
+  display: grid;
+  gap: var(--space-xs);
+  justify-items: start;
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--color-rule-2);
+  background: var(--color-paper-2);
+}
+.plan-progress__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+}
+.plan-progress__time {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+}
+.plan-progress__steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-3xs);
+}
+.plan-progress__step {
+  display: flex;
+  gap: var(--space-xs);
+  font-size: var(--text-xs);
+  color: var(--color-muted);
+}
+.plan-progress__step[data-state="active"] { color: var(--color-ink); }
+.plan-progress__step[data-state="done"] { color: var(--color-ink-2); }
+.plan-progress__mark {
+  font-family: var(--font-mono);
+  width: 1em;
+  flex: none;
+}
+.plan-progress__step[data-state="done"] .plan-progress__mark { color: var(--color-ok); }
+.plan-progress__step[data-state="active"] .plan-progress__mark { color: var(--color-accent); }

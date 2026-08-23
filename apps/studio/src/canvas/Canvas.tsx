@@ -74,16 +74,29 @@ export function Canvas({ graph }: { graph: GraphDoc }) {
         setNodes((prev) => {
           const next = [...prev];
           for (const change of changes) {
+            const i = next.findIndex(
+              (n) => n.id === (change as { id?: string }).id,
+            );
+            if (i < 0) continue;
             if (change.type === "position" && change.position) {
-              const i = next.findIndex((n) => n.id === change.id);
-              if (i >= 0) next[i] = { ...next[i]!, position: change.position };
+              next[i] = { ...next[i]!, position: change.position };
+            } else if (change.type === "select") {
+              // `nodes` is controlled, so dropping select changes meant
+              // node.selected was never true and .node--selected — which has
+              // been styled all along — never rendered.
+              next[i] = { ...next[i]!, selected: change.selected };
             }
           }
           return next;
         });
       }}
-      onNodeClick={(_e, node) => void selectNode(node.id)}
-      onPaneClick={() => void selectNode(null)}
+      // NOT onNodeClick: React Flow's keyboard handler selects on Enter/Space
+      // but never calls onClick, so the whole inspector was mouse-only.
+      onSelectionChange={({ nodes: sel }) => void selectNode(sel[0]?.id ?? null)}
+      // React Flow's own delete path is disabled — deletion is a server op with
+      // edge surgery and a stale wave, so it routes through the inspector's
+      // confirm instead of vanishing a node locally.
+      deleteKeyCode={null}
       fitView
       proOptions={{ hideAttribution: true }}
       style={{ background: "var(--color-paper)" }}

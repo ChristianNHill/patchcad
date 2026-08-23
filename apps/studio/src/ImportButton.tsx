@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { Modal } from "./Modal.js";
 import { useStudio } from "./store.js";
 
 /** Bring an existing CAD file (STL / STEP / 3MF / OBJ) into the graph system:
@@ -36,8 +37,8 @@ export function ImportButton() {
       </button>
 
       {file && (
-        <div className="overlay" role="dialog" aria-label="import a CAD file" onClick={() => !busy && setFile(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <Modal label="import a CAD file" closable={!busy} onClose={() => setFile(null)}>
+          <>
             <div className="modal__head">
               <h2 className="modal__title">{file.name}</h2>
               <button className="btn btn--quiet btn--tiny" disabled={busy} onClick={() => setFile(null)}>
@@ -105,8 +106,8 @@ export function ImportButton() {
                 {busy ? "importing…" : "import & cook"}
               </button>
             </div>
-          </div>
-        </div>
+          </>
+        </Modal>
       )}
     </>
   );

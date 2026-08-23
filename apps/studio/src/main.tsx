@@ -9,18 +9,35 @@ import { App } from "./App.js";
 
 // A crash must never be a silent black page: paint uncaught errors into the
 // DOM so they are readable without devtools.
+//
+// BOUNDED, and deliberately so. This used to be `textContent +=` with no cap,
+// so a server outage — which retries every 2s and rejects every time — grew the
+// box until it covered the app, turning one recoverable fault into a wall of
+// identical stack traces. Repeats now increment a count instead of stacking,
+// and the history is capped.
+const FATAL_MAX = 12;
+const seen: string[] = [];
+const counts = new Map<string, number>();
+
 function showFatal(message: string) {
   let el = document.getElementById("fatal-error");
   if (!el) {
     el = document.createElement("pre");
     el.id = "fatal-error";
-    el.style.cssText =
-      "position:fixed;inset:auto 12px 12px 12px;z-index:99999;background:#2a1215;color:#ffb4b4;" +
-      "border:1px solid #7a2e2e;border-radius:6px;padding:12px;font:12px/1.5 monospace;" +
-      "white-space:pre-wrap;max-height:45vh;overflow:auto;";
+    el.className = "fatal-error";
     document.body.appendChild(el);
   }
-  el.textContent += `${message}\n`;
+  if (!counts.has(message)) {
+    seen.push(message);
+    if (seen.length > FATAL_MAX) counts.delete(seen.shift()!);
+  }
+  counts.set(message, (counts.get(message) ?? 0) + 1);
+  el.textContent = seen
+    .map((m) => {
+      const n = counts.get(m) ?? 1;
+      return n > 1 ? `${m}\n  (×${n})` : m;
+    })
+    .join("\n");
 }
 window.addEventListener("error", (e) => showFatal(`${e.message}\n  at ${e.filename}:${e.lineno}`));
 window.addEventListener("unhandledrejection", (e) =>

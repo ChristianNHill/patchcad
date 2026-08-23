@@ -1,6 +1,6 @@
 import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
 import type { NodeRecord } from "@patchcad/shared";
-import { fmtTokens, useStudio } from "../store.js";
+import { fmtTokens, STATUS_LABEL, useStudio } from "../store.js";
 import { ParamRow } from "../params.js";
 import { KindGlyph } from "./KindGlyph.js";
 
@@ -32,7 +32,12 @@ export function PatchNode({ data, selected }: NodeProps<PatchNodeType>) {
   const hiddenParams = record.contract.params.length - visibleParams.length;
 
   return (
-    <div className={`node${selected ? " node--selected" : ""}`} data-proposal={proposalRole}>
+    <div
+      className={`node${selected ? " node--selected" : ""}`}
+      data-proposal={proposalRole}
+      data-status={status}
+      data-hidden={record.hidden || undefined}
+    >
       {/* requires → left handles, provides → right handles */}
       {record.contract.requires.map((p, i) => (
         <Handle
@@ -62,7 +67,8 @@ export function PatchNode({ data, selected }: NodeProps<PatchNodeType>) {
           <KindGlyph kind={record.kind} />
         </span>
         <span className="node__title">{record.title}</span>
-        <span className="led" data-status={status} title={status} />
+        <span className="led" data-status={status} aria-hidden="true" />
+        <span className="node__status">{record.hidden ? "hidden" : STATUS_LABEL[status] ?? status}</span>
       </div>
 
       <div className="node__kind">

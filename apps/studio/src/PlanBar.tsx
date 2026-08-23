@@ -1,8 +1,69 @@
-import { useState } from "react";
-import { useStudio } from "./store.js";
+import { useEffect, useState } from "react";
+import { Modal } from "./Modal.js";
+import { useStudio, type PlanPhase } from "./store.js";
 
 /** Prompt bar (header) + plan approval overlay. Planning is CAD-only in the
  * studio; the web-code backend still runs existing projects. */
+
+/** The architect runs one long call plus up to three lint-repair rounds. The
+ *  whole of it used to be a button reading "planning…", so a 90-second wait was
+ *  indistinguishable from a hang. Named steps, elapsed time, and a way out. */
+const STEPS: { key: PlanPhase; label: string }[] = [
+  { key: "drafting", label: "reading the goal and drafting parts" },
+  { key: "checking", label: "checking how the parts wire together" },
+  { key: "repairing", label: "fixing what the checks caught" },
+];
+
+function elapsed(since: number): string {
+  const s = Math.max(0, Math.round((Date.now() - since) / 1000));
+  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+}
+
+export function PlanProgress() {
+  const planState = useStudio((s) => s.planState);
+  const cancelCook = useStudio((s) => s.cancelCook);
+  const [, tick] = useState(0);
+
+  // One timer while planning; the elapsed readout is the honest part — it is
+  // the only number here that cannot be wrong.
+  useEffect(() => {
+    if (planState.status !== "planning") return;
+    const id = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [planState.status]);
+
+  if (planState.status !== "planning") return null;
+  const reached = STEPS.findIndex((st) => st.key === planState.phase);
+
+  return (
+    <div className="plan-progress" role="status" aria-live="polite">
+      <div className="plan-progress__head">
+        <span className="section__label">Designing</span>
+        <span className="plan-progress__time">{elapsed(planState.startedAt)}</span>
+      </div>
+      <ol className="plan-progress__steps">
+        {STEPS.map((st, i) => (
+          <li
+            key={st.key}
+            className="plan-progress__step"
+            data-state={i < reached ? "done" : i === reached ? "active" : "waiting"}
+          >
+            <span className="plan-progress__mark" aria-hidden="true">
+              {i < reached ? "✓" : i === reached ? "◐" : "○"}
+            </span>
+            <span>
+              {st.label}
+              {i === reached && planState.detail ? ` — ${planState.detail}` : ""}
+            </span>
+          </li>
+        ))}
+      </ol>
+      <button className="btn btn--quiet btn--tiny" onClick={() => void cancelCook()}>
+        stop
+      </button>
+    </div>
+  );
+}
 
 /** The one plan form — the header bar and Welcome render it with their own
  * classes and copy; the goal state, 4-char guard and cad-only plan call are
@@ -70,12 +131,13 @@ export function PlanOverlay() {
   const planState = useStudio((s) => s.planState);
   const approvePlan = useStudio((s) => s.approvePlan);
   const discardPlan = useStudio((s) => s.discardPlan);
+  const [submitting, setSubmitting] = useState(false);
 
   if (planState.status === "idle" || planState.status === "planning") return null;
 
   return (
-    <div className="overlay" role="dialog" aria-modal="true" aria-label="proposed patch">
-      <div className="modal">
+    <Modal label="proposed design" closable={!submitting} onClose={() => void discardPlan()}>
+      <>
         {planState.status === "error" ? (
           <>
             <h3>planning failed</h3>
@@ -88,7 +150,7 @@ export function PlanOverlay() {
           </>
         ) : (
           <>
-            <h3>proposed patch</h3>
+            <h3>proposed design</h3>
             <p className="modal__rationale">{planState.rationale}</p>
             <div className="plan-rows">
               {Object.values(planState.plan.nodes).map((n) => (
@@ -110,16 +172,30 @@ export function PlanOverlay() {
               approving cooks every node in parallel
             </div>
             <div className="modal__actions">
-              <button className="btn btn--primary" onClick={() => void approvePlan()}>
-                approve &amp; cook
+              {/* THE money button. It had no disabled state and awaited the POST
+                  before closing, so a second click sent a second approve. */}
+              <button
+                className="btn btn--primary"
+                disabled={submitting}
+                data-state={submitting ? "loading" : undefined}
+                onClick={() => {
+                  setSubmitting(true);
+                  void approvePlan().finally(() => setSubmitting(false));
+                }}
+              >
+                {submitting ? "starting…" : "approve & cook"}
               </button>
-              <button className="btn btn--quiet" onClick={() => void discardPlan()}>
+              <button
+                className="btn btn--quiet"
+                disabled={submitting}
+                onClick={() => void discardPlan()}
+              >
                 discard
               </button>
             </div>
           </>
         )}
-      </div>
-    </div>
+      </>
+    </Modal>
   );
 }

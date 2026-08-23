@@ -4,9 +4,124 @@ import { fmtTokens, useStudio } from "./store.js";
 import { groupParams, ParamRow } from "./params.js";
 import { MeasurementsSection, RenderSheet } from "./measurements.js";
 
+/** What the attribution means, in words. The engine decides whether a stuck
+ *  node is the generator's fault or the architect's; that verdict determines
+ *  what the user should DO next, so it has to be legible. */
+const ATTRIBUTION: Record<string, string> = {
+  "code-invalid": "the generated code was wrong — re-cooking may fix it",
+  "contract-infeasible": "the pinned interface may not be buildable — try changing it",
+  unknown: "the cause could not be attributed",
+};
+
+/** The server has always sent {stage, message, attribution} with a failed
+ *  node's status and the studio has always thrown it away, so a node that
+ *  burned minutes and real money showed a red dot reading "error_code". */
+function FailurePanel({ nodeId }: { nodeId: string }) {
+  const failure = useStudio((s) => s.failures[nodeId]);
+  if (!failure) return null;
+  return (
+    <div className="section">
+      <span className="section__label">Why it failed</span>
+      <div className="failure">
+        <div className="failure__head">
+          <span className="failure__stage">{failure.stage}</span>
+          <span className="failure__attribution">
+            {ATTRIBUTION[failure.attribution] ?? failure.attribution}
+          </span>
+        </div>
+        <pre className="failure__message">{failure.message}</pre>
+      </div>
+    </div>
+  );
+}
+
+/** Was spam-clickable with no busy state and no completion signal. */
+function RevertButton({ nodeId, version }: { nodeId: string; version: number }) {
+  const revertTo = useStudio((s) => s.revert);
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      className="btn btn--quiet btn--tiny"
+      disabled={busy}
+      data-state={busy ? "loading" : undefined}
+      onClick={() => {
+        setBusy(true);
+        void revertTo(nodeId, version).finally(() => setBusy(false));
+      }}
+    >
+      {busy ? "reverting…" : "revert"}
+    </button>
+  );
+}
+
+/** Hide keeps the part in the model and out of the output; delete removes it.
+ *  Delete is the only confirmed action in the app — everything else gets a
+ *  disabled state instead — because it is the only one that discards work the
+ *  server cannot reconstruct from the graph. */
+function NodeActions({ node, graph }: { node: NodeRecord; graph: GraphDoc }) {
+  const setHidden = useStudio((s) => s.setHidden);
+  const deleteNode = useStudio((s) => s.deleteNode);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const wave = downstreamOf(graph, node.id);
+
+  if (confirming) {
+    return (
+      <div className="node-actions node-actions--confirm">
+        <div className="node-actions__warn">
+          delete <strong>{node.title}</strong>?
+          {wave.length > 0 && ` ${wave.length} downstream node${wave.length === 1 ? "" : "s"} will go stale.`}
+          {" "}⌘Z undoes it.
+        </div>
+        <div className="node-actions__row">
+          <button
+            className="btn btn--warn btn--tiny"
+            disabled={busy}
+            data-state={busy ? "loading" : undefined}
+            onClick={() => {
+              setBusy(true);
+              void deleteNode(node.id).finally(() => setBusy(false));
+            }}
+          >
+            {busy ? "deleting…" : "delete"}
+          </button>
+          <button className="btn btn--quiet btn--tiny" disabled={busy} onClick={() => setConfirming(false)}>
+            keep it
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="node-actions">
+      <button
+        className="btn btn--quiet btn--tiny"
+        aria-pressed={node.hidden}
+        onClick={() => void setHidden(node.id, !node.hidden)}
+        title={
+          node.hidden
+            ? "Include this part in the export and the viewport again"
+            : "Keep it in the model but leave it out of the export and the viewport. Nothing mated to it moves."
+        }
+      >
+        {node.hidden ? "show" : "hide"}
+      </button>
+      <button
+        className="btn btn--quiet btn--tiny"
+        onClick={() => setConfirming(true)}
+        title="Remove this node from the graph"
+      >
+        delete
+      </button>
+    </div>
+  );
+}
+
 export function Inspector({ graph }: { graph: GraphDoc }) {
   const selectedNodeId = useStudio((s) => s.selectedNodeId);
   const code = useStudio((s) => s.selectedCode);
+  const codeLoading = useStudio((s) => s.codeLoading);
   const node = selectedNodeId ? graph.nodes[selectedNodeId] : null;
 
   if (!node) {
@@ -33,6 +148,7 @@ export function Inspector({ graph }: { graph: GraphDoc }) {
         <div className="inspector__meta">
           {node.kind} · v{node.version} · {node.id}
         </div>
+        <NodeActions node={node} graph={graph} />
         <PrintabilityLine nodeId={node.id} />
         {node.cost.calls > 0 && (
           <div className="inspector__meta">
@@ -53,7 +169,7 @@ export function Inspector({ graph }: { graph: GraphDoc }) {
 
       <div className="section">
         <span className="section__label">Pinned interface</span>
-        <ContractEditor key={node.id + node.contract.hash} node={node} />
+        <ContractEditor key={node.id + node.contract.hash} node={node} graph={graph} />
         <div className="contract-summary">{node.contract.summary}</div>
         {node.contract.provides.length > 0 && (
           <div style={{ marginTop: "var(--space-xs)" }}>
@@ -98,6 +214,8 @@ export function Inspector({ graph }: { graph: GraphDoc }) {
         )}
       </div>
 
+      <FailurePanel nodeId={node.id} />
+
       <MeasurementsSection node={node} />
 
       {graph.backend === "cad" && (
@@ -114,12 +232,7 @@ export function Inspector({ graph }: { graph: GraphDoc }) {
                   v{h.version} · {h.cause}
                 </span>
                 {h.version !== node.version ? (
-                  <button
-                    className="btn btn--quiet btn--tiny"
-                    onClick={() => void revertTo(node.id, h.version)}
-                  >
-                    revert
-                  </button>
+                  <RevertButton nodeId={node.id} version={h.version} />
                 ) : (
                   <span className="history__current">current</span>
                 )}
@@ -130,8 +243,10 @@ export function Inspector({ graph }: { graph: GraphDoc }) {
       )}
 
       <div className="section section--grow">
-        <span className="section__label">{graph.backend === "cad" ? "build(p) — runs in the kernel" : "module source"}</span>
-        <pre className="code-view">{code || "not cooked yet — nothing generated for this node so far"}</pre>
+        <span className="section__label">{graph.backend === "cad" ? "Geometry code" : "Module source"}</span>
+        <pre className="code-view">
+          {code || (codeLoading ? "loading…" : "not cooked yet — nothing generated for this node so far")}
+        </pre>
       </div>
       </div>
     </aside>
@@ -218,13 +333,28 @@ function PrintabilityLine({ nodeId }: { nodeId: string }) {
   );
 }
 
-function revertTo(nodeIdValue: string, version: number) {
-  return useStudio.getState().revert(nodeIdValue, version);
-}
-
 /** T2 surface: edit the contract as JSON. A shape change marks this node and
  * its port-affected descendants dirty (amber) for the re-cook wave. */
-function ContractEditor({ node }: { node: GraphDoc["nodes"][string] }) {
+/** Everything reachable downstream. The server's real dirty set is
+ *  port-granular and usually smaller, so this is an upper bound and is worded
+ *  as one — but an upper bound beats the nothing that was shown before. */
+function downstreamOf(graph: GraphDoc, nodeId: string): string[] {
+  const out: string[] = [];
+  const seen = new Set([nodeId]);
+  const queue = [nodeId];
+  while (queue.length) {
+    const id = queue.shift()!;
+    for (const e of graph.edges) {
+      if (e.from !== id || seen.has(e.to)) continue;
+      seen.add(e.to);
+      out.push(e.to);
+      queue.push(e.to);
+    }
+  }
+  return out;
+}
+
+function ContractEditor({ node, graph }: { node: GraphDoc["nodes"][string]; graph: GraphDoc }) {
   const updateContract = useStudio((s) => s.updateContract);
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
@@ -253,9 +383,31 @@ function ContractEditor({ node }: { node: GraphDoc["nodes"][string] }) {
         value={text}
         onChange={(e) => setText(e.target.value)}
         spellCheck={false}
-        aria-label="contract JSON"
+        aria-label="interface JSON"
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? "contract-error" : undefined}
       />
-      {error && <div className="contract-editor__error">{error}</div>}
+      {error && (
+        <div className="contract-editor__error" id="contract-error">
+          {error}
+        </div>
+      )}
+      {(() => {
+        // The T3 proposal card shows exactly this before the architect's change;
+        // the manual editor dirtied the same wave and said nothing.
+        const wave = downstreamOf(graph, node.id);
+        return (
+          <div className="proposal__impact">
+            a shape change re-cooks this node
+            {wave.length > 0 && (
+              <>
+                {" "}
+                and up to {wave.length} downstream — <code>{wave.join(", ")}</code>
+              </>
+            )}
+          </div>
+        );
+      })()}
       <div className="contract-editor__actions">
         <button
           className="btn btn--primary btn--tiny"
@@ -321,21 +473,30 @@ function RepromptBox({ nodeId }: { nodeId: string }) {
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder={backend === "cad" ? "add a fillet, drill a hole, thicken a wall…" : "rename the button, add sorting, restyle the rows…"}
-          aria-label="reprompt this node"
+          aria-label="describe a change to this part"
         />
         <button
           type="submit"
           className="btn btn--primary"
           disabled={busy}
           data-state={busy ? "loading" : undefined}
-          title="In-contract asks re-cook only this node; interface changes escalate to the architect"
+          title="Asks that fit the pinned interface re-cook this node alone; anything that changes the interface goes to the architect first"
         >
           {routing ? "routing…" : cooking ? "cooking…" : "re-cook"}
         </button>
       </form>
       {routed && (
         <div className="tier-note">
-          <span className={`tier-badge tier-badge--${routed.tier.toLowerCase()}`}>{routed.tier}</span>
+          <span
+            className={`tier-badge tier-badge--${routed.tier.toLowerCase()}`}
+            title={
+              routed.tier === "T2"
+                ? "T2 — this node only. Its interface is pinned, so neighbours cannot break."
+                : "T3 — the interface itself has to change, so the architect proposes it first."
+            }
+          >
+            {routed.tier === "T2" ? "this node only" : "interface change"}
+          </span>
           {routed.reason}
         </div>
       )}
@@ -349,14 +510,17 @@ function ProposalCard({ nodeId }: { nodeId: string }) {
   const proposal = useStudio((s) => s.proposal);
   const acceptProposal = useStudio((s) => s.acceptProposal);
   const rejectProposal = useStudio((s) => s.rejectProposal);
+  const [busy, setBusy] = useState(false);
   if (!proposal || proposal.nodeId !== nodeId) return null;
 
   const waveSize = 1 + proposal.dirtied.length;
   return (
-    <div className="proposal" role="region" aria-label="proposed contract change">
+    <div className="proposal" role="region" aria-label="proposed interface change">
       <div className="proposal__head">
-        <span className="tier-badge tier-badge--t3">T3</span>
-        <span className="proposal__title">architect proposes a contract change</span>
+        <span className="tier-badge tier-badge--t3" title="T3 — an interface change, so it needs your approval first">
+          interface change
+        </span>
+        <span className="proposal__title">the architect wants to change this interface</span>
       </div>
       <p className="proposal__rationale">{proposal.rationale}</p>
       {proposal.notes.length > 0 && (
@@ -383,10 +547,22 @@ function ProposalCard({ nodeId }: { nodeId: string }) {
         )}
       </div>
       <div className="proposal__actions">
-        <button className="btn btn--primary btn--tiny" onClick={() => void acceptProposal()}>
-          apply &amp; re-cook
+        <button
+          className="btn btn--primary btn--tiny"
+          disabled={busy}
+          data-state={busy ? "loading" : undefined}
+          onClick={() => {
+            setBusy(true);
+            void acceptProposal().finally(() => setBusy(false));
+          }}
+        >
+          {busy ? "applying…" : "apply & re-cook"}
         </button>
-        <button className="btn btn--quiet btn--tiny" onClick={() => void rejectProposal()}>
+        <button
+          className="btn btn--quiet btn--tiny"
+          disabled={busy}
+          onClick={() => void rejectProposal()}
+        >
           discard
         </button>
       </div>

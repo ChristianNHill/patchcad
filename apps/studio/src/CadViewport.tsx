@@ -23,18 +23,39 @@ const loader = new GLTFLoader();
 
 function statusTint(status: NodeStatus | undefined, selected: boolean): string | null {
   if (selected) return "var-accent";
-  if (status === "dirty" || status === "repairing") return "var-warn";
+  if (status === "dirty" || status === "repairing" || status === "cancelled") return "var-warn";
   if (status === "error_code" || status === "error_contract") return "var-danger";
   return null;
 }
 
-// Token hues resolved once — three.js needs literal colors, not CSS vars.
-const TINTS: Record<string, THREE.Color> = {
-  "var-accent": new THREE.Color("#6fd3e8"),
-  "var-warn": new THREE.Color("#e8b551"),
-  "var-danger": new THREE.Color("#e86f6f"),
-};
-const BASE = new THREE.Color("#9aa7b0");
+// three.js needs literal colours, so these are READ FROM the tokens at first
+// use rather than hand-copied. The hand-copied set had drifted: the "accent"
+// literal was 25% lower chroma than --color-accent, "warn" was 7° off hue, and
+// the part base and grid were invented values on a hue the palette never uses.
+let tokenCache: Record<string, THREE.Color> | null = null;
+
+function tokens(): Record<string, THREE.Color> {
+  if (tokenCache) return tokenCache;
+  const style = getComputedStyle(document.documentElement);
+  const read = (name: string, fallback: string) => {
+    const raw = style.getPropertyValue(name).trim();
+    try {
+      return new THREE.Color(raw || fallback);
+    } catch {
+      // A browser that cannot parse oklch() in a Color still gets the palette.
+      return new THREE.Color(fallback);
+    }
+  };
+  tokenCache = {
+    "var-accent": read("--color-accent", "#2ccceb"),
+    "var-warn": read("--color-warn", "#e8aa4e"),
+    "var-danger": read("--color-danger", "#e8605b"),
+    base: read("--color-ink-2", "#a6b0b3"),
+    grid: read("--color-rule", "#263033"),
+    "grid-2": read("--color-rule-2", "#2c3437"),
+  };
+  return tokenCache;
+}
 
 function PartMesh({
   id,
@@ -61,7 +82,7 @@ function PartMesh({
       const cloned = gltf.scene;
       cloned.traverse((child) => {
         if (child instanceof THREE.Mesh) {
-          child.material = new THREE.MeshStandardMaterial({ color: BASE, metalness: 0.1, roughness: 0.6 });
+          child.material = new THREE.MeshStandardMaterial({ color: tokens().base, metalness: 0.1, roughness: 0.6 });
         }
       });
       setObject(cloned);
@@ -76,8 +97,9 @@ function PartMesh({
     object.traverse((child) => {
       if (child instanceof THREE.Mesh) {
         const m = child.material as THREE.MeshStandardMaterial;
-        m.color.copy(tint ? TINTS[tint]! : BASE);
-        m.emissive.copy(tint ? TINTS[tint]!.clone().multiplyScalar(0.25) : new THREE.Color(0));
+        const t = tokens();
+        m.color.copy(tint ? t[tint]! : t.base!);
+        m.emissive.copy(tint ? t[tint]!.clone().multiplyScalar(0.25) : new THREE.Color(0));
       }
     });
   }, [object, tint]);
@@ -221,7 +243,8 @@ function CadViewportInner() {
   }, [graph?.rev, sceneRev, reloadKey]);
 
   const grid = useMemo(() => {
-    const g = new THREE.GridHelper(400, 40, "#3a4f5c", "#2a3a44");
+    const t = tokens();
+    const g = new THREE.GridHelper(400, 40, t.grid, t["grid-2"]);
     g.rotation.x = Math.PI / 2; // XZ default → our XY ground (z-up)
     return g;
   }, []);
@@ -266,6 +289,9 @@ function CadViewportInner() {
 
   if (!graph) return null;
   const parts = Object.entries(data?.meshes ?? {});
+  // Never let an exclusion be silent: a short export is otherwise indistinguishable
+  // from a broken one.
+  const hiddenCount = Object.values(graph.nodes).filter((n) => n.hidden).length;
 
   return (
     <div className="cad-viewport">
@@ -289,7 +315,14 @@ function CadViewportInner() {
         <OrbitControls makeDefault />
       </Canvas>
       <div className="cad-viewport__bar">
-        <span>{parts.length} part{parts.length === 1 ? "" : "s"}</span>
+        <span>
+          {parts.length} part{parts.length === 1 ? "" : "s"}
+          {hiddenCount > 0 && (
+            <span className="cad-viewport__hidden" title="Hidden parts stay in the model and out of the export">
+              {" "}· {hiddenCount} hidden
+            </span>
+          )}
+        </span>
         {parts.length > 1 && (
           <label className="cad-viewport__explode" title="slide parts apart along their assembly directions — joints and pegs stay visible, nothing changes in the graph">
             explode

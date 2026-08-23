@@ -205,6 +205,10 @@ export const NodeRecord = z.object({
   pinned: z.boolean().default(false),
   /** Current T0 values (defaults come from contract.params). */
   params: z.record(ParamValue).default({}),
+  /** Excluded from export and from the rendered scene, but STILL SOLVED — a
+   *  hidden node keeps its pose so anything mated to it stays put. Changes no
+   *  contract and no hash, so hiding never dirties anything. */
+  hidden: z.boolean().default(false),
   deps: z.array(z.string()).default([]),
   artifact: Artifact.nullable().default(null),
   thread: z.array(ChatMessage).default([]),

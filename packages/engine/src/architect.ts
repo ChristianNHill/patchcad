@@ -362,6 +362,7 @@ export function architectOutputToGraph(
       contract,
       pinned: false,
       params: {},
+      hidden: false,
       deps: [],
       artifact: null,
       thread: [],
@@ -415,6 +416,9 @@ export async function planGraph(opts: {
   backend: DomainBackend<unknown>;
   projectId: string;
   goal: string;
+  /** Progress narration. The architect runs one long call plus up to three
+   *  lint-repair rounds, and none of that was visible to the user. */
+  onPhase?: (phase: "drafting" | "checking" | "repairing" | "done" | "failed", detail?: string) => void;
   signal?: AbortSignal;
 }): Promise<PlanResult> {
   const kinds = opts.backend.planning.nodeKinds.map((k) => k.kind);
@@ -444,6 +448,7 @@ Each node's contract.payload is a STRICT JSON string. The object it encodes MUST
 ${payloadDoc}`;
   const goalMessage = { role: "user" as const, content: `Goal: ${opts.goal}` };
 
+  opts.onPhase?.("drafting");
   const first = await opts.provider.complete({
     role: "architect",
     label: `architect:${opts.projectId}`,
@@ -470,11 +475,13 @@ ${payloadDoc}`;
     return problems;
   };
 
+  opts.onPhase?.("checking", `${Object.keys(out.nodes ?? {}).length || out.nodes?.length || 0} parts drafted`);
   let problems = lint(out);
   // 3 rounds: weaker local models need more than one shot at the lints.
   const maxRepairs = 3;
   for (let round = 1; problems.length > 0 && round <= maxRepairs; round++) {
     repaired = true;
+    opts.onPhase?.("repairing", `round ${round} of ${maxRepairs} — ${problems.length} issue(s)`);
     lintRounds.push([...problems]);
     const repair = await opts.provider.complete({
       role: "architect",
@@ -509,8 +516,10 @@ ${payloadDoc}`;
     problems = lint(out);
   }
   if (problems.length > 0) {
+    opts.onPhase?.("failed", `${problems.length} issue(s) the architect could not fix`);
     throw new Error(`architect graph failed lints after ${maxRepairs} repairs:\n${problems.join("\n")}`);
   }
+  opts.onPhase?.("done");
 
   return {
     graph: architectOutputToGraph(out, opts.projectId, opts.backend.id, opts.goal, opts.backend.planning.paramUnit),

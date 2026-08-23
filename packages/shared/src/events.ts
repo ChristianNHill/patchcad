@@ -20,6 +20,15 @@ export const EngineEvent = z.discriminatedUnion("type", [
     detail: CookFailure.optional(),
   }),
   z.object({
+    /** Where the architect is in a plan. The plan call is the longest single
+     *  operation in the product and used to show only a button reading
+     *  "planning…" for its whole duration. */
+    type: z.literal("plan:phase"),
+    projectId: z.string(),
+    phase: z.enum(["drafting", "checking", "repairing", "done", "failed"]),
+    detail: z.string().default(""),
+  }),
+  z.object({
     type: z.literal("node:committed"),
     projectId: z.string(),
     nodeId: z.string(),

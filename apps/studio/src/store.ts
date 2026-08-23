@@ -1,10 +1,12 @@
 import { create } from "zustand";
-import type { Contract, EngineEvent, GraphDoc, NodeStatus, ParamValue } from "@patchcad/shared";
+import type { Contract, CookFailure, EngineEvent, GraphDoc, NodeStatus, ParamValue } from "@patchcad/shared";
 import { API, WS_API } from "./api";
+
+export type PlanPhase = "drafting" | "checking" | "repairing" | "done" | "failed";
 
 export type PlanState =
   | { status: "idle" }
-  | { status: "planning"; goal: string }
+  | { status: "planning"; goal: string; phase: PlanPhase; detail: string; startedAt: number }
   | { status: "pending"; plan: GraphDoc; rationale: string; usd: number }
   | { status: "error"; message: string };
 
@@ -32,7 +34,18 @@ interface StudioState {
   selectedNodeId: string | null;
   selectedCode: string;
   statuses: Record<string, NodeStatus>;
+  /** Why a node failed: {stage, message, attribution}. The server has always
+   *  sent this on node:status; nothing used to read it, so a burned cook showed
+   *  a red dot and nothing else. */
+  failures: Record<string, CookFailure>;
   logs: string[];
+  /** Last unhandled failure, surfaced in the header. design.md:80 — toasts for
+   *  failures only, and this is that one channel. */
+  problem: string | null;
+  /** False between a dropped socket and a successful reconnect. */
+  connected: boolean;
+  /** selectNode's fetch is in flight — distinct from "this node has no code". */
+  codeLoading: boolean;
   previewFrame: HTMLIFrameElement | null;
   planState: PlanState;
   checker: { status: "clean" | "checking" | "failing"; problems: string[] };
@@ -46,6 +59,7 @@ interface StudioState {
   /** Per-node DfAM measurements (CADClamp-derived), filled by the viewport fetch. */
   printability: Record<string, { composite?: number; min_wall?: { thin_wall_p2_mm: number }; overhang?: { fail_area_fraction: number } }>;
   setPrintability: (p: StudioState["printability"]) => void;
+  dismissProblem: () => void;
 
   connect: () => Promise<void>;
   selectNode: (nodeId: string | null) => Promise<void>;
@@ -60,7 +74,13 @@ interface StudioState {
   rejectProposal: () => Promise<void>;
   revert: (nodeId: string, version: number) => Promise<void>;
   updateContract: (nodeId: string, contract: unknown) => Promise<{ ok: boolean; error?: string }>;
+  /** Exclude from export + the rendered scene. Not a contract change: nothing dirties. */
+  setHidden: (nodeId: string, hidden: boolean) => Promise<void>;
+  /** Remove a node. Downstream consumers go stale. Undoable via the op-log. */
+  deleteNode: (nodeId: string) => Promise<void>;
   cookDirty: () => Promise<void>;
+  /** Halt every in-flight node. They settle to `cancelled` and cook-dirty resumes them. */
+  cancelCook: () => Promise<void>;
   loadProjects: () => Promise<void>;
   openProject: (dir: string) => Promise<void>;
   closeProject: () => Promise<void>;
@@ -73,6 +93,35 @@ interface StudioState {
 }
 
 const persistTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+
+/** Turn a non-ok response into a sentence worth showing. These calls used to
+ *  check `res.ok` and do nothing on the false branch, so a failed approve, open,
+ *  revert or param persist was indistinguishable from a successful one. */
+async function reason(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: string };
+    if (body.error) return body.error;
+  } catch {
+    /* not JSON — the status line is all we have */
+  }
+  return `${fallback} (${res.status})`;
+}
+
+/** Raw NodeStatus values leaked to the UI as tooltips — "error_code",
+ *  "verifying". These are what a person should read instead. */
+export const STATUS_LABEL: Record<NodeStatus, string> = {
+  planned: "planned",
+  queued: "queued",
+  generating: "writing",
+  building: "building",
+  verifying: "checking",
+  repairing: "repairing",
+  ready: "ready",
+  dirty: "stale",
+  error_code: "failed",
+  error_contract: "blocked",
+  cancelled: "cancelled",
+};
 
 /** 1234 → "1.2k", 40 → "40". Token counts everywhere in the cost UI. */
 export function fmtTokens(n: number): string {
@@ -87,7 +136,11 @@ export const useStudio = create<StudioState>((set, get) => ({
   selectedNodeId: null,
   selectedCode: "",
   statuses: {},
+  failures: {},
   logs: [],
+  problem: null,
+  connected: false,
+  codeLoading: false,
   previewFrame: null,
   planState: { status: "idle" },
   checker: { status: "clean", problems: [] },
@@ -100,16 +153,33 @@ export const useStudio = create<StudioState>((set, get) => ({
   printability: {},
 
   async connect() {
-    const res = await fetch(`${API}/api/project`);
-    const { graph, previewUrl, dir, undo } = (await res.json()) as {
-      graph: GraphDoc;
-      previewUrl: string;
-      dir: string;
-      undo?: { depth: number; label: string };
-    };
-    const statuses: Record<string, NodeStatus> = {};
-    for (const n of Object.values(graph.nodes)) statuses[n.id] = n.status;
-    set({ graph, previewUrl, statuses, projectDir: dir, undo: undo ?? { depth: 0, label: "" } });
+    // NO BARE AWAIT HERE. A server that is down used to throw before the socket
+    // was created, so the reconnect timer below was never installed and the app
+    // sat on "connecting…" forever while main.tsx grew an unbounded red box.
+    try {
+      const res = await fetch(`${API}/api/project`);
+      if (!res.ok) throw new Error(`server answered ${res.status}`);
+      const { graph, previewUrl, dir, undo } = (await res.json()) as {
+        graph: GraphDoc;
+        previewUrl: string;
+        dir: string;
+        undo?: { depth: number; label: string };
+      };
+      const statuses: Record<string, NodeStatus> = {};
+      for (const n of Object.values(graph.nodes)) statuses[n.id] = n.status;
+      set({
+        graph,
+        previewUrl,
+        statuses,
+        projectDir: dir,
+        undo: undo ?? { depth: 0, label: "" },
+        connected: true,
+      });
+    } catch {
+      set({ connected: false });
+      setTimeout(() => void get().connect(), 2000);
+      return;
+    }
 
     const ws = new WebSocket(`${WS_API}/ws`);
     ws.onmessage = (msg) => {
@@ -119,9 +189,21 @@ export const useStudio = create<StudioState>((set, get) => ({
         for (const n of Object.values(event.graph.nodes)) st[n.id] = n.status;
         // A replaced graph invalidates any server-side proposal.
         const switched = get().graph?.id !== event.graph.id;
-        set({ graph: event.graph, statuses: st, ...(switched ? { proposal: null } : {}) });
+        set({ graph: event.graph, statuses: st, failures: {}, ...(switched ? { proposal: null } : {}) });
       } else if (event.type === "node:status") {
-        set((s) => ({ statuses: { ...s.statuses, [event.nodeId]: event.status } }));
+        set((s) => {
+          const failures = { ...s.failures };
+          // Keep the reason a node failed; clear it the moment it recovers.
+          if (event.detail) failures[event.nodeId] = event.detail;
+          else delete failures[event.nodeId];
+          return { statuses: { ...s.statuses, [event.nodeId]: event.status }, failures };
+        });
+      } else if (event.type === "plan:phase") {
+        set((s) =>
+          s.planState.status === "planning"
+            ? { planState: { ...s.planState, phase: event.phase, detail: event.detail } }
+            : {},
+        );
       } else if (event.type === "job:log") {
         set((s) => ({ logs: [...s.logs.slice(-99), `[${event.nodeId}] ${event.line}`] }));
       } else if (event.type === "node:committed") {
@@ -150,27 +232,26 @@ export const useStudio = create<StudioState>((set, get) => ({
         });
       }
     };
-    ws.onclose = () => setTimeout(() => void get().connect(), 2000);
+    ws.onclose = () => {
+      set({ connected: false });
+      setTimeout(() => void get().connect(), 2000);
+    };
+  },
 
-    // The preview iframe announces readiness; answer with the param snapshot.
-    window.addEventListener("message", (e) => {
-      const data = e.data as { type?: string; nodeId?: string; message?: string } | undefined;
-      if (data?.type === "patchcad:preview:ready") get().sendInitialParams();
-      if (data?.type === "patchcad:node:error") {
-        set((s) => ({
-          logs: [...s.logs.slice(-99), `[${data.nodeId}] crashed in preview: ${data.message}`],
-        }));
-      }
-    });
+  dismissProblem() {
+    set({ problem: null });
   },
 
   async selectNode(nodeIdValue) {
-    set({ selectedNodeId: nodeIdValue, selectedCode: "" });
+    set({ selectedNodeId: nodeIdValue, selectedCode: "", codeLoading: !!nodeIdValue });
     if (!nodeIdValue) return;
-    const res = await fetch(`${API}/api/project/nodes/${nodeIdValue}/code`);
-    if (res.ok) {
+    try {
+      const res = await fetch(`${API}/api/project/nodes/${nodeIdValue}/code`);
+      if (!res.ok) throw new Error(await reason(res, "could not load the code"));
       const { code } = (await res.json()) as { code: string };
-      set({ selectedCode: code });
+      set({ selectedCode: code, codeLoading: false });
+    } catch (err) {
+      set({ codeLoading: false, problem: (err as Error).message });
     }
   },
 
@@ -191,7 +272,7 @@ export const useStudio = create<StudioState>((set, get) => ({
   },
 
   async plan(goal, backend = "web-code") {
-    set({ planState: { status: "planning", goal } });
+    set({ planState: { status: "planning", goal, phase: "drafting", detail: "", startedAt: Date.now() } });
     try {
       const res = await fetch(`${API}/api/project/plan`, {
         method: "POST",
@@ -223,12 +304,17 @@ export const useStudio = create<StudioState>((set, get) => ({
 
   async approvePlan() {
     const res = await fetch(`${API}/api/project/plan/approve`, { method: "POST" });
-    if (res.ok) set({ planState: { status: "idle" }, selectedNodeId: null });
+    if (!res.ok) {
+      set({ planState: { status: "error", message: await reason(res, "could not start the cook") } });
+      return;
+    }
+    set({ planState: { status: "idle" }, selectedNodeId: null });
     // graph:replaced + node statuses arrive over the WS as the cook runs.
   },
 
   async discardPlan() {
-    await fetch(`${API}/api/project/plan`, { method: "DELETE" });
+    const res = await fetch(`${API}/api/project/plan`, { method: "DELETE" });
+    if (!res.ok) set({ problem: await reason(res, "could not discard the plan") });
     set({ planState: { status: "idle" } });
   },
 
@@ -255,21 +341,34 @@ export const useStudio = create<StudioState>((set, get) => ({
   async acceptProposal() {
     const proposal = get().proposal;
     if (!proposal) return;
+    // Clear AFTER the server accepts. Clearing first meant a 500 looked exactly
+    // like success: the card vanished and nothing cooked.
+    const res = await fetch(`${API}/api/project/nodes/${proposal.nodeId}/proposal/accept`, { method: "POST" });
+    if (!res.ok) {
+      set({ problem: await reason(res, "could not apply the proposal") });
+      return;
+    }
     set({ proposal: null });
-    await fetch(`${API}/api/project/nodes/${proposal.nodeId}/proposal/accept`, { method: "POST" });
     // Statuses + committed versions stream over the WS as the wave cooks.
   },
 
   async rejectProposal() {
     const proposal = get().proposal;
     if (!proposal) return;
+    const res = await fetch(`${API}/api/project/nodes/${proposal.nodeId}/proposal`, { method: "DELETE" });
+    if (!res.ok) {
+      set({ problem: await reason(res, "could not discard the proposal") });
+      return;
+    }
     set({ proposal: null });
-    await fetch(`${API}/api/project/nodes/${proposal.nodeId}/proposal`, { method: "DELETE" });
   },
 
   async loadProjects() {
     const res = await fetch(`${API}/api/projects`);
-    if (!res.ok) return;
+    if (!res.ok) {
+      set({ problem: await reason(res, "could not list projects") });
+      return;
+    }
     const data = (await res.json()) as { projects: ProjectEntry[]; active: string };
     set({ projects: data.projects, projectDir: data.active });
   },
@@ -280,18 +379,22 @@ export const useStudio = create<StudioState>((set, get) => ({
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ dir }),
     });
-    if (res.ok) {
-      set({ projectDir: dir, projectPickerOpen: false, selectedNodeId: null, proposal: null });
-      // graph:replaced arrives over the WS with the new project's nodes.
+    if (!res.ok) {
+      set({ problem: await reason(res, "could not open that project") });
+      return;
     }
+    set({ projectDir: dir, projectPickerOpen: false, selectedNodeId: null, proposal: null });
+    // graph:replaced arrives over the WS with the new project's nodes.
   },
 
   async closeProject() {
     const res = await fetch(`${API}/api/project/close`, { method: "POST" });
-    if (res.ok) {
-      set({ projectDir: null, projectPickerOpen: false, selectedNodeId: null, proposal: null });
-      // graph:replaced arrives over the WS with the empty graph -> welcome renders.
+    if (!res.ok) {
+      set({ problem: await reason(res, "could not close the project") });
+      return;
     }
+    set({ projectDir: null, projectPickerOpen: false, selectedNodeId: null, proposal: null });
+    // graph:replaced arrives over the WS with the empty graph -> welcome renders.
   },
 
   setProjectPickerOpen(open) {
@@ -361,15 +464,46 @@ export const useStudio = create<StudioState>((set, get) => ({
   },
 
   async cookDirty() {
-    await fetch(`${API}/api/project/cook-dirty`, { method: "POST" });
+    const res = await fetch(`${API}/api/project/cook-dirty`, { method: "POST" });
+    if (!res.ok) set({ problem: await reason(res, "could not start the re-cook") });
+  },
+
+  async setHidden(nodeIdValue, hidden) {
+    const res = await fetch(`${API}/api/project/nodes/${nodeIdValue}/hidden`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hidden }),
+    });
+    if (!res.ok) set({ problem: await reason(res, hidden ? "could not hide it" : "could not show it") });
+  },
+
+  async deleteNode(nodeIdValue) {
+    const res = await fetch(`${API}/api/project/nodes/${nodeIdValue}`, { method: "DELETE" });
+    if (!res.ok) {
+      set({ problem: await reason(res, "could not delete that node") });
+      return;
+    }
+    if (get().selectedNodeId === nodeIdValue) set({ selectedNodeId: null, selectedCode: "" });
+  },
+
+  async cancelCook() {
+    const res = await fetch(`${API}/api/project/cook/cancel`, { method: "POST" });
+    // 409 = nothing was cooking. Not worth a banner; the button is already gone.
+    if (!res.ok && res.status !== 409) {
+      set({ problem: await reason(res, "could not stop the cook") });
+    }
   },
 
   async revert(nodeIdValue, version) {
-    await fetch(`${API}/api/project/nodes/${nodeIdValue}/revert`, {
+    const res = await fetch(`${API}/api/project/nodes/${nodeIdValue}/revert`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ version }),
     });
+    if (!res.ok) {
+      set({ problem: await reason(res, `could not revert to v${version}`) });
+      return;
+    }
     if (get().selectedNodeId === nodeIdValue) void get().selectNode(nodeIdValue);
   },
 
@@ -394,7 +528,26 @@ export const useStudio = create<StudioState>((set, get) => ({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ params: { [name]: value } }),
-      });
+      })
+        // A silently-failed persist reverts on the next load, which reads as
+        // "the app forgot my edit".
+        .then((res) => {
+          if (!res.ok) set({ problem: `${name} did not save (${res.status})` });
+        })
+        .catch(() => set({ problem: `${name} did not save — the server is unreachable` }));
     }, 400);
   },
 }));
+
+// Registered ONCE, at module scope. It used to live inside connect(), so every
+// 2-second reconnect attached another copy and the preview's messages were
+// handled N times over.
+window.addEventListener("message", (e) => {
+  const data = e.data as { type?: string; nodeId?: string; message?: string } | undefined;
+  if (data?.type === "patchcad:preview:ready") useStudio.getState().sendInitialParams();
+  if (data?.type === "patchcad:node:error") {
+    useStudio.setState((s) => ({
+      logs: [...s.logs.slice(-99), `[${data.nodeId}] crashed in preview: ${data.message}`],
+    }));
+  }
+});

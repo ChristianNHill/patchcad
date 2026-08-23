@@ -1006,8 +1006,11 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     opts: { nodeId?: string; format: string },
   ): Promise<ExportResult> {
     const { world } = this.solveScene(graph);
+    // Hidden parts drop out of the EXPORT here. solveScene above still sees
+    // them, so hiding a base plate does not unmoor the bracket bolted to it.
+    // The viewport's mesh list is filtered separately, in the cad-scene route.
     const nodes = Object.values(graph.nodes).filter(
-      (n) => n.artifact?.code && (!opts.nodeId || n.id === opts.nodeId),
+      (n) => n.artifact?.code && !n.hidden && (!opts.nodeId || n.id === opts.nodeId),
     );
     const parts = nodes.map((n) => ({
       code: n.artifact!.code,

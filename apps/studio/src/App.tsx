@@ -1,11 +1,63 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fmtTokens, useStudio } from "./store.js";
 import { Canvas } from "./canvas/Canvas.js";
+import { Modal } from "./Modal.js";
 import { CadViewport } from "./CadViewport.js";
 import { Inspector } from "./Inspector.js";
-import { PlanBar, PlanOverlay } from "./PlanBar.js";
+import { PlanBar, PlanOverlay, PlanProgress } from "./PlanBar.js";
 import { ImportButton } from "./ImportButton.js";
 import { Welcome } from "./Welcome.js";
+
+/** Statuses that mean the server is mid-flight on this node. */
+const COOKING = new Set(["queued", "generating", "building", "verifying", "repairing"]);
+
+/** One failure channel, per design.md:80 ("toasts for failures only"). */
+function ProblemBar() {
+  const problem = useStudio((s) => s.problem);
+  const dismiss = useStudio((s) => s.dismissProblem);
+  const connected = useStudio((s) => s.connected);
+  if (!connected) {
+    return (
+      <div className="problem-bar" data-kind="offline" role="status">
+        <span className="problem-bar__text">lost the connection to patchcad — retrying every 2s</span>
+      </div>
+    );
+  }
+  if (!problem) return null;
+  return (
+    <div className="problem-bar" role="alert">
+      <span className="problem-bar__text">{problem}</span>
+      <button className="btn btn--quiet btn--tiny" onClick={dismiss}>dismiss</button>
+    </div>
+  );
+}
+
+/** The store buffers 100 lines and the header used to render exactly one of
+ *  them, truncated. The other 99 were unreachable. */
+function LogStrip({ logs }: { logs: string[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        className="header__log"
+        onClick={() => setOpen((v) => !v)}
+        title={`${logs.length} line${logs.length === 1 ? "" : "s"} — click for the full log`}
+        aria-expanded={open}
+      >
+        {logs[logs.length - 1]}
+      </button>
+      {open && (
+        <div className="log-panel" role="log">
+          <div className="log-panel__head">
+            <span className="section__label">Activity</span>
+            <button className="btn btn--quiet btn--tiny" onClick={() => setOpen(false)}>close</button>
+          </div>
+          <pre className="log-panel__body">{logs.join("\n")}</pre>
+        </div>
+      )}
+    </>
+  );
+}
 
 export function App() {
   const graph = useStudio((s) => s.graph);
@@ -13,6 +65,7 @@ export function App() {
   const connect = useStudio((s) => s.connect);
   const setPreviewFrame = useStudio((s) => s.setPreviewFrame);
   const logs = useStudio((s) => s.logs);
+  const connected = useStudio((s) => s.connected);
   const frameRef = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
@@ -29,15 +82,18 @@ export function App() {
       if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.key.toLowerCase() !== "z") return;
       const t = e.target as HTMLElement | null;
       if (t && (["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName) || t.isContentEditable)) return;
+      // The button is disabled while cooking; the shortcut was not.
+      const st = useStudio.getState();
+      if (Object.values(st.statuses).some((v) => COOKING.has(v))) return;
       e.preventDefault();
-      void useStudio.getState().undoLast();
+      void st.undoLast();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   if (!graph) {
-    return <div className="app__empty">connecting to the patchcad server on :4100…</div>;
+    return <div className="app__empty">{connected ? "loading your design…" : "waiting for patchcad to start — retrying…"}</div>;
   }
 
   // Nothing designed yet: the front door is a single question, no chrome.
@@ -67,18 +123,18 @@ export function App() {
         <ImportButton />
         <CheckerChip />
         <CostChip />
+        <CookProgress />
         <DirtyButton />
         <UndoButton />
         <ProjectButton />
         <span className="header__goal" title={graph.brief.goal}>
           {graph.brief.goal}
         </span>
-        {logs.length > 0 && (
-          <span className="header__log" aria-live="polite">
-            {logs[logs.length - 1]}
-          </span>
-        )}
+        {logs.length > 0 && <LogStrip logs={logs} />}
       </header>
+
+      <ProblemBar />
+      <PlanProgress />
 
       <div className="app__main">
         <div className="app__canvas">
@@ -91,7 +147,7 @@ export function App() {
           ) : previewUrl ? (
             <iframe ref={frameRef} src={previewUrl} title="live preview" />
           ) : (
-            <div className="app__empty">preview offline — is the server running?</div>
+            <div className="app__empty">preview offline — reconnecting…</div>
           )}
         </div>
 
@@ -171,8 +227,8 @@ function ProjectPicker() {
   const setOpen = useStudio((s) => s.setProjectPickerOpen);
   if (!open) return null;
   return (
-    <div className="overlay" role="dialog" aria-label="open a project" onClick={() => setOpen(false)}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+    <Modal label="open a project" onClose={() => setOpen(false)}>
+      <>
         <div className="modal__head">
           <h2 className="modal__title">Projects</h2>
           <button className="btn btn--quiet btn--tiny" onClick={() => setOpen(false)}>
@@ -204,20 +260,54 @@ function ProjectPicker() {
           })}
           {projects.length === 0 && <div className="inspector__hint">nothing here yet — plan a goal to create the first project</div>}
         </div>
-      </div>
-    </div>
+      </>
+    </Modal>
+  );
+}
+
+/** Cooking costs minutes and real money, and until now the only way to stop one
+ *  was to kill the server. The endpoint has existed the whole time. */
+function CookProgress() {
+  const statuses = useStudio((s) => s.statuses);
+  const cancelCook = useStudio((s) => s.cancelCook);
+  const [stopping, setStopping] = useState(false);
+  const all = Object.values(statuses);
+  const busy = all.filter((s) => COOKING.has(s)).length;
+  useEffect(() => {
+    if (busy === 0) setStopping(false);
+  }, [busy]);
+  if (busy === 0) return null;
+  const done = all.filter((s) => s === "ready").length;
+  return (
+    <span className="cook-progress">
+      <span className="cook-progress__count">
+        {done}/{all.length} ready · {busy} working
+      </span>
+      <button
+        className="btn btn--quiet btn--tiny"
+        disabled={stopping}
+        data-state={stopping ? "loading" : undefined}
+        onClick={() => {
+          setStopping(true);
+          void cancelCook();
+        }}
+        title="Stops every node still working. Finished nodes keep their result; stopped ones can be re-cooked."
+      >
+        {stopping ? "stopping…" : "stop"}
+      </button>
+    </span>
   );
 }
 
 function DirtyButton() {
   const statuses = useStudio((s) => s.statuses);
   const cookDirty = useStudio((s) => s.cookDirty);
+  // `cancelled` is resumable work the server will happily re-cook; leaving it
+  // out meant a stopped cook looked like nothing was left to do.
   const stale = Object.values(statuses).filter((s) =>
-    ["planned", "dirty", "error_code", "error_contract"].includes(s),
+    ["planned", "dirty", "error_code", "error_contract", "cancelled"].includes(s),
   ).length;
-  const cooking = Object.values(statuses).some((s) =>
-    ["queued", "generating", "building", "verifying", "repairing"].includes(s),
-  );
+  const cooking = Object.values(statuses).some((s) => COOKING.has(s));
   if (stale === 0) return null;
   return (
     <button
@@ -225,9 +315,9 @@ function DirtyButton() {
       disabled={cooking}
       data-state={cooking ? "loading" : undefined}
       onClick={() => void cookDirty()}
-      title="Regenerates dirty and errored nodes; clean neighbors stay untouched"
+      title="Regenerates stale, failed and cancelled nodes; finished neighbours stay untouched"
     >
-      {cooking ? "cooking…" : `re-cook ${stale} dirty`}
+      {cooking ? "cooking…" : `re-cook ${stale} stale`}
     </button>
   );
 }
@@ -244,7 +334,7 @@ function CheckerChip() {
     <span
       className="checker"
       data-status={checker.status}
-      title={checker.problems.slice(0, 6).join("\n") || "the assembled graph bundles cleanly"}
+      title={checker.problems.slice(0, 6).join("\n") || "every part assembles without conflicts"}
     >
       {label}
     </span>
