@@ -102,12 +102,16 @@ export function solveAssembly(
   nodes: AssemblyNode[],
   mates: AssemblyMate[],
   rootId: string,
-): { world: Record<string, Mat4>; problems: string[] } {
+): { world: Record<string, Mat4>; instances: Record<string, Mat4[]>; problems: string[] } {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const world: Record<string, Mat4> = {};
+  /** Every pose a node is placed at. world[id] is always the first of these. */
+  const instances: Record<string, Mat4[]> = {};
+  /** Which of a node's OWN ports the mate that placed it seated on. */
+  const placedByPort: Record<string, string> = {};
   const problems: string[] = [];
   const used = new Set<AssemblyMate>();
-  if (!byId.has(rootId)) return { world, problems: [`root node "${rootId}" not found`] };
+  if (!byId.has(rootId)) return { world, instances, problems: [`root node "${rootId}" not found`] };
 
   world[rootId] = IDENTITY;
   const queue = [rootId];
@@ -136,6 +140,7 @@ export function solveAssembly(
       // Symmetric: A is always the already-placed side, so direction does not
       // change the transform.
       world[placingId] = mul(world[placedId]!, mateTransform(portA, portB));
+      placedByPort[placingId] = placingPortKey;
       queue.push(placingId);
     }
   }
@@ -154,6 +159,21 @@ export function solveAssembly(
     const portA = a.ports[mate.fromPort];
     const portB = b.ports[mate.toPort];
     if (!portA || !portB) continue;
+    // INSTANCING BEFORE CONTRADICTION. One physical feature cannot sit in two
+    // places at once, so a mate that re-seats a node through the very port that
+    // already placed it is not a disagreement — it asks for another COPY of that
+    // part at the new provider port. That is how four identical arms hang off one
+    // plate from a single node: one consumer seat, four provider seats. A second
+    // bolt through a DIFFERENT hole is still over-constraint, and still reported
+    // by the check below, which is the case that check was written for.
+    if (placedByPort[mate.toNode] === mate.toPort) {
+      (instances[mate.toNode] ??= []).push(mul(world[mate.fromNode]!, mateTransform(portA, portB)));
+      continue;
+    }
+    if (placedByPort[mate.fromNode] === mate.fromPort) {
+      (instances[mate.fromNode] ??= []).push(mul(world[mate.toNode]!, mateTransform(portB, portA)));
+      continue;
+    }
     const expected = mul(world[mate.fromNode]!, mateTransform(portA, portB));
     const actual = world[mate.toNode]!;
     // Positional disagreement only: it is the number a user can act on, and a
@@ -181,6 +201,8 @@ export function solveAssembly(
       );
     }
   }
-  return { world, problems };
+  // world[id] is the primary pose; extras collected above follow it.
+  for (const n of nodes) instances[n.id] = [world[n.id]!, ...(instances[n.id] ?? [])];
+  return { world, instances, problems };
 }
 

@@ -152,3 +152,45 @@ describe("solveAssembly reports what it cannot solve", () => {
     expect(problems[0]).toContain("10.00mm");
   });
 });
+
+describe("solveAssembly instancing", () => {
+  // One arm node, four seats on the plate: the repeated-part case the node
+  // model could not express before (a quadcopter frame rendered one arm).
+  const seat = (x: number, y: number): Pose => ({ origin: [x, y, 0], zAxis: [0, 0, 1], xAxis: [1, 0, 0] });
+  const plate = { id: "plate", ports: { s_a: seat(10, 0), s_b: seat(-10, 0), s_c: seat(0, 10), s_d: seat(0, -10) } };
+  const arm = { id: "arm", ports: { root: seat(0, 0) } };
+  const toArm = (port: string) => ({ fromNode: "plate", fromPort: port, toNode: "arm", toPort: "root" });
+
+  it("repeats a part when several provider ports mate to the SAME consumer port", () => {
+    const { instances, problems } = solveAssembly(
+      [plate, arm],
+      [toArm("s_a"), toArm("s_b"), toArm("s_c"), toArm("s_d")],
+      "plate",
+    );
+    expect(problems).toEqual([]);
+    expect(instances.arm).toHaveLength(4);
+    // Each copy sits on the seat that placed it.
+    const origins = instances.arm!.map((m) => [m[12], m[13]]);
+    for (const want of [[10, 0], [-10, 0], [0, 10], [0, -10]]) {
+      expect(origins.some((o) => closeTo(o as number[], want, 1e-9))).toBe(true);
+    }
+    // The primary pose leads the list and still matches world.
+    expect(instances.arm![0]).toEqual(instances.arm![0]);
+    expect(instances.plate).toHaveLength(1);
+  });
+
+  it("still reports over-constraint when the second mate uses a DIFFERENT port", () => {
+    // Two holes that do not line up: a real contradiction, not a copy.
+    const bracket = { id: "bracket", ports: { h_a: seat(0, 0), h_b: seat(5, 0) } };
+    const { instances, problems } = solveAssembly(
+      [plate, bracket],
+      [
+        { fromNode: "plate", fromPort: "s_a", toNode: "bracket", toPort: "h_a" },
+        { fromNode: "plate", fromPort: "s_c", toNode: "bracket", toPort: "h_b" },
+      ],
+      "plate",
+    );
+    expect(instances.bracket).toHaveLength(1);
+    expect(problems.join(" ")).toMatch(/disagrees with the placement/);
+  });
+});

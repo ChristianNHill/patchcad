@@ -15,7 +15,7 @@ import { API } from "./api";
  */
 
 interface SceneData {
-  scene: { nodes: Record<string, { title: string; matrix?: number[]; version: number }>; problems: string[] };
+  scene: { nodes: Record<string, { title: string; matrix?: number[]; matrices?: number[][]; version: number }>; problems: string[] };
   meshes: Record<string, { glb: string; status: string; printability?: { composite?: number } }>;
 }
 
@@ -60,7 +60,9 @@ function PartMesh({
   tint: string | null;
   /** World-space displacement (mm) — the exploded-view slide. */
   offset?: [number, number, number];
-  onCenter: (id: string, min: [number, number, number], max: [number, number, number]) => void;
+  /** Omitted for repeat instances: the explode offset is per-node, so only
+   *  the first copy reports a centre. */
+  onCenter?: (id: string, min: [number, number, number], max: [number, number, number]) => void;
 }) {
   const [object, setObject] = useState<THREE.Object3D | null>(null);
 
@@ -109,7 +111,7 @@ function PartMesh({
     const box = new THREE.Box3().setFromObject(object);
     if (box.isEmpty()) return;
     box.applyMatrix4(m4);
-    onCenter(id, [box.min.x, box.min.y, box.min.z], [box.max.x, box.max.y, box.max.z]);
+    onCenter?.(id, [box.min.x, box.min.y, box.min.z], [box.max.x, box.max.y, box.max.z]);
   }, [object, m4, id, onCenter]);
 
   const placed = useMemo(() => {
@@ -288,17 +290,27 @@ function CadViewportInner() {
         <directionalLight position={[-80, 90, 40]} intensity={0.4} />
         <primitive object={grid} />
         <FitCamera box={unionBox} partsKey={liveIds.join("|")} />
-        {parts.map(([id, mesh]) => (
-          <PartMesh
-            key={`${id}:${mesh.glb}`}
-            id={id}
-            url={mesh.glb}
-            matrix={data?.scene.nodes[id]?.matrix}
-            tint={statusTint(statuses[id], selectedNodeId === id)}
-            offset={offsets[id]}
-            onCenter={onCenter}
-          />
-        ))}
+        {parts.flatMap(([id, mesh]) => {
+          // One node can be placed at several poses (four arms off one plate),
+          // so the node draws once per pose. Only the first reports its centre:
+          // the explode offset is per-node, so every copy of a node slides by
+          // the same vector.
+          // ponytail: shared offset, give instances their own centres if
+          // exploding a repeated part ever needs to fan them out individually.
+          const n = data?.scene.nodes[id];
+          const poses = n?.matrices?.length ? n.matrices : [n?.matrix];
+          return poses.map((matrix, i) => (
+            <PartMesh
+              key={`${id}:${mesh.glb}:${i}`}
+              id={id}
+              url={mesh.glb}
+              matrix={matrix}
+              tint={statusTint(statuses[id], selectedNodeId === id)}
+              offset={offsets[id]}
+              onCenter={i === 0 ? onCenter : undefined}
+            />
+          ));
+        })}
         <OrbitControls makeDefault />
       </Canvas>
       <div className="cad-viewport__bar">

@@ -872,6 +872,19 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       "Prefer axis-aligned frames (zAxis one of ±x/±y/±z) and simple orientations:",
       "plates flat in XY, height along Z.",
       "",
+      "IDENTICAL PARTS ARE ONE NODE, REPEATED BY EDGES. Four arms on a frame,",
+      "two skids under a body, six identical legs: emit ONE node for the part and",
+      "wire it once per position — every edge landing on the SAME port of that",
+      "node, from a DIFFERENT port on the part it mounts to. The assembly places",
+      "a copy per edge, so four seats on a plate give four arms from one node,",
+      "and reprompting that node changes all of them together. Give the mounting",
+      "part a seat port per position (arm_seat_fl, arm_seat_fr, ...); the repeated",
+      "part needs only its single mating port. Edges onto DIFFERENT ports of the",
+      "same node still mean one part held at two points, so do not reuse a port",
+      "name to mean two features.",
+      "Features repeated WITHIN one part — a bolt circle, four blades on a hub,",
+      "a hole pattern — are not nodes at all: the generator writes a loop.",
+      "",
       "FASTENERS ARE OPTIONAL, and never decorative. Emit one only when separate",
       "parts are genuinely bolted together, and only alongside the hole ports on",
       "the parts it joins — every fastener must be wired to a CLEARANCE_HOLE,",
@@ -1127,17 +1140,25 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     const mates: AssemblyMate[] = graph.edges.map((e) => {
       return { fromNode: e.from, fromPort: e.fromPort, toNode: e.to, toPort: e.toPort };
     });
-    const { world, problems } = solveAssembly(nodes, mates, graph.assembly.entryNodeId);
+    const { world, instances, problems } = solveAssembly(nodes, mates, graph.assembly.entryNodeId);
     const scene = {
       nodes: Object.fromEntries(
         Object.values(graph.nodes).map((n) => [
           n.id,
-          { title: n.title, matrix: world[n.id], version: n.version },
+          {
+            title: n.title,
+            // `matrix` stays the primary pose so every existing reader keeps
+            // working; `matrices` carries the repeats, and is what the viewport
+            // walks. A node wired to one seat has a single-entry list.
+            matrix: world[n.id],
+            matrices: instances[n.id] ?? [world[n.id]],
+            version: n.version,
+          },
         ]),
       ),
       problems,
     };
-    return { scene, world, problems };
+    return { scene, world, instances, problems };
   }
 
   async globalCheck(graph: GraphDoc, ws: Workspace): Promise<CheckResult> {
