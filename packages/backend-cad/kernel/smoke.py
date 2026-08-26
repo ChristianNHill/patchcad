@@ -676,6 +676,35 @@ def build(p):
     check("G3 catches a declared peg that was never built", r.status_code == 422 and "no peg" in r.text,
           r.text[:140])
 
+    # ---- render decimation must not shred the mesh -------------------------
+    # OCP tessellation is unwelded, and fast_simplification collapses EDGES,
+    # so simplifying it directly destroyed the part instead of coarsening it:
+    # a 90x90x3 plate went 17243mm2 -> 910mm2 of surface and rendered as
+    # scattered slivers. Only meshes over MAX_TRIANGLES were hit, which is why
+    # it looked random. The contact sheet feeds the vision pass, so a wrong
+    # render is a wrong judgement, not a cosmetic bug.
+    import numpy as _np
+    from src.patchcad_kernel.render import _decimate, _surface_area, MAX_TRIANGLES
+
+    _n, _side = 60, 100.0  # 7200 unwelded triangles over a known 10000mm2
+    _xs = _np.linspace(0, _side, _n + 1)
+    _tris = []
+    for _i in range(_n):
+        for _j in range(_n):
+            _a = (_xs[_i], _xs[_j], 0.0)
+            _b = (_xs[_i + 1], _xs[_j], 0.0)
+            _c = (_xs[_i + 1], _xs[_j + 1], 0.0)
+            _d = (_xs[_i], _xs[_j + 1], 0.0)
+            _tris += [[_a, _b, _c], [_a, _c, _d]]
+    _v = _np.asarray(_tris, dtype=_np.float64).reshape(-1, 3)
+    _t = _np.arange(len(_v), dtype=_np.int64).reshape(-1, 3)
+    _before = _surface_area(_v, _t)
+    _dv, _dt = _decimate(_v, _t)
+    _after = _surface_area(_dv, _dt)
+    check(f"render decimation preserves the part ({len(_t)} tris > {MAX_TRIANGLES})",
+          len(_t) > MAX_TRIANGLES and _after > 0.9 * _before,
+          f"area {_before:.0f} -> {_after:.0f}mm2 over {len(_dt)} tris")
+
     if failures:
         print(f"{len(failures)} FAILURE(S): {failures}")
         sys.exit(1)

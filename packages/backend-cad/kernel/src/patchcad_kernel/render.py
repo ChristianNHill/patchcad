@@ -57,14 +57,55 @@ def _mesh_arrays(shape: Any, tol: float = 0.3) -> tuple[np.ndarray, np.ndarray]:
             np.asarray(mesh.faces, dtype=np.int64).reshape(-1, 3))
 
 
+def _weld(v: np.ndarray, t: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Merge coincident corners, dropping the triangles that collapses.
+
+    OCP tessellation comes back UNWELDED: one vertex per triangle corner, so
+    adjacent triangles share no index (measured on a plate: 2568 vertices for
+    1272 distinct positions). A mesh like that has no interior edges at all.
+    """
+    uniq, inv = np.unique(np.round(v, 6), axis=0, return_inverse=True)
+    wt = inv.reshape(-1)[t]
+    keep = (wt[:, 0] != wt[:, 1]) & (wt[:, 1] != wt[:, 2]) & (wt[:, 0] != wt[:, 2])
+    return uniq, wt[keep]
+
+
+def _surface_area(v: np.ndarray, t: np.ndarray) -> float:
+    a = v[t[:, 1]] - v[t[:, 0]]
+    b = v[t[:, 2]] - v[t[:, 0]]
+    return float(np.linalg.norm(np.cross(a, b), axis=1).sum() / 2)
+
+
 def _decimate(v: np.ndarray, t: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     if len(t) <= MAX_TRIANGLES:
         return v, t
     try:
         import fast_simplification
 
-        vo, to = fast_simplification.simplify(v, t, target_count=MAX_TRIANGLES)
-        return np.asarray(vo, dtype=np.float64), np.asarray(to, dtype=np.int64)
+        # WELD FIRST. fast_simplification coarsens by collapsing EDGES, and an
+        # unwelded tessellation has none to collapse — so instead of coarsening
+        # it shreds the mesh into disconnected slivers. Measured on a 90x90x3
+        # plate: simplifying unwelded took surface area 17243mm2 -> 910mm2, 95%
+        # of the part destroyed; welded kept 17199mm2.
+        #
+        # This was NOT cosmetic. Only meshes over MAX_TRIANGLES were affected,
+        # so a 4959-triangle plate rendered as scattered line fragments while a
+        # 4000-triangle one beside it shaded correctly — and the contact sheet
+        # is exactly what inspectNode shows the vision model, so a sound part
+        # was being presented for judgement as a broken one.
+        wv, wt = _weld(v, t)
+        if len(wt) <= MAX_TRIANGLES:
+            return wv, wt  # welding alone got us under; also avoids the
+            # ValueError simplify raises when target_count >= n_faces
+        vo, to = fast_simplification.simplify(wv, wt, target_count=MAX_TRIANGLES)
+        vo = np.asarray(vo, dtype=np.float64)
+        to = np.asarray(to, dtype=np.int64).reshape(-1, 3)
+        # A simplifier that ate the part is worse than no simplifier: drawing
+        # every triangle is merely slow, whereas rendering something that is not
+        # the part is a wrong answer nothing downstream can detect.
+        if len(to) == 0 or _surface_area(vo, to) < 0.5 * _surface_area(wv, wt):
+            return v, t
+        return vo, to
     except Exception:  # noqa: BLE001 — a slow render beats no render
         return v, t
 
