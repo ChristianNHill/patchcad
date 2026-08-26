@@ -25,10 +25,38 @@ const CHEAT_SHEET = `build123d ALGEBRA MODE — the only API you may use (plus \
   chamfer(shape.edges().group_by(Axis.Z)[-1], length)
   shape.edges() / .faces() / .solids()      # selectors
   .filter_by(Axis.Z) / .group_by(Axis.Z)[-1] / .sort_by(Axis.Z)[-1]
+CURVED AND SWEPT SOLIDS — reach for these when the part is organic (a fuselage,
+a fairing, a grip, a blade). Primitives plus fillet only ever make a boxy part:
+  Plane.XY / Plane.XZ / Plane.YZ            # sketch planes
+  Plane.XY.offset(z)                        # a parallel plane z above
+  Circle(r) / Ellipse(x_r, y_r) / Rectangle(w, h) / RegularPolygon(r, n)
+  loft([sec_a, sec_b, sec_c])               # blend sketches into a smooth body
+  sweep(section, path)                      # drag a section along a wire
+  revolve(profile, Axis.Z, angle)           # turn a profile about an axis
+  extrude(section, amount, taper=deg)
+  Spline([(x, y), ...]) / Polyline(...) / Line(p1, p2) / RadiusArc(p1, p2, r)
+  make_face(closed_wire) / mirror(shape, Plane.YZ)
+  The cheapest smooth body is a loft through offset circles:
+    loft([Plane.XY.offset(z) * Circle(r) for z, r in ((0, 8), (20, 14), (45, 6))])
+  Sections must be sketches on planes, listed in order along the blend; a loft
+  through two identical circles is just a cylinder, so vary the radii.
 RULES:
   - def build(p): ... return <shape>   (exactly this entrypoint; p.name reads a param)
   - millimeters everywhere; NO topological string selectors; NO other imports.
   - loops/math are fine: for sx in (-1, 1): plate = plate - Pos(sx*dx, 0, 0) * Cylinder(r, t)
+  - SELECTORS COME BACK EMPTY: shape.edges().group_by(Axis.Z)[-1] raises
+    IndexError on an empty group, failing the node with a Python error instead
+    of a geometry one — and a fillet/chamfer whose edges you cannot be certain
+    of is exactly where that happens. If you are not sure the edge set exists,
+    leave the edge sharp. Cosmetic rounding is never worth losing the node.
+  - BUILD BUDGET: the kernel KILLS a build at 20 SECONDS and the node is lost —
+    a timeout is not a slow pass, it is a failure with nothing to measure.
+    Filleting every edge is what usually blows it: fillet(shape.edges(), r) on a
+    lofted or already-booleaned body can run for minutes. Narrow the selector
+    (.filter_by(Axis.Z), .group_by(Axis.Z)[-1]), round BEFORE cutting rather
+    than after, keep loft sections in single digits, and leave cosmetic edges
+    sharp. A measured helicopter fuselage burned all five attempts on exactly
+    this, every one at 20s.
   - CHAMFERS: use chamfer()/fillet() on the real edges. Do NOT fake one by
     subtracting a rotated Box — Rot(45,0,0) * Box(w, leg*2, leg*2) spans
     leg*1.414 in BOTH rotated axes, not leg, so a "small" lead-in sized against
