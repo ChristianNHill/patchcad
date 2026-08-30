@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { LlmProvider, LlmRequest, LlmResult, LlmRole } from "@patchcad/engine";
 import { ClaudeProvider, PRICES } from "@patchcad/llm-claude";
 import { OpenAiCompatProvider } from "@patchcad/llm-openai-compat";
+import { ClaudeCliProvider } from "./claude-cli-provider.js";
 
 /**
  * Provider resolution, in order:
@@ -25,7 +26,7 @@ import { OpenAiCompatProvider } from "@patchcad/llm-openai-compat";
  * how to set a key instead of failing cryptically.
  */
 
-const ProviderName = z.enum(["claude", "openrouter", "local"]);
+const ProviderName = z.enum(["claude", "openrouter", "local", "subscription"]);
 
 /** The same list prices, keyed by OpenRouter's slugs. DERIVED from the one
  *  table rather than re-typed beside it: two hand-maintained copies of the same
@@ -60,9 +61,17 @@ const ConfigSchema = z.object({
       generator: ProviderName,
       repair: ProviderName.optional(),
       classifier: ProviderName.optional(),
+      /** Handed every call that carries an image, whatever its role. Omit and
+       *  image calls follow their role, losing the attachment on a text-only
+       *  provider. */
+      vision: ProviderName.optional(),
     })
     .optional(),
   claude: z.object({ apiKey: z.string().optional(), models: RoleModels.optional() }).optional(),
+  /** Claude Code headless — bills the logged-in subscription, needs no key. */
+  subscription: z
+    .object({ models: RoleModels.optional(), bin: z.string().optional(), timeoutMs: z.number().optional() })
+    .optional(),
   openrouter: z.object({ apiKey: z.string(), models: RoleModels.optional() }).optional(),
   local: z
     .object({
@@ -79,12 +88,25 @@ const ConfigSchema = z.object({
 type Config = z.infer<typeof ConfigSchema>;
 
 /** Routes each request to the provider configured for its role. */
-class CompositeProvider implements LlmProvider {
+export class CompositeProvider implements LlmProvider {
   id = "composite";
-  constructor(private routes: Record<LlmRole, LlmProvider>) {
-    this.id = `composite(${[...new Set(Object.values(routes).map((p) => p.id))].join("+")})`;
+  constructor(
+    private routes: Record<LlmRole, LlmProvider>,
+    /** Takes any call carrying an image, whatever its role. */
+    private vision?: LlmProvider,
+  ) {
+    const ids = [...new Set(Object.values(routes).map((p) => p.id))];
+    const extra = vision && !ids.includes(vision.id) ? `+vision:${vision.id}` : "";
+    this.id = `composite(${ids.join("+")}${extra})`;
   }
   complete<T>(req: LlmRequest<T>): Promise<LlmResult<T>> {
+    // IMAGES OUTRANK ROLE, because neither vision call is reachable by a role
+    // map: inspectNode runs as "generator" (deliberately — it is triage, not
+    // repair) and the CAD repair prompt attaches a render under "repair". A
+    // provider that cannot see drops the attachment SILENTLY and answers about
+    // a picture it never received, which reads as a model being stupid rather
+    // than a router being wrong. So route on the capability the call needs.
+    if (this.vision && req.messages.some((m) => m.images?.length)) return this.vision.complete(req);
     return this.routes[req.role].complete(req);
   }
 }
@@ -94,6 +116,12 @@ function buildEntry(name: z.infer<typeof ProviderName>, config: Config): LlmProv
     if (!config.claude?.apiKey) throw new Error(`routing references "claude" but no claude.apiKey is set`);
     // ClaudeProvider fills any role omitted here from its own defaults.
     return new ClaudeProvider({ apiKey: config.claude.apiKey, models: config.claude.models });
+  }
+  if (name === "subscription") {
+    // No credential check: the CLI carries the user's own login, so there is
+    // nothing in the config that can be missing. A CLI that is absent or
+    // logged out surfaces on the first spawn, with its own message.
+    return new ClaudeCliProvider(config.subscription ?? {});
   }
   if (name === "openrouter") {
     if (!config.openrouter) throw new Error(`routing references "openrouter" but it is not configured`);
@@ -161,12 +189,15 @@ async function readRouting(
   };
   try {
     return {
-      provider: new CompositeProvider({
-        architect: get(names.architect),
-        generator: get(names.generator),
-        repair: get(names.repair),
-        classifier: get(names.classifier),
-      }),
+      provider: new CompositeProvider(
+        {
+          architect: get(names.architect),
+          generator: get(names.generator),
+          repair: get(names.repair),
+          classifier: get(names.classifier),
+        },
+        r.vision ? get(r.vision) : undefined,
+      ),
       source: `${configPath} (routing)`,
     };
   } catch (err) {

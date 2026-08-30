@@ -117,7 +117,17 @@ or `~/.patchcad/config.json`:
 { "claude": { "apiKey": "sk-ant-..." } } // native
 { "openrouter": { "apiKey": "sk-or-..." } } // any vendor via one key
 { "local": { "baseUrl": "http://localhost:11434/v1", "model": "qwen3-coder" } } // Ollama, free/offline
+{ "subscription": {} } // your Claude Code login, no key
 ```
+
+**`subscription` bills your Claude subscription instead of an API key.** It
+spawns `claude -p` per call with the agent stripped off: no tools, one turn, no
+settings or MCP discovery. You need the Claude Code CLI installed and logged in,
+and nothing in the config file. Two things to know about it. The cost figures
+the studio shows are attribution at API list price, not money you spent. They
+also include about 25k tokens of Claude Code's own tool schemas that ride every
+call. And it cannot see images, so route `vision` at a provider that can if you
+want the render-and-inspect pass, using the `routing` map below.
 
 Then type a goal in the studio's prompt bar. Planning targets **cad**
 (build123d parts, three.js viewport); the web-code backend still runs
