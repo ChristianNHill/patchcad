@@ -1,63 +1,72 @@
-/* Hallmark · genre: atmospheric · scope: app (three-pane instrument panel — canvas · preview · inspector)
- * theme: custom · vibe: "late-night patchbay — wired, precise, instrument-grade"
- * paper: oklch(15% 0.012 220) · accent: oklch(78% 0.13 215)
- * display: Space Grotesk · body: Geist · outlier: JetBrains Mono (machine-text role only)
- * axes: dark / grotesk-sans / cool · nav: app toolbar (marketing archetypes N/A) · footer: none (app)
- * studied: no · context: inferred (brand derived from existing product identity) · design-system: design.md
- * pre-emit critique: P4 H4 E4 S5 R4 V4
- * contrast: pass (40–41) · tokens: pass (48) · honest: pass (46) · chrome: pass (47)
- * icons: pass (30, hand-built SVG set) · responsive: pass (34, 49) · slop: pass (42–45)
+/* Hallmark · genre: editorial · scope: app (three-pane instrument panel — canvas · preview · inspector)
+ * theme: light · vibe: "notebook doodles on warm paper — warm gray canvas, white cards, ink line art"
+ * paper: #e0e0df · accent (action): #0070d7 · line art: ink (the reference's magenta is unused)
+ * display + body: Inter · outlier: JetBrains Mono (machine-text role only — app extension, see design.md)
+ * axes: light / inter / warm-neutral · nav: app toolbar · footer: none (app)
+ * source: DESIGN.md (Tally Forms style reference), adopted 2026-08-29
+ * one chromatic: blue, and only for action. Line art is ink — see design.md § Line art.
  */
 
 :root {
-  /* ---- colour · cyan-anchored dark, per design.md ---- */
-  --color-paper:      oklch(15% 0.012 220);  /* canvas ground            */
-  /* derived, not re-typed: a hand-copy silently desyncs when paper moves */
-  --minimap-mask:     oklch(from var(--color-paper) l c h / 0.78);
-  --color-paper-2:    oklch(19% 0.014 220);  /* panels: header, nodes    */
-  --color-paper-3:    oklch(23% 0.015 220);  /* elevated: modal, hover   */
-  --color-well:       oklch(12% 0.010 220);  /* recessed: inputs, code   */
-  --color-ink:        oklch(93% 0.010 220);  /* primary text             */
-  --color-ink-2:      oklch(75% 0.012 220);  /* secondary text           */
-  /* 62%, not 58%: calibrated to the DARKEST surface it failed AA on both of
-     the ones it is actually used on — 4.32 on paper-2, 3.95 on paper-3.
-     Now 5.08 / 4.65. Elevation-by-lightness means every step up costs contrast,
-     so this is measured against paper-3, not paper. */
-  --color-muted:      oklch(62% 0.014 220);  /* tertiary text            */
-  --color-rule:       oklch(30% 0.014 220);  /* borders, dividers        */
-  /* 32%: at 25% the inspector's section dividers were 1.15:1 and simply not
-     visible. Component BOUNDARIES here are carried by the surface lightness
-     step (design.md:50), not the hairline, so these are not held to 3:1. */
-  --color-rule-2:     oklch(32% 0.012 220);  /* faint dividers           */
-  --color-accent:     oklch(78% 0.13 215);   /* wire cyan — the signal   */
-  --color-accent-ink: oklch(16% 0.020 220);  /* text on accent fill      */
-  --color-focus:      oklch(82% 0.17 215);   /* :focus-visible only      */
-  /* modal scrim. A plain value, not a relative colour: ::backdrop lives in the
-     top layer and relative-colour resolution there is not reliable everywhere
-     (the same trap that once rendered the minimap white). */
-  --color-scrim:      oklch(12% 0.010 220 / 0.78);
+  /* ---- surfaces · warm paper canvas, white cards, mist for recessed ---- */
+  --color-paper:      #e0e0df;  /* page canvas                      */
+  --color-paper-2:    #ffffff;  /* cards: header, nodes, inspector   */
+  --color-paper-3:    #ffffff;  /* elevated: modal, log panel        */
+  --color-well:       #f3f3f3;  /* recessed: inputs, code, preview   */
+  /* plain rgba, not a relative colour: ::backdrop and the minimap both live
+     where relative-colour resolution has failed before. */
+  --minimap-mask:     rgba(224, 224, 223, 0.78);
+  --color-scrim:      rgba(55, 53, 47, 0.38);
 
-  /* semantic status hues — data encoding, distinct from accent */
-  --color-ok:     oklch(76% 0.13 150);       /* ready                    */
-  --color-warn:   oklch(78% 0.13 75);        /* dirty · repairing        */
-  --color-danger: oklch(66% 0.17 25);        /* error states             */
+  /* ---- ink · warm near-black, never pure black for text ---- */
+  --color-ink:        #37352f;  /* primary text                      */
+  --color-ink-2:      #45433e;  /* secondary text                    */
+  /* darker than the reference's Ash (#777672): tertiary text also sits on the
+     PAPER canvas, where Ash is 3.44:1 and fails AA. 4.83 on paper, 6.38 on white. */
+  --color-muted:      #615f5a;  /* tertiary text                     */
+  --color-rule:       #cfcfcc;  /* borders, dividers                 */
+  --color-rule-2:     #e2e2e0;  /* faint dividers                    */
+  --color-ash:        #777672;  /* input + icon strokes (reference Ash) */
+  --color-graphite:   #898884;  /* reference Graphite — 3D part surfaces, not text */
+  /* canvas dot grid. Its own value: the hairline rules are 1.02:1 on paper —
+     invisible as texture — and Ash at 1.5px reads as noise. */
+  --color-dot:        #bcbbb7;
+  /* 3D ground grid, two-tier like Fusion's: fine cells you read as texture,
+     major lines every 5th cell you read as a ruler, both fading with distance.
+     A CAD grid is a measuring aid — recessive, but never guesswork. */
+  --color-grid:       #c4c3bf;  /* minor cells, 10mm */
+  --color-grid-major: #9d9c97;  /* major lines, 50mm */
 
-  /* ---- type · 2+1: display / body / machine-text outlier ---- */
-  --font-display: "Space Grotesk Variable", "Space Grotesk", ui-sans-serif, sans-serif;
-  --font-body:    "Geist Variable", "Geist", ui-sans-serif, sans-serif;
+  /* ---- the one chromatic · action only ---- */
+  --color-accent:     #0070d7;  /* action blue — filled buttons, selection */
+  --color-accent-ink: #ffffff;  /* text on accent fill               */
+  --color-focus:      #005ec4;  /* :focus-visible ring + primary hover (darker, not lighter) */
+
+  /* semantic status hues — data encoding, exempt from the two-colour rule,
+     always paired with a text signal. Darkened from the usual light-theme
+     brights so each passes AA as text on white AND on paper. */
+  --color-ok:     #137a48;                   /* ready              */
+  --color-warn:   #8a5300;                   /* dirty · repairing  */
+  --color-danger: #b3261e;                   /* error states       */
+
+  /* ---- type · Inter everywhere, mono for machine text only ---- */
+  --font-display: "Inter Variable", "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-body:    "Inter Variable", "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono:    "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace;
 
-  --text-2xs: 0.6875rem;  /* 11px — chips, LED labels        */
-  --text-xs:  0.75rem;    /* 12px — captions, mono labels    */
-  --text-sm:  0.8125rem;  /* 13px — controls, secondary UI   */
-  --text-md:  0.875rem;   /* 14px — UI base                  */
-  --text-lg:  1rem;       /* 16px — panel titles             */
-  --text-xl:  1.25rem;    /* 20px — modal headings           */
-  --text-3xl: 2.25rem;    /* 36px — welcome hero ask         */
+  /* the tight tracking is the system's signature — display type reads editorial
+     rather than corporate because of it. */
+  --tracking-tight: -0.031em;
 
-  /* ---- space · 4-pt named scale ---- */
-  /* 2px half-step. Off the 4-pt grid on purpose, for icon/LED gaps where 4px
-     is visibly loose; design.md records the exception. */
+  --text-2xs: 0.75rem;    /* 12px — chips, LED labels, mono keys */
+  --text-xs:  0.8125rem;  /* 13px — caption                      */
+  --text-sm:  0.875rem;   /* 14px — controls, secondary UI       */
+  --text-md:  1rem;       /* 16px — body base                    */
+  --text-lg:  1.125rem;   /* 18px — panel titles                 */
+  --text-xl:  1.375rem;   /* 22px — modal headings               */
+  --text-3xl: 4rem;       /* 64px — welcome hero ask (display)   */
+
+  /* ---- space · 8-pt base with the 4-pt steps the panels need ---- */
   --space-3xs: 0.125rem;
   --space-2xs: 0.25rem;
   --space-xs:  0.5rem;
@@ -70,14 +79,22 @@
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --dur-micro:   120ms;
   --dur-long:    320ms;
-  --dur-pulse:   1.2s;    /* status-LED, per design.md's motion budget */
+  --dur-pulse:   1.2s;
 
-  /* ---- geometry ---- */
-  --radius-node:  10px;
-  --radius-input: 8px;
-  --radius-pill:  999px;
+  /* ---- geometry · two radii, that is the whole vocabulary ---- */
+  --radius-node:  10px;   /* cards  */
+  --radius-input: 7px;    /* buttons, inputs, tags */
+  --radius-pill:  999px;  /* dots and LEDs only */
+
+  /* ---- elevation · light theme lifts with shadow, not lightness ---- */
+  --shadow-card: rgba(0, 0, 0, 0.09) 0px 3px 12px 0px;
+  --shadow-elevated:
+    rgba(0, 0, 0, 0.12) 0px 1px 1px 0px,
+    rgba(61, 59, 53, 0.16) 0px 0px 0px 1px,
+    rgba(61, 59, 53, 0.08) 0px 3px 9px 0px,
+    rgba(61, 59, 53, 0.08) 0px 2px 5px 0px;
 
   /* ---- z · named layers ---- */
   --z-sticky:  200;
-  --z-fatal:   600;   /* uncaught-error surface — above everything */
+  --z-fatal:   600;
 }

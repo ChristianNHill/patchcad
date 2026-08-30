@@ -101,12 +101,12 @@ export function Canvas({ graph }: { graph: GraphDoc }) {
       proOptions={{ hideAttribution: true }}
       style={{ background: "var(--color-paper)" }}
     >
-      <Background color="var(--color-rule-2)" gap={26} size={1.5} />
+      <Background color="var(--color-dot)" gap={26} size={1.5} />
       <Controls showInteractive={false} />
       <MiniMap
         pannable
         bgColor="var(--color-paper-2)"
-        nodeColor={() => "var(--color-rule)"}
+        nodeColor={() => "var(--color-ash)"}
         maskColor="var(--minimap-mask)"
       />
     </ReactFlow>

@@ -1,6 +1,6 @@
 import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
-import { OrbitControls } from "@react-three/drei";
+import { Grid, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { NodeStatus } from "@patchcad/shared";
@@ -34,17 +34,17 @@ function statusTint(status: NodeStatus | undefined, selected: boolean): string |
 // blanks every part in the viewport, which is exactly what it did until this
 // was reverted to constants.
 //
-// So: literals, but the CORRECT literals, each the exact sRGB of its token.
-// Regenerate with the oklch->sRGB conversion if a token moves; the values are
-// asserted against tokens.css in viewport-colors.test.ts.
+// So: literals, but the CORRECT literals, each copied verbatim from its token.
+// The values are asserted against tokens.css in viewport-colors.test.ts, so a
+// token edit fails there instead of quietly desaturating the 3D view.
 const TINTS: Record<string, THREE.Color> = {
-  "var-accent": new THREE.Color("#2ccceb"), // --color-accent  oklch(78% 0.13 215)
-  "var-warn": new THREE.Color("#e8aa4e"), //   --color-warn    oklch(78% 0.13 75)
-  "var-danger": new THREE.Color("#e8605b"), // --color-danger  oklch(66% 0.17 25)
+  "var-accent": new THREE.Color("#0070d7"), // --color-accent
+  "var-warn": new THREE.Color("#8a5300"), //   --color-warn
+  "var-danger": new THREE.Color("#b3261e"), // --color-danger
 };
-const BASE = new THREE.Color("#a6b0b3"); //    --color-ink-2   oklch(75% 0.012 220)
-const GRID = "#263033"; //                     --color-rule    oklch(30% 0.014 220)
-const GRID_2 = "#2c3437"; //                   --color-rule-2  oklch(32% 0.012 220)
+const BASE = new THREE.Color("#898884"); //    --color-graphite
+const GRID = "#c4c3bf"; //                     --color-grid       10mm cells
+const GRID_MAJOR = "#9d9c97"; //               --color-grid-major 50mm lines
 
 function PartMesh({
   id,
@@ -232,12 +232,6 @@ function CadViewportInner() {
     };
   }, [graph?.rev, sceneRev, reloadKey]);
 
-  const grid = useMemo(() => {
-    const g = new THREE.GridHelper(400, 40, GRID, GRID_2);
-    g.rotation.x = Math.PI / 2; // XZ default → our XY ground (z-up)
-    return g;
-  }, []);
-
   // Exploded view: each part slides away from the assembly centroid along its
   // own center direction — mates and joints (pegs, sockets) become inspectable
   // without touching the graph. Purely visual, purely client-side.
@@ -288,7 +282,24 @@ function CadViewportInner() {
         <ambientLight intensity={0.6} />
         <directionalLight position={[100, -60, 140]} intensity={1.4} />
         <directionalLight position={[-80, 90, 40]} intensity={0.4} />
-        <primitive object={grid} />
+        {/* Ground plane, drawn the way a CAD viewport draws one: 10mm cells for
+            texture, 50mm lines for measuring, fading out with distance so the
+            plane reads as unbounded instead of as a square rug. drei's Grid is
+            a shader — one draw call, and the fade is what a GridHelper cannot do. */}
+        <Grid
+          cellSize={10}
+          cellThickness={0.6}
+          cellColor={GRID}
+          sectionSize={50}
+          sectionThickness={1.1}
+          sectionColor={GRID_MAJOR}
+          infiniteGrid
+          fadeFrom={0}
+          fadeDistance={900}
+          fadeStrength={0.6}
+          rotation={[Math.PI / 2, 0, 0]} // XZ default → our XY ground (z-up)
+          side={THREE.DoubleSide}
+        />
         <FitCamera box={unionBox} partsKey={liveIds.join("|")} />
         {parts.flatMap(([id, mesh]) => {
           // One node can be placed at several poses (four arms off one plate),

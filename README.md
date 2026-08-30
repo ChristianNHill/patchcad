@@ -5,21 +5,22 @@
 > notice, and fast-moving internals. See [Status & limitations](#status--limitations)
 > before trying it.
 
-![the patchcad studio: a prompt-planned pen cup holder as a node graph with live params, assembled in the viewport](docs/studio.png)
+![the patchcad studio: a prompt-planned toy helicopter as a node graph with live params, assembled in the viewport](docs/studio.gif)
 
-*"A pen cup holder with hexagonal cutouts that is 75mm wide, to be 3D printed" —
-the architect planned four printed parts with pinned contracts. This is the brief
-it wrote for one of them, verbatim:*
+*"A chunky toy helicopter about 150mm long made of separate press-fit printed
+parts" — the architect planned six printed parts with pinned contracts, one of
+them printed twice from a single node. This is the brief it wrote for that part,
+verbatim:*
 
-> A removable radial divider that slides down the inner bore of the tube and rests
-> on the floor, splitting the cup into wedge compartments: thin vertical blades
-> meeting at a central hub, with short standoff tabs at the blade tips so it
-> centres itself in the bore without needing force. Blades stop short of the rim
-> so the divider can be lifted out by hand; printed blades-vertical, no supports.
+> One curved landing skid, printed twice and pressed into the two sockets under
+> the pod: a rounded rail running along x with both ends curving upward, and a
+> single stubby strut rising from the middle of the rail to a plug on +z. Keep it
+> mirror-symmetric about its own y=0 plane and fore-and-aft symmetric so the same
+> part serves both sides.
 
 *Each part was then generated hermetically — seeing its neighbours' contracts,
 never their code — and gate-verified against its own geometry. The sliders on
-the right are that part's parameters, grouped and described by the architect;
+the node faces are those parts' parameters, grouped and described by the architect;
 every one re-executes through the geometry kernel with zero LLM calls.*
 
 Prompt-to-app on a TouchDesigner-style node canvas. Type a goal → an architect
