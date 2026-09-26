@@ -4,8 +4,6 @@
   "backend": "cad",
   "brief": {
     "goal": "clamp an L-bracket to a base plate with an M4 screw",
-    "constraints": [],
-    "clarifications": [],
     "design": ""
   },
   "nodes": {
@@ -163,12 +161,11 @@
         },
         "hash": "75dd4cab421be83f"
       },
-      "pinned": true,
       "params": {
         "thickness": 5.5,
         "depth": 60
       },
-      "deps": [],
+      "hidden": false,
       "artifact": {
         "code": "",
         "testCode": "",
@@ -354,14 +351,11 @@
         },
         "hash": "cdf1e5d39bca1a40"
       },
-      "pinned": true,
       "params": {
         "hole_diameter": 4.5,
         "thickness": 2
       },
-      "deps": [
-        "base-plate"
-      ],
+      "hidden": false,
       "artifact": {
         "code": "",
         "testCode": "",
@@ -491,14 +485,11 @@
         },
         "hash": "d8ce3dbe3a3b6c3f"
       },
-      "pinned": true,
       "params": {
         "thread": "M4",
         "length": 12
       },
-      "deps": [
-        "base-plate"
-      ],
+      "hidden": false,
       "artifact": {
         "code": "",
         "testCode": "",
@@ -544,6 +535,5 @@
   "assembly": {
     "entryNodeId": "base-plate"
   },
-  "layout": {},
-  "rev": 50
+  "rev": 51
 }
