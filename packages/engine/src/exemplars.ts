@@ -14,7 +14,8 @@ import { nodeSimilarity } from "./similarity.js";
  * generated. Feeding that entry back as an "example" would put a neighbor's
  * implementation into a generator prompt, which is the one thing the whole
  * design forbids. Every entry whose contract hash appears anywhere in the
- * requesting graph is therefore dropped, and that is asserted by test.
+ * requesting graph, current or in any node's history, is therefore dropped,
+ * and that is asserted by test.
  */
 
 /** Two exemplars is roughly triple the prompt, and with CAD repairs the block
@@ -51,9 +52,14 @@ export async function selectExemplars(opts: {
   const { library, backendId, node, graph } = opts;
   if (!library.list) return [];
 
-  // Every contract hash this graph contains, including the node being cooked.
-  const ownHashes = new Set(Object.values(graph.nodes).map((n) => n.contract.hash));
+  // Every contract hash this graph contains or ever committed under, including
+  // the node being cooked: a node captured under an earlier contract is still
+  // a neighbor's code.
+  const ownHashes = new Set(
+    Object.values(graph.nodes).flatMap((n) => [n.contract.hash, ...n.history.map((h) => h.contractHash)]),
+  );
   ownHashes.add(node.contract.hash);
+  for (const h of node.history) ownHashes.add(h.contractHash);
 
   const usableFrom = (listing: LibraryListing[]) =>
     listing.filter(

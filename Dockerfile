@@ -17,6 +17,8 @@ WORKDIR /app/packages/backend-cad/kernel
 COPY packages/backend-cad/kernel/pyproject.toml packages/backend-cad/kernel/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 COPY packages/backend-cad/kernel/ ./
+# The gates read tap drills and clearances from the shared catalog (meshpart.py).
+COPY packages/backend-cad/catalog/ /app/packages/backend-cad/catalog/
 RUN uv sync --frozen --no-dev
 ENV PATCHCAD_KERNEL_HOST=0.0.0.0 PATCHCAD_KERNEL_PORT=8621
 EXPOSE 8621

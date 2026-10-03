@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
+import { cookOne, EventBus, GraphStore, LlmCallError as EngineLlmCallError, type DomainBackend } from "@patchcad/engine";
 import { ClaudeProvider, isGrammarRejection, LlmCallError } from "./index.js";
 
 /** The real predicate, imported rather than reimplemented: a local copy would
@@ -148,8 +149,8 @@ describe("a failed call still reports what it billed", () => {
   it("carries usage out on the error", () => {
     const err = new LlmCallError("boom", { inputTokens: 6333, outputTokens: 1462, usd: 0.0682 });
     expect(err).toBeInstanceOf(Error);
-    expect(err.usage.usd).toBeCloseTo(0.0682);
-    expect(err.usage.inputTokens).toBe(6333);
+    expect(err.usage!.usd).toBeCloseTo(0.0682);
+    expect(err.usage!.inputTokens).toBe(6333);
     expect(err.name).toBe("LlmCallError");
   });
 });
@@ -177,13 +178,58 @@ describe("every throw carries what it billed", () => {
       cause: original,
     });
     expect(wrapped.cause).toBe(original);
-    expect(wrapped.usage.usd).toBe(0);
+    expect(wrapped.usage!.usd).toBe(0);
   });
 
   it("does not double-wrap an LlmCallError", () => {
     const inner = new LlmCallError("inner", { inputTokens: 1, outputTokens: 2, usd: 3 });
     // the wrapper rethrows the same instance rather than nesting it
     expect(inner instanceof LlmCallError).toBe(true);
-    expect(inner.usage.usd).toBe(3);
+    expect(inner.usage!.usd).toBe(3);
+  });
+});
+
+describe("a failed call on this provider is billed by the cook", () => {
+  // The adapter used to declare its own LlmCallError, so cook's `instanceof`
+  // (against the engine's class) never matched and every failed call on the
+  // paid provider lost its usage.
+  it("throws the engine's class, and cookOne bills it", async () => {
+    const provider = new ClaudeProvider({ apiKey: "test" });
+    (provider as unknown as { client: unknown }).client = {
+      messages: {
+        stream: () => ({
+          finalMessage: async () => ({
+            usage: { input_tokens: 1_000_000, output_tokens: 0 },
+            stop_reason: "refusal",
+            content: [],
+          }),
+        }),
+      },
+    };
+    const store = new GraphStore(
+      {
+        schemaVersion: 1, id: "p", backend: "mock", rev: 0, edges: [], assembly: { entryNodeId: "a" },
+        brief: { goal: "g", constraints: [], clarifications: [] },
+        nodes: {
+          a: {
+            id: "a", kind: "part", title: "A", spec: "", params: {}, hidden: false, artifact: null, thread: [],
+            status: "planned", measurements: null, version: 0, history: [],
+            cost: { calls: 0, inputTokens: 0, outputTokens: 0, usd: 0 },
+            contract: { name: "A", summary: "", params: [], provides: [], requires: [], payload: {}, hash: "" },
+          },
+        },
+      } as never,
+      new EventBus(),
+      async () => {},
+    );
+    const backend = {
+      id: "mock",
+      buildGeneratePrompt: () => ({ system: "", messages: [{ role: "user", content: "go" }], schema: z.object({ code: z.string() }), role: "generator" }),
+    } as unknown as DomainBackend<unknown>;
+    await expect(cookOne({ store, backend, provider, workspace: { root: "/tmp/x" } }, "a")).rejects.toBeInstanceOf(EngineLlmCallError);
+    expect(store.node("a").status).toBe("error_code");
+    // 1M input tokens at the default model's list price.
+    expect(store.node("a").cost.usd).toBeGreaterThan(0);
+    expect(store.node("a").cost.inputTokens).toBe(1_000_000);
   });
 });

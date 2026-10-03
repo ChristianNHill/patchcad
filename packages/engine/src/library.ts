@@ -37,12 +37,12 @@ export interface LibraryEntry {
   reused?: number;
 }
 
-/** A gate failure and the edit that cleared it, from a repair that passed. */
+/** A gate failure a repair cleared. Deliberately no code: mined pitfalls ride
+ *  later repair prompts, possibly a neighbor's in the same graph, and code from
+ *  one node must never reach another's prompt (hermeticity). */
 export interface RepairFix {
   stage: string;
   report: string;
-  /** Lines the repair removed (`- `) and added (`+ `). */
-  diff: string;
 }
 
 /** A pitfall mined from repeated fixes — the shape a backend's table merges. */
@@ -78,21 +78,6 @@ export interface NodeLibrary {
   recordFix?(backendId: string, fix: RepairFix): Promise<void>;
 }
 
-/** Line-level edit from `before` to `after`: what a repair changed, without
- *  the lines it kept. Capped — a rewrite is not a fix worth learning. */
-export function codeDiff(before: string, after: string, maxLines = 12): string {
-  const was = before.split("\n").map((l) => l.trim()).filter(Boolean);
-  const now = after.split("\n").map((l) => l.trim()).filter(Boolean);
-  const wasSet = new Set(was);
-  const nowSet = new Set(now);
-  return [
-    ...was.filter((l) => !nowSet.has(l)).map((l) => `- ${l}`),
-    ...now.filter((l) => !wasSet.has(l)).map((l) => `+ ${l}`),
-  ]
-    .slice(0, maxLines)
-    .join("\n");
-}
-
 /** A failure report reduced to what recurs across parts: its first line with
  *  numbers and quoted names blanked. "port \"bolt\" (BORE): expected Ø4.5,
  *  measured Ø9.00" and the same miss on another part share a signature. */
@@ -107,16 +92,24 @@ export function failureSignature(report: string): string {
  *  two can be coincidence, and a wrong fix would ride every matching repair. */
 export const MIN_PITFALL_OCCURRENCES = 3;
 
+/** What a learned pitfall tells a repair. Built from counts alone, never from
+ *  stored text, so no code can ride it into a prompt. */
+export function learnedPitfallFix(stage: string, occurrences: number): string {
+  return (
+    `This ${stage} failure has been seen and repaired ${occurrences} times before: it is a ` +
+    "recurring, local mistake. Fix the exact line or value the report names; do not restructure the part."
+  );
+}
+
 /**
- * Frequent (failure → fix) pairs as candidate pitfalls. Grouped by stage and
- * signature; the fix shown is the most recent diff, since later code reflects
- * the current prompts. Domain-agnostic: the backend decides whether to use it.
+ * Frequent cleared failures as candidate pitfalls, grouped by stage and
+ * signature. Domain-agnostic: the backend decides whether to use them.
  */
 export function minePitfalls(fixes: RepairFix[]): LearnedPitfall[] {
   const groups = new Map<string, RepairFix[]>();
   for (const f of fixes) {
     const sig = failureSignature(f.report);
-    if (!sig || !f.diff) continue;
+    if (!sig) continue;
     const key = `${f.stage}\u0000${sig}`;
     groups.set(key, [...(groups.get(key) ?? []), f]);
   }
@@ -132,7 +125,7 @@ export function minePitfalls(fixes: RepairFix[]): LearnedPitfall[] {
       id: `learned-${stage}-${hashValue(sig).slice(0, 8)}`,
       stage,
       pattern,
-      fix: `A repair that cleared this failure ${group.length} times changed:\n${group.at(-1)!.diff}`,
+      fix: learnedPitfallFix(stage, group.length),
       occurrences: group.length,
     });
   }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { Edges, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
@@ -85,11 +85,17 @@ function PlanPreviewInner({ planKey }: { planKey: string }) {
   const [error, setError] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, THREE.Group>>({});
   const [spent, setSpent] = useState(0);
+  /** A failed draft is one button's problem, not the whole preview's. */
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const currentKey = useRef(planKey);
+  currentKey.current = planKey;
 
   useEffect(() => {
     let live = true;
     setPreview(null);
+    setError(null);
     setDrafts({});
+    setDraftError(null);
     fetch(`${API}/api/project/plan/preview`, { method: "POST" })
       .then(async (res) => {
         const data = await res.json();
@@ -112,17 +118,26 @@ function PlanPreviewInner({ planKey }: { planKey: string }) {
   }, [preview]);
 
   const generateDraft = async (id: string) => {
-    const res = await fetch(`${API}/api/project/plan/preview-mesh`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ nodeId: id }),
-    });
-    const data = await res.json();
-    if (!res.ok) return setError(data.error ?? `draft failed (${res.status})`);
-    const bytes = Uint8Array.from(atob(data.glbB64), (c) => c.charCodeAt(0));
-    const gltf = await loader.parseAsync(bytes.buffer, "");
-    setDrafts((d) => ({ ...d, [id]: gltf.scene }));
-    setSpent((s) => s + (data.usd ?? 0));
+    const key = planKey;
+    setDraftError(null);
+    try {
+      const res = await fetch(`${API}/api/project/plan/preview-mesh`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ nodeId: id }),
+      });
+      const data = await res.json();
+      // A draft of a plan that has since been replaced belongs to nothing.
+      if (currentKey.current !== key) return;
+      if (!res.ok) return setDraftError(data.error ?? `draft failed (${res.status})`);
+      const bytes = Uint8Array.from(atob(data.glbB64), (c) => c.charCodeAt(0));
+      const gltf = await loader.parseAsync(bytes.buffer, "");
+      if (currentKey.current !== key) return;
+      setDrafts((d) => ({ ...d, [id]: gltf.scene }));
+      setSpent((s) => s + (data.usd ?? 0));
+    } catch (err) {
+      if (currentKey.current === key) setDraftError((err as Error).message);
+    }
   };
 
   if (error) return <div className="plan-preview__note">preview unavailable: {error}</div>;
@@ -161,6 +176,7 @@ function PlanPreviewInner({ planKey }: { planKey: string }) {
             </BusyButton>
           ))}
           {spent > 0 && <span className="plan-preview__note">preview meshes ≈ ${spent.toFixed(2)}</span>}
+          {draftError && <span className="plan-preview__note">draft failed: {draftError}</span>}
         </div>
       )}
     </>

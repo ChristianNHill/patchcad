@@ -107,12 +107,46 @@ pool = None  # set at startup; parent process stays OCP-free
 # 14 -> 15: hardware fit bands follow the process. A machined part (cnc,
 # sheet_metal, laser_cut) is held to press d-0.05..d and slip d..d+0.05, where
 # FDM keeps d-0.1..d and d+0.05..d+0.25; band edges get 0.02 of resolution slack.
-GATES_VERSION = 15
+# 15 -> 16: HOLE_PATTERN members, MOTOR_MOUNT screw holes and the bore under a
+# COUNTERBORE/COUNTERSINK must pass through unless they declare a depth; min_wall
+# gates on a guarded minimum instead of the 2nd percentile; hole_count clusters
+# axes by tolerance; a solids assertion fails as G2; a declaration no gate can
+# read fails as CONTRACT; depth marches intersect the B-rep instead of stepping.
+# Every one of these overturns cached passes.
+# 16 -> 17: LINEAR_BEARING_SEAT, CLIP_GROOVE and RAIL_MOUNT have probes; a port
+# of those types failed "no probe" before, and passes now when the part is right.
+GATES_VERSION = 17
+# Tap drills and clearances come from the catalog, so a catalog edit changes
+# verdicts too. Keyed by content, not by remembering to bump GATES_VERSION.
+CATALOG_DIGEST = hashlib.sha256(
+    (Path(__file__).resolve().parents[3] / "catalog" / "hardware.json").read_bytes()
+).hexdigest()[:12]
 
 
 def job_hash(*parts: Any) -> str:
     canonical = json.dumps(list(parts), sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(canonical.encode("utf8")).hexdigest()[:16]
+
+
+def import_stamp(import_dir: str, *codes: str) -> list[Any]:
+    """The imported files this code reads, by name, size and mtime. import_dir
+    was hashed as a path string, so a re-import that rewrote
+    <project>/imports/piece-0.ply kept the same key and served the old GLB and
+    verdict. Only files the code names, so re-importing one piece does not
+    invalidate the others; size+mtime, because hashing a 300k-face PLY on every
+    T0 slider move is the cost this cache exists to avoid."""
+    if not import_dir:
+        return []
+    try:
+        names = sorted(os.listdir(import_dir))
+    except OSError:
+        return []
+    stamp = []
+    for name in names:
+        if any(name in code for code in codes):
+            st = os.stat(os.path.join(import_dir, name))
+            stamp.append([name, st.st_size, st.st_mtime_ns])
+    return stamp
 
 
 class ExecuteBody(BaseModel):
@@ -182,7 +216,7 @@ async def lifespan(app: FastAPI):
     global pool
     from .pool import WorkerPool
 
-    pool = WorkerPool(POOL_SIZE)
+    pool = WorkerPool(POOL_SIZE, str(CACHE_ROOT / "traces" / str(PORT)))
     print(f"[kernel] {POOL_SIZE} warm workers ready, cache at {CACHE_ROOT}")
     yield
     pool.shutdown()
@@ -191,7 +225,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # The studio (a different localhost port) fetches GLBs straight from here.
-from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware
 
 app.add_middleware(
     CORSMiddleware,
@@ -210,10 +244,11 @@ async def health():
 async def execute(body: ExecuteBody):
     # The mesh is keyed on what shapes it; the verdict also on the contract.
     # Without contract gates the two keys are the same entry.
-    build_digest = job_hash(GATES_VERSION, body.code, body.params, body.import_dir)
+    stamp = import_stamp(body.import_dir, body.code)
+    build_digest = job_hash(GATES_VERSION, body.code, body.params, body.import_dir, stamp)
     has_contract = bool(body.ports or body.envelope or body.assertions or body.process) or body.solids is not None
-    digest = (job_hash(GATES_VERSION, body.code, body.params, body.ports, body.envelope, body.solids,
-                         body.assertions, body.import_dir, body.process)
+    digest = (job_hash(GATES_VERSION, CATALOG_DIGEST, body.code, body.params, body.ports, body.envelope, body.solids,
+                         body.assertions, body.import_dir, stamp, body.process)
               if has_contract else build_digest)
     out_dir = CACHE_ROOT / digest
     meas_file = out_dir / "measurements.json"
@@ -266,7 +301,8 @@ async def render(body: RenderBody):
     """
     # The tag versions the sheet's LOOK: a cached v1 sheet (dark, no triad or
     # scale bar) would otherwise be served for any code rendered before.
-    digest = job_hash("render-v2", body.code, body.params, body.import_dir, body.views)
+    digest = job_hash("render-v2", body.code, body.params, body.import_dir, import_stamp(body.import_dir, body.code),
+                      body.views)
     out_dir = CACHE_ROOT / digest
     sheet_file = out_dir / "sheet.png"
     if sheet_file.exists():
@@ -295,7 +331,10 @@ async def render(body: RenderBody):
 @app.post("/export")
 async def export(body: ExportBody):
     """Geometry out: a mesh for a slicer, or STEP for another CAD tool."""
-    digest = job_hash("export", [p.model_dump() for p in body.parts], body.format, body.import_dir)
+    # "export-v2": the exporters changed what they write, and the key had no
+    # version, so a file exported before kept being served.
+    digest = job_hash("export-v2", [p.model_dump() for p in body.parts], body.format, body.import_dir,
+                      import_stamp(body.import_dir, *(p.code for p in body.parts)))
     out_dir = CACHE_ROOT / digest
     out_file = out_dir / f"export.{body.format}"
     meta_file = out_dir / "export.json"
@@ -351,7 +390,7 @@ async def vendor_package_endpoint(body: VendorBody):
     """STEP + DXF + PDF drawing + RFQ.md for one fabricated part, zipped.
     Served at /artifact/<digest>/vendor.zip; not cached across requests, it is
     rare and the date in its title block changes."""
-    digest = job_hash(GATES_VERSION, "vendor-v1", body.model_dump())
+    digest = job_hash(GATES_VERSION, "vendor-v1", body.model_dump(), import_stamp(body.import_dir, body.code))
     out_dir = CACHE_ROOT / digest
     job = {"code": body.code, "params": body.params, "import_dir": body.import_dir, "out_dir": str(out_dir),
            "vendor": {"ports": body.ports, "measured": body.measured, "process": body.process, "meta": body.meta}}
@@ -398,13 +437,14 @@ async def clash_endpoint(body: ClashBody):
     # "clash-v2": the boolean moved off trimesh's is_volume gate, and reports
     # cached under 12 still say "boolean failed" for pairs it now compares.
     # "clash-v3": moving parts are swept through their joints' travel.
-    digest = job_hash(GATES_VERSION, "clash-v3", [p.model_dump() for p in body.parts], body.import_dir,
+    # "clash-v4": sweeps name the placed copies that move, each about its own axis.
+    digest = job_hash(GATES_VERSION, "clash-v4", [p.model_dump() for p in body.parts], body.import_dir,
+                      import_stamp(body.import_dir, *(p.code for p in body.parts)),
                       body.allow, body.contacts, body.sweeps)
     out_dir = CACHE_ROOT / digest
-    cached_file = out_dir / "clash.json"
-    if cached_file.exists():
-        with open(cached_file, encoding="utf8") as f:
-            return {"ok": True, "hash": digest, "cached": True, "clash": json.load(f)}
+    cached_file = anyio.Path(out_dir / "clash.json")
+    if await cached_file.exists():
+        return {"ok": True, "hash": digest, "cached": True, "clash": json.loads(await cached_file.read_text("utf8"))}
 
     job = {"clash": [p.model_dump() for p in body.parts], "import_dir": body.import_dir,
            "allow": body.allow, "contacts": body.contacts, "sweeps": body.sweeps}
@@ -415,11 +455,10 @@ async def clash_endpoint(body: ClashBody):
         # An uncompared pair is not a verdict: caching it would pin "skipped"
         # to this hash after whatever made it fail is fixed.
         return {"ok": True, "hash": digest, "cached": False, "clash": result["clash"]}
-    out_dir.mkdir(parents=True, exist_ok=True)
+    await anyio.Path(out_dir).mkdir(parents=True, exist_ok=True)
     tmp = cached_file.with_suffix(".tmp")
-    with open(tmp, "w", encoding="utf8") as f:
-        json.dump(result["clash"], f)
-    tmp.replace(cached_file)  # atomic: a half-written file would poison this hash
+    await tmp.write_text(json.dumps(result["clash"]), "utf8")
+    await tmp.replace(cached_file)  # atomic: a half-written file would poison this hash
     return {"ok": True, "hash": digest, "cached": False, "clash": result["clash"]}
 
 
@@ -462,7 +501,8 @@ class SilhouetteBody(BaseModel):
 async def silhouette_endpoint(body: SilhouetteBody):
     """G6: IoU of the posed assembly's orthographic silhouette against each
     reference mask, plus which parts account for the disagreement."""
-    digest = job_hash(GATES_VERSION, "silhouette-v1", [p.model_dump() for p in body.parts], body.import_dir, body.views)
+    digest = job_hash(GATES_VERSION, "silhouette-v1", [p.model_dump() for p in body.parts], body.import_dir,
+                      import_stamp(body.import_dir, *(p.code for p in body.parts)), body.views)
     cached_file = CACHE_ROOT / digest / "silhouette.json"
     if cached_file.exists():
         return {"ok": True, "hash": digest, "cached": True, "silhouette": json.loads(cached_file.read_text("utf8"))}
@@ -490,7 +530,8 @@ async def import_file(body: ImportBody):
     """Segment an uploaded STL/3MF/STEP into pieces + interface contracts.
     Runs in a worker (same isolation as node code); pieces land content-
     addressed like any other artifact."""
-    digest = job_hash("import", body.filename, body.data_b64[:64], len(body.data_b64), body.pieces, body.joints, body.thread, body.avoid)
+    digest = job_hash("import", body.filename, hashlib.sha256(body.data_b64.encode()).hexdigest(), body.pieces,
+                      body.joints, body.thread, body.avoid)
     out_dir = CACHE_ROOT / f"import-{digest}"
     job = {
         "import_job": {
@@ -513,7 +554,8 @@ async def import_file(body: ImportBody):
 async def mesh_fit(body: MeshFitBody):
     """Rotate, repair, scale and flat-cut a generated mesh into the node's
     frame. Content-addressed on the whole request, like a build."""
-    digest = job_hash("mesh-fit-v1", body.model_dump())
+    # "mesh-fit-v2": opposite flats on one axis no longer move each other's cut.
+    digest = job_hash("mesh-fit-v2", body.model_dump())
     out_dir = CACHE_ROOT / f"meshfit-{digest}"
     report = out_dir / "fit.json"
     if report.exists():

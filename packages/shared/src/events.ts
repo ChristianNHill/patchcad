@@ -66,6 +66,21 @@ export const EngineEvent = z.discriminatedUnion("type", [
         }),
       )
       .optional(),
+    /** Non-blocking findings (CAD: silhouette vs the reference image), with
+     *  the nodes most responsible. Also in `problems`; never block a node. */
+    advisories: z
+      .array(
+        z.object({
+          kind: z.string(),
+          nodes: z.array(z.string()),
+          measured: z.number(),
+          expected: z.number(),
+          message: z.string(),
+          view: z.string().optional(),
+          ref: z.string().optional(),
+        }),
+      )
+      .optional(),
   }),
   z.object({
     type: z.literal("cost:update"),

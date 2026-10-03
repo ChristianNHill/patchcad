@@ -31,7 +31,7 @@ def _apply_rlimits() -> None:
         import resource
 
         resource.setrlimit(resource.RLIMIT_AS, (MEMORY_LIMIT_BYTES, MEMORY_LIMIT_BYTES))
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110 — best-effort by design, the SIGKILL is the backstop
         pass
 
 
@@ -78,8 +78,12 @@ def _build(part: dict, ns: dict[str, object]):
 
 
 def _write_json(path: str, data: object) -> None:
-    with open(path, "w", encoding="utf8") as f:
+    """Write-then-rename, like every cache file: main.py treats existence as a
+    cache hit, so a worker killed mid-write would pin a truncated file to the hash."""
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf8") as f:
         json.dump(data, f, indent=1)
+    os.replace(tmp, path)
 
 
 def worker_main(conn: Connection, trace_path: str) -> None:
@@ -87,8 +91,9 @@ def worker_main(conn: Connection, trace_path: str) -> None:
     trace = open(trace_path, "w", encoding="utf8")  # noqa: SIM115 — lives as long as the worker
 
     # Pay the heavy OCP import once, at spawn — requests then run warm.
-    from . import gates  # noqa: F401 — also pulls build123d via export path lazily
     import build123d  # noqa: F401
+
+    from . import gates
 
     conn.send({"ready": True})
 
@@ -107,6 +112,7 @@ def worker_main(conn: Connection, trace_path: str) -> None:
         if job.get("trace_after_s"):
             faulthandler.dump_traceback_later(job["trace_after_s"], file=trace)
         try:
+            gates.reset_job_cache()
             if "import_job" in job:
                 from .meshpart import run_import
 
@@ -132,8 +138,7 @@ def worker_main(conn: Connection, trace_path: str) -> None:
                 os.makedirs(job["out_dir"], exist_ok=True)
                 out = os.path.join(job["out_dir"], f"export.{spec['format']}")
                 info = export_parts(shapes, out, spec["format"])
-                with open(os.path.join(job["out_dir"], "export.json"), "w", encoding="utf8") as f:
-                    json.dump(info, f)
+                _write_json(os.path.join(job["out_dir"], "export.json"), info)
                 conn.send({"ok": True, "export": info, "file": out,
                            "elapsed_ms": int((time.monotonic() - started) * 1000)})
                 continue
@@ -187,15 +192,9 @@ def worker_main(conn: Connection, trace_path: str) -> None:
 
             shape = _build(job, _namespace(job))
             measurements = gates.g2_validity(shape)
-            # advisory DfAM signal (CADClamp-derived) — never a gate
-            try:
-                from .printability import measure_printability
-
-                measurements["printability"] = measure_printability(shape)
-            except Exception:  # noqa: BLE001
-                pass
             out_dir = job["out_dir"]
-            # A render request wants the picture, not the gate report.
+            # A render request wants the picture, not the gate report, and not
+            # the printability rays either.
             if job.get("render_views"):
                 from .render import render_sheet
 
@@ -204,12 +203,24 @@ def worker_main(conn: Connection, trace_path: str) -> None:
                 conn.send({"ok": True, "render": render_info, "measurements": measurements,
                            "elapsed_ms": int((time.monotonic() - started) * 1000)})
                 continue
+            # advisory DfAM signal (CADClamp-derived) — never a gate
+            try:
+                from .printability import measure_printability
+
+                measurements["printability"] = measure_printability(shape)
+            except Exception as err:  # noqa: BLE001 — advisory, but a silent gap reads as "nothing to report"
+                measurements["printability"] = {"errors": [f"{type(err).__name__}: {err}"]}
             # The mesh depends on code+params only, so it is written under the
             # contract-free key BEFORE the contract gates: the viewport asks
             # without ports and must find it, even for a part whose ports fail.
             glb_dir = job.get("glb_dir") or out_dir
             os.makedirs(glb_dir, exist_ok=True)
-            gates.export_glb(shape, os.path.join(glb_dir, "mesh.glb"))
+            # Per-worker temp name: two workers building the same code+params
+            # (one gear row per module, all on the same params) share glb_dir,
+            # and one renamed the other's half-written temp out from under it.
+            tmp_glb = os.path.join(glb_dir, f"mesh.{os.getpid()}.tmp.glb")
+            gates.export_glb(shape, tmp_glb)
+            os.replace(tmp_glb, os.path.join(glb_dir, "mesh.glb"))
             _write_json(os.path.join(glb_dir, "measurements.json"), measurements)
             # Contract gates run only when declarations are supplied (verify pass).
             if (job.get("ports") or job.get("envelope") or job.get("assertions") or job.get("process")
@@ -217,8 +228,11 @@ def worker_main(conn: Connection, trace_path: str) -> None:
                 measurements |= gates.contract_gates(shape, job.get("ports") or [], job.get("envelope") or [],
                                                      job.get("assertions") or [], solids=job.get("solids"),
                                                      process=job.get("process"))
-                os.makedirs(out_dir, exist_ok=True)
-                _write_json(os.path.join(out_dir, "measurements.json"), measurements)
+                # A G4c rule that threw is recorded as unchecked, not passed, so
+                # this verdict is not one to cache: the next request re-runs it.
+                if not (measurements.get("process") or {}).get("unchecked"):
+                    os.makedirs(out_dir, exist_ok=True)
+                    _write_json(os.path.join(out_dir, "measurements.json"), measurements)
             conn.send({
                 "ok": True,
                 "measurements": measurements,
@@ -231,11 +245,7 @@ def worker_main(conn: Connection, trace_path: str) -> None:
                 reply["measurements"] = measurements
             conn.send(reply)
         except Exception as err:  # noqa: BLE001 — unexpected, still a structured reply
-            conn.send({
-                "ok": False,
-                "stage": "G1",
-                "error": f"unexpected kernel error: {type(err).__name__}: {err}",
-                "hint": "",
-            })
+            failure = {"stage": "G1", "error": f"unexpected kernel error: {type(err).__name__}: {err}", "hint": ""}
+            conn.send({"ok": False, **failure, "failures": [failure]})
         finally:
             faulthandler.cancel_dump_traceback_later()

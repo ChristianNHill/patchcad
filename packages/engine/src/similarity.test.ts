@@ -9,7 +9,7 @@ import {
   paramsInRange,
   titleSimilarity,
 } from "./similarity.js";
-import { codeDiff, failureSignature, minePitfalls, type RepairFix } from "./library.js";
+import { failureSignature, minePitfalls, type RepairFix } from "./library.js";
 import type { LibraryEntry, LibraryListing, NodeLibrary } from "./library.js";
 
 const num = (name: string, def = 5, min?: number, max?: number): ParamDecl =>
@@ -224,7 +224,7 @@ describe("findReusable title threshold", () => {
 });
 
 describe("pitfall mining", () => {
-  const fix = (report: string, diff = "- Cylinder(d, h)\n+ Cylinder(d / 2, h)"): RepairFix => ({ stage: "G3", report, diff });
+  const fix = (report: string): RepairFix => ({ stage: "G3", report });
 
   it("blanks numbers and names so the same miss on different parts groups", () => {
     expect(failureSignature('port "bolt" (BORE): expected Ø4.5, measured Ø9.00\nhint: x')).toBe(
@@ -242,10 +242,14 @@ describe("pitfall mining", () => {
     expect(mined!.occurrences).toBe(3);
     expect(mined!.stage).toBe("G3");
     expect(new RegExp(mined!.pattern).test('port "z" (BORE): expected Ø8, measured Ø16.00')).toBe(true);
-    expect(mined!.fix).toContain("+ Cylinder(d / 2, h)");
+    expect(mined!.fix).toContain("3 times");
   });
 
-  it("diffs only the lines a repair changed", () => {
-    expect(codeDiff("a\nb\nc", "a\nB\nc")).toBe("- b\n+ B");
+  it("never carries code into a pitfall, even from a legacy fix that has some", () => {
+    // Pitfalls ride later repair prompts, a neighbor's included: code here
+    // would be one node's implementation in another's prompt.
+    const legacy = (r: string) => ({ stage: "G3", report: r, diff: "+ SECRET = Cylinder(d / 2, h)" }) as RepairFix;
+    const [mined] = minePitfalls(["a", "b", "c"].map((n) => legacy(`port "${n}" (BORE): expected Ø4, measured Ø8`)));
+    expect(JSON.stringify(mined)).not.toContain("SECRET");
   });
 });

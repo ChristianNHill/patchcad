@@ -281,9 +281,9 @@ describe("cadProbedPortsLint", () => {
     }
   });
 
-  // This set is a claim about gates.py. If a type is listed here with no probe
-  // behind it, a node built from it passes verify as a featureless block.
-  it("lists exactly the types gates.py dispatches a probe for", () => {
+  // A type accepted with no probe behind it passes verify as a featureless
+  // block. Exact agreement with gates.py is pinned in "alias lists agree".
+  it("accepts the generic probed types and rejects the unprobed ones", () => {
     const probed = ["BORE", "BOSS_PATTERN", "CLEARANCE_HOLE", "FLAT_FACE", "GROOVE", "HOLE_PATTERN", "SCREW_BOSS", "SCREW_SEAT", "SHAFT", "SLOT"];
     const rejected = ["SNAP_HOOK", "SNAP_RECESS", "LIP"];
     for (const type of probed) {
@@ -630,7 +630,17 @@ describe("cadHardwareSeatLint", () => {
     expect(cadHardwareSeatLint.run(graph([hw("nut", "M4", 7.0)], []))).toEqual([]);
   });
 
-  it("uses across-flats for a nut and the flange for an insert", () => {
+  it("checks hardware that names a sku instead of a thread", () => {
+    const bySku = (ring: number) => {
+      const n = hw("fastener", "M4", ring);
+      n.contract.params = [{ type: "string", name: "sku", description: "", default: "ISO4762-M4x12" }] as never;
+      return n;
+    };
+    expect(cadHardwareSeatLint.run(graph([bySku(5.5)], []))).toEqual([]);
+    expect(cadHardwareSeatLint.run(graph([bySku(7.5)], []))[0]).toContain("between Ø4 and Ø7");
+  });
+
+  it("uses across-flats for a nut and the install-hole ring for an insert", () => {
     expect(cadHardwareSeatLint.run(graph([hw("nut", "M5", 7.0)], []))).toEqual([]);      // M5 nutAf 8.0
     expect(cadHardwareSeatLint.run(graph([hw("nut", "M5", 8.5)], []))).toHaveLength(1);
     expect(cadHardwareSeatLint.run(graph([hw("insert", "M4", 5.0)], []))).toEqual([]);   // M4 insertD 5.6
@@ -904,7 +914,7 @@ describe("port types are derived from PROBED_PORT_TYPES", () => {
   it("the architect's allowed list names every probed type, SHAFT included", () => {
     const line = guidance.split("\n").find((l) => l.startsWith("ONLY THESE PORT TYPES MAY BE USED"))!;
     for (const t of PROBED_PORT_TYPES) expect(line, t).toContain(t);
-    expect(line).not.toContain("LIP");
+    expect(line).not.toMatch(/\bLIP\b/);
   });
 });
 

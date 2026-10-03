@@ -17,7 +17,7 @@
  * overlap beyond PLAN_OVERLAP_TOL_MM is reported.
  */
 import type { GraphDoc } from "@patchcad/shared";
-import type { CadContractPayload } from "./index.js";
+import { HARDWARE_PORT_TYPES, type CadContractPayload } from "./index.js";
 import { IDENTITY, mul, poseToMat, solveAssembly, type Mat4 } from "./assembly.js";
 import { resolveDim, resolvePose } from "./bindings.js";
 import { FASTENING_HARDWARE, REGISTRY_HARDWARE } from "./registry.js";
@@ -30,13 +30,11 @@ export const PLAN_OVERLAP_TOL_MM = 1.0;
 const PORT_STEP_MM = 0.5;
 
 /** Ports whose material lies behind the face, on -z. A SHAFT or a boss
- *  stands OUT along +z, so its own material is legitimately in front. */
-const FACE_PORTS = new Set([
-  "FLAT_FACE", "CLEARANCE_HOLE", "BORE", "SCREW_SEAT", "HOLE_PATTERN", "GROOVE", "SLOT",
-  // Hardware host features are cut into the part from the port's face.
-  "THREADED_HOLE", "INSERT_POCKET", "NUT_TRAP", "COUNTERBORE", "COUNTERSINK", "DOWEL_HOLE",
-  "BEARING_SEAT", "BUSHING_BORE", "MOTOR_MOUNT", "MAGNET_POCKET", "HUB_BORE",
-]);
+ *  stands OUT along +z, so its own material is legitimately in front.
+ *  Hardware host features are cut into the part from the port's face too
+ *  (read at call time: index.ts imports this module). */
+const FACE_PORTS = new Set(["FLAT_FACE", "CLEARANCE_HOLE", "BORE", "SCREW_SEAT", "HOLE_PATTERN", "GROOVE", "SLOT"]);
+const isFacePort = (type: string) => FACE_PORTS.has(type) || HARDWARE_PORT_TYPES.has(type);
 
 type Vec3 = [number, number, number];
 type Prim = CadContractPayload["envelope"]["volumes"][number];
@@ -194,7 +192,7 @@ export const cadPlanGeometryLint = {
       if (prims.length === 0) continue;
       const inside = (p: Vec3) => prims.some((b) => contains(b, p));
       for (const port of payload?.ports ?? []) {
-        if (!FACE_PORTS.has(port.type)) continue;
+        if (!isFacePort(port.type)) continue;
         let o: Vec3, z: Vec3;
         try {
           ({ origin: o, zAxis: z } = resolvePose(graph, port.pose));

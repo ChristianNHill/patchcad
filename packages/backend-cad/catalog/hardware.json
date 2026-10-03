@@ -172,6 +172,7 @@
     "bearing": {
       "category": "bearings", "kind": "bearing", "keyedBy": "size", "skuPrefix": "BRG",
       "standard": "ISO 15 boundary dimensions (deep groove 6xx, 68xx, 69xx)", "dimsSource": "standard",
+      "note": "684-689 are the shielded (ZZ/2Z) widths, ISO 15 width series 2 (628/4..628/9); the open 684-689 are narrower (2.5, 3, 4, 4)",
       "dims": {
         "623": { "bore": 3, "od": 10, "width": 4 },
         "624": { "bore": 4, "od": 13, "width": 5 },
@@ -184,6 +185,10 @@
         "606": { "bore": 6, "od": 17, "width": 6 },
         "607": { "bore": 7, "od": 19, "width": 6 },
         "608": { "bore": 8, "od": 22, "width": 7 },
+        "684": { "bore": 4, "od": 9, "width": 4 },
+        "685": { "bore": 5, "od": 11, "width": 5 },
+        "688": { "bore": 8, "od": 16, "width": 5 },
+        "689": { "bore": 9, "od": 17, "width": 5 },
         "6800": { "bore": 10, "od": 19, "width": 5 },
         "6801": { "bore": 12, "od": 21, "width": 5 },
         "6802": { "bore": 15, "od": 24, "width": 5 },
@@ -289,8 +294,8 @@
       "category": "linear", "kind": "rail", "keyedBy": "size", "skuPrefix": "RAIL",
       "note": "miniature profile rail; counterbored M3 mounting holes at pitch", "dimsSource": "family-typical",
       "dims": {
-        "MGN9": { "width": 9, "height": 6.5, "pitch": 20, "holeD": 3.5, "cboreD": 6, "cboreDepth": 3.5 },
-        "MGN12": { "width": 12, "height": 8, "pitch": 25, "holeD": 3.5, "cboreD": 6, "cboreDepth": 4.5 }
+        "MGN9": { "width": 9, "height": 6.5, "pitch": 20, "holeD": 3.5, "cboreD": 6, "cboreDepth": 3.5, "mountThread": "M3" },
+        "MGN12": { "width": 12, "height": 8, "pitch": 25, "holeD": 3.5, "cboreD": 6, "cboreDepth": 4.5, "mountThread": "M3" }
       },
       "lengths": {
         "MGN9": [100, 150, 200, 250, 300, 400, 500],
@@ -311,7 +316,18 @@
       "dims": {
         "16T-5": { "teeth": 16, "bore": 5, "toothWidth": 7, "flangeD": 13, "flangeW": 1, "hubD": 13, "hubL": 6.5, "setScrew": "M3" },
         "20T-5": { "teeth": 20, "bore": 5, "toothWidth": 7, "flangeD": 16, "flangeW": 1, "hubD": 16, "hubL": 7, "setScrew": "M3" },
-        "20T-8": { "teeth": 20, "bore": 8, "toothWidth": 7, "flangeD": 16, "flangeW": 1, "hubD": 16, "hubL": 7, "setScrew": "M3" }
+        "20T-8": { "teeth": 20, "bore": 8, "toothWidth": 7, "flangeD": 16, "flangeW": 1, "hubD": 16, "hubL": 7, "setScrew": "M3" },
+        "40T-5": { "teeth": 40, "bore": 5, "toothWidth": 7, "flangeD": 29, "flangeW": 1, "hubD": 18, "hubL": 7, "setScrew": "M3" },
+        "40T-8": { "teeth": 40, "bore": 8, "toothWidth": 7, "flangeD": 29, "flangeW": 1, "hubD": 18, "hubL": 7, "setScrew": "M3" },
+        "60T-5": { "teeth": 60, "bore": 5, "toothWidth": 7, "flangeD": 42, "flangeW": 1, "hubD": 20, "hubL": 7, "setScrew": "M3" },
+        "60T-8": { "teeth": 60, "bore": 8, "toothWidth": 7, "flangeD": 42, "flangeW": 1, "hubD": 20, "hubL": 7, "setScrew": "M3" }
+      }
+    },
+    "gt2_idler": {
+      "category": "transmission", "kind": "pulley", "keyedBy": "size", "skuPrefix": "GT2I",
+      "note": "toothed GT2 idler on two internal bearings, no hub or set screw; the bore is the bearings' inner race, run on a screw", "dimsSource": "family-typical",
+      "dims": {
+        "20T-5": { "teeth": 20, "bore": 5, "toothWidth": 7, "flangeD": 18, "flangeW": 1 }
       }
     },
     "gt2_belt": {
@@ -324,6 +340,14 @@
       },
       "lengths": { "6": [200, 400, 600, 1000], "9": [200, 400, 600, 1000], "10": [200, 400, 600, 1000] }
     },
+    "gt2_loop": {
+      "category": "transmission", "kind": "belt", "keyedBy": "size", "skuPrefix": "GT2L",
+      "note": "closed GT2 loop, key is the width; lengths are pitch lengths (a whole number of 2 mm teeth). Modelled as its envelope band around the two pulleys", "dimsSource": "family-typical",
+      "dims": {
+        "6": { "width": 6, "pitch": 2, "thickness": 1.38, "toothHeight": 0.75 }
+      },
+      "lengths": { "6": [110, 122, 158, 200, 232, 280, 300, 400, 610, 852] }
+    },
     "spur_gear": {
       "category": "transmission", "kind": "gear", "keyedBy": "size", "skuPrefix": "GEAR",
       "note": "involute spur gear, built from params (module, teeth, thickness, bore) by bd_warehouse SpurGear", "standard": "ISO 54 module series", "dimsSource": "standard",
@@ -331,7 +355,30 @@
         "m0.5": { "module": 0.5, "pressureAngle": 20 },
         "m0.8": { "module": 0.8, "pressureAngle": 20 },
         "m1": { "module": 1, "pressureAngle": 20 },
-        "m1.5": { "module": 1.5, "pressureAngle": 20 }
+        "m1.5": { "module": 1.5, "pressureAngle": 20 },
+        "m2": { "module": 2, "pressureAngle": 20 }
+      }
+    },
+    "coupler": {
+      "category": "transmission", "kind": "coupler", "keyedBy": "size", "skuPrefix": "COUPLER",
+      "note": "flexible shaft coupler, key is bore a x bore b; bore a runs from z = 0 to the middle, bore b from the middle up", "dimsSource": "family-typical",
+      "dims": {
+        "5x8": { "boreA": 5, "boreB": 8, "od": 19, "length": 25, "setScrew": "M3" }
+      }
+    },
+    "lead_screw": {
+      "category": "linear", "kind": "shaft", "keyedBy": "size", "skuPrefix": "LEAD",
+      "note": "trapezoidal lead screw, modelled as its major-diameter cylinder; lead is travel per turn (4 starts of 2 mm pitch on a T8)", "dimsSource": "family-typical",
+      "dims": {
+        "T8": { "d": 8, "lead": 8, "pitch": 2 }
+      },
+      "lengths": { "T8": [100, 150, 200, 250, 300, 350, 400, 500] }
+    },
+    "lead_nut": {
+      "category": "linear", "kind": "lead_nut", "keyedBy": "size", "skuPrefix": "LEADNUT",
+      "note": "flanged brass lead-screw nut: flange of flangeT, body below it, four holeD holes on pcd", "dimsSource": "family-typical",
+      "dims": {
+        "T8": { "bore": 8, "bodyD": 10.2, "length": 15, "flangeD": 22, "flangeT": 3.5, "pcd": 16, "holeD": 3.5, "holeCount": 4, "holeThread": "M3" }
       }
     },
     "nema17": {

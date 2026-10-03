@@ -25,6 +25,19 @@ describe("diffContract", () => {
     expect(d.shapeChangedProvides).toEqual([]);
   });
 
+  it("a backend's advisory payload keys change the hash but not the shape", () => {
+    const provides = [{ key: "main", type: "part", description: "" }];
+    const a = contract({ provides, payload: { visualChecks: ["round?"], envelope: 1 } });
+    const b = contract({ provides, payload: { visualChecks: ["square?"], envelope: 1 } });
+    expect(diffContract(a, b).shapeChanged).toBe(true);
+    const d = diffContract(a, b, ["visualChecks"]);
+    expect(d.changed).toBe(true);
+    expect(d.shapeChanged).toBe(false);
+    expect(d.shapeChangedProvides).toEqual([]);
+    const c = contract({ provides, payload: { visualChecks: ["round?"], envelope: 2 } });
+    expect(diffContract(a, c, ["visualChecks"]).shapeChangedProvides).toEqual(["main"]);
+  });
+
   it("adding a provides port is a shape change scoped to that port", () => {
     const a = contract({ provides: [{ key: "main", type: "component", description: "" }] });
     const b = contract({

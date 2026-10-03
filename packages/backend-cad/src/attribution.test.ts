@@ -35,6 +35,18 @@ const g3open = (n: number, port: string) =>
   }));
 
 describe("CadBackend.classifyFailure", () => {
+
+  it("sends a cnc undercut that persists to the architect: the setup count is the contract's", () => {
+    const undercut = (n: number) =>
+      Array.from({ length: n }, () => ({
+        stage: "G4c",
+        report: 'process cnc "undercut": 447.6 mm² of surface cannot be reached by a tool from +Z or -Z',
+      }));
+    expect(classify(undercut(4), 5)).toBe("contract-infeasible");
+    expect(classify(undercut(2), 5)).toBe("code-invalid");
+    const corner = Array.from({ length: 5 }, () => ({ stage: "G4c", report: 'process cnc "internal_corner": 4 corners' }));
+    expect(classify(corner, 5)).toBe("code-invalid");
+  });
   it("defaults to a wider budget than the engine", () => {
     expect(new CadBackend().maxAttempts).toBe(5);
     expect(new CadBackend({ maxAttempts: 3 }).maxAttempts).toBe(3);
@@ -167,5 +179,14 @@ describe("CadBackend.classifyFailure · hardware host features", () => {
 
   it("an inert node never escalates a hardware miss", () => {
     expect(classify(misses(5), 5)).toBe("code-invalid");
+  });
+});
+
+describe("CadBackend.classifyFailure · unreadable declarations", () => {
+  it("sends a contract the kernel could not read to the architect after one round", () => {
+    const report = 'assertion "hole_count" is malformed: KeyError: \'min\'';
+    expect(classify([{ stage: "CONTRACT", report }], 5)).toBe("contract-infeasible");
+    expect(classify([{ stage: "G3", report: `2 gate failures:\n1. [G3] port "a" (BORE): expected Ø4\n2. [CONTRACT] ${report}` }], 5))
+      .toBe("contract-infeasible");
   });
 });

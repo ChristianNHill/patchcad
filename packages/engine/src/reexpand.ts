@@ -79,9 +79,14 @@ export function reexpandGraph(graph: GraphDoc, backend: DomainBackend<unknown>):
     });
     const contract = { ...n.contract, params, hash: "" };
     contract.hash = contractHash(contract);
-    const diff = diffContract(old.contract, contract);
-    next.nodes[id] = structuredClone({ ...old, contract: diff.changed ? contract : old.contract });
-    if (!diff.changed) continue;
+    const diff = diffContract(old.contract, contract, backend.planning.advisoryPayloadKeys);
+    if (!diff.changed) {
+      next.nodes[id] = structuredClone(old);
+      continue;
+    }
+    // Marked so the cook may regate: the part was not asked to change, only
+    // the plan around it moved.
+    next.nodes[id] = structuredClone({ ...old, contract, expandedContractHash: contract.hash });
     changed.push({ id, notes: diff.notes });
     if (diff.shapeChanged) shapeMoved.set(id, diff.shapeChangedProvides);
   }

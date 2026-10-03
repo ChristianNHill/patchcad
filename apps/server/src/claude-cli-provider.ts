@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { LlmCallError, type LlmImage, type LlmProvider, type LlmRequest, type LlmResult, type LlmRole, type LlmUsage } from "@patchcad/engine";
+import { addUsage } from "./spend.js";
 
 /**
  * Claude Code in headless mode (`claude -p`) as an LlmProvider, so a cook bills
@@ -44,7 +45,7 @@ export interface ClaudeCliOptions {
   bin?: string;
 }
 
-type CliResult = {
+export type CliResult = {
   is_error?: boolean;
   subtype?: string;
   errors?: string[];
@@ -89,11 +90,16 @@ export class ClaudeCliProvider implements LlmProvider {
     if (!parsed.success) {
       // One repair reprompt, carrying the rejected answer so the model can see
       // what it just did rather than guessing from the error alone.
-      const first = out.usage;
-      out = await attempt([
-        `[assistant]\n${out.raw}`,
-        `Your previous response failed schema validation:\n${parsed.error}\nRespond again with ONLY the corrected JSON.`,
-      ]);
+      const first = { calls: 1, ...out.usage };
+      try {
+        out = await attempt([
+          `[assistant]\n${out.raw}`,
+          `Your previous response failed schema validation:\n${parsed.error}\nRespond again with ONLY the corrected JSON.`,
+        ]);
+      } catch (err) {
+        // The first attempt was billed too; a throw here must not drop it.
+        throw new LlmCallError((err as Error).message, addUsage(first, (err instanceof LlmCallError && err.usage) || ZERO), { cause: err });
+      }
       out = { ...out, usage: addUsage(first, out.usage) };
       parsed = tryParse(req, out.raw);
       if (!parsed.success) {
@@ -167,15 +173,7 @@ export class ClaudeCliProvider implements LlmProvider {
         // The diagnosis is on STDOUT even on a non-zero exit (subtype, errors,
         // cost); stderr is usually empty. Parse it first so a failure says why
         // and still bills what it spent.
-        let r: CliResult | undefined;
-        try {
-          // stream-json is one event per line; the answer is the `result` event.
-          r = vision
-            ? (JSON.parse(stdout.trim().split("\n").reverse().find((l) => l.includes('"type":"result"')) ?? "") as CliResult)
-            : (JSON.parse(stdout) as CliResult);
-        } catch {
-          r = undefined;
-        }
+        const r = parseCliOutput(stdout, vision);
         const usage = r ? usageOf(r) : undefined;
         if (code !== 0 || !r || r.is_error) {
           const why = r
@@ -208,7 +206,7 @@ export class ClaudeCliProvider implements LlmProvider {
   }
 }
 
-function usageOf(r: CliResult): LlmUsage {
+export function usageOf(r: CliResult): LlmUsage {
   const u = r.usage ?? {};
   return {
     inputTokens: (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0),
@@ -217,9 +215,19 @@ function usageOf(r: CliResult): LlmUsage {
   };
 }
 
-function addUsage(a: LlmUsage, b: LlmUsage): LlmUsage {
-  return { inputTokens: a.inputTokens + b.inputTokens, outputTokens: a.outputTokens + b.outputTokens, usd: a.usd + b.usd };
+/** The CLI's result object: the whole of stdout for `json`, the last `result`
+ *  event for `stream-json` (one event per line). Undefined when unparseable. */
+export function parseCliOutput(stdout: string, streamJson: boolean): CliResult | undefined {
+  try {
+    return streamJson
+      ? (JSON.parse(stdout.trim().split("\n").reverse().find((l) => l.includes('"type":"result"')) ?? "") as CliResult)
+      : (JSON.parse(stdout) as CliResult);
+  } catch {
+    return undefined;
+  }
 }
+
+const ZERO: LlmUsage = { inputTokens: 0, outputTokens: 0, usd: 0 };
 
 /** Fence- and prose-tolerant, because a CLI turn has no JSON mode to enforce:
  *  a plain `claude -p` asked for one object still answered inside ```json. */

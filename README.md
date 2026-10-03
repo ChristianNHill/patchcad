@@ -50,16 +50,19 @@ Actively in development; nothing here is stable. Current known limits:
   gates catch every failure and attribute it; they do not fix it for free.
 - **CAD planning only in the studio.** The web-app backend exists and runs
   existing projects, but the product focus is printed parts.
-- **No clash checking.** Each part is gated on its own: imports, volume, port
-  geometry, envelope. Nothing yet checks a solved assembly for parts
-  intersecting each other (G5).
+- **Assembly checks are young.** Each part is gated on its own (G0–G4:
+  imports, execution, validity, port probes, envelope), then G5 checks the
+  solved assembly for clashes, gaps at mates and out-of-band fits, and blocks
+  the two parts it names. G6 compares the assembly's silhouette with your
+  reference image, and is advisory only.
 - **Exports carry names, not metadata.** A posed STEP is an assembly with one
   named, coloured child per placed part, and 3MF has one named object per part.
   Contract hashes and params are not written into either file. Imported meshes
   have no B-rep, so STEP leaves them out and says which.
-- **Smart segmentation is import-only.** Splitting a model into naturally
-  separating, peg-jointed pieces works for imported meshes; generated parts
-  can't split yet.
+- **Smart segmentation is mesh-only.** Splitting a model where it naturally
+  separates, with joint hardware picked from the catalog at each cut, works for
+  imported meshes and generated mesh parts (a mesh bigger than the build volume
+  splits on its own). Parametric build123d parts can't split yet.
 - **Printability is advisory.** The DfAM score (min-wall + overhang) flags
   risk; it never blocks a cook.
 - **Local, single-user tool.** The server binds localhost with no auth. The
@@ -113,11 +116,16 @@ ANTHROPIC_API_KEY=sk-ant-... docker compose up --build   # or OPENROUTER_API_KEY
 
 Then open http://localhost:4100. Two containers: `server` (Node 22, the API plus
 a production studio build on one port) and `kernel` (Python 3.12 with the
-build123d/OCP virtualenv baked into the image, so nothing downloads at
-runtime). The browser only talks to the server, which proxies meshes, renders
-and exports from the kernel, so it works from another machine too. Projects and
-`~/.patchcad` (library, config) live in named volumes. There is still no
-auth, so publish port 4100 only on a network you trust.
+build123d/OCP virtualenv baked into the image). One thing still downloads at
+runtime: the first reference image you plan from makes the kernel fetch
+rembg's u2net background-removal model (about 170 MB), and it is not kept in a
+volume, so a rebuilt kernel container fetches it again. The browser only talks
+to the server, which proxies meshes, renders and exports from the kernel, so it
+works from another machine too. Projects, `~/.patchcad` (library, config) and
+the kernel's cache live in named volumes; the server mounts the kernel cache
+at the kernel's own path, because import, segmentation and mesh fitting hand
+it files by path. There is still no auth, so publish port 4100 only on a
+network you trust.
 
 Use an API key or OpenRouter here. The `subscription` provider shells out to
 the `claude` CLI, which is not in the image and is not logged in, so a config
@@ -146,8 +154,10 @@ settings or MCP discovery. You need the Claude Code CLI installed and logged in,
 and nothing in the config file. Two things to know about it. The cost figures
 the studio shows are attribution at API list price, not money you spent. They
 also include about 25k tokens of Claude Code's own tool schemas that ride every
-call. And it cannot see images, so route `vision` at a provider that can if you
-want the render-and-inspect pass, using the `routing` map below.
+call. And images reach the model indirectly: the CLI saves each one to a temp
+file and the model opens it with its Read tool, which costs a second turn. If
+you would rather image calls go to an API, set `routing.vision` (below); the
+studio then labels its cost figure as partly real spend.
 
 Then type a goal in the studio's prompt bar. Planning targets **cad**
 (build123d parts, three.js viewport); the web-code backend still runs
@@ -175,6 +185,28 @@ one step, hot-swapping the restored modules into the preview.
 
 Model routing (defaults): architect → `claude-opus-5`, generators →
 `claude-sonnet-5`, classifier → `claude-haiku-4-5`.
+
+**Cap what a cook spends** with `maxUsd`, in list-price dollars per cook wave.
+It covers the wave's LLM calls and its mesh generation, and the plan preview's
+mesh drafts are capped against the plan's spend the same way. A call already in
+flight when the cap is hit still finishes. If `maxUsd` is present but not a
+positive number (or the file is not valid JSON), the server logs it loudly and
+refuses to plan or cook until it is fixed, rather than running uncapped:
+
+```jsonc
+{ "maxUsd": 2.5, "claude": { "apiKey": "sk-ant-..." } }
+```
+
+**Generate organic parts as meshes** with a `meshgen` entry. With one
+configured, the architect may mark a part `geometrySource: "mesh"` (a figurine,
+a sculpted handle), and an image-to-3D service makes its surface from your
+reference images; the kernel fits it into the part's envelope and gates it like
+any other. Without one, every part plans parametric:
+
+```jsonc
+{ "meshgen": { "provider": "meshy", "apiKey": "msy-...", "usdPerCredit": 0.02 } } // Meshy; usdPerCredit turns credits into dollars
+{ "meshgen": { "provider": "hosted", "url": "https://gpu.example/generate", "headers": {} } } // your own image-to-GLB endpoint
+```
 
 **Pick the model per role.** `models` works on all three providers; any role you
 leave out keeps that provider's default, so you can pin the generator alone:
@@ -218,8 +250,9 @@ identical contract, in any project at any time, the node is reused with zero
 generator calls (the cached code is still verified). Seed it from an existing
 project with `pnpm --filter @patchcad/server exec tsx src/seed-library.ts <dir>`.
 
-**Export what you cooked.** The viewport bar exports the posed assembly as STL,
-3MF or OBJ, or a single part as STEP. The explode slider beside it slides the
+**Export what you cooked.** The viewport bar exports the posed assembly, or a
+single part in its own frame, as STL, 3MF, OBJ or STEP (a posed STEP is an
+assembly with one named child per placed part). The explode slider beside it slides the
 parts apart along their own centre directions, so you can see how they mate
 before printing. It changes the view, not the model.
 
@@ -288,15 +321,20 @@ packages/backend-code web-app backend: prompts, esbuild execute, contract verify
 packages/backend-cad CAD backend: ports-in-SE(3) + envelope contract schema,
                            SE(3) assembly solver, T1 knowledge bindings, KernelClient,
                            and kernel/ — the Python geometry service (uv + FastAPI +
-                           build123d; isolated warm workers, G0–G4 gates, mesh import
-                           and segmentation, STL/3MF/OBJ/STEP export, GLB out;
-                           see kernel/README.md)
+                           build123d; isolated warm workers, G0–G4 part gates, G5
+                           clash/gap/fit, G6 silhouette, mesh import and
+                           segmentation, STL/3MF/OBJ/STEP export, GLB out;
+                           see kernel/README.md), catalog/ hardware.json
+                           (joints, fasteners, inserts the joint rules pick from)
 packages/llm-claude Anthropic adapter (structured outputs + client-side validation)
 packages/llm-openai-compat OpenRouter / Ollama / LM Studio adapter
 packages/preview-runtime in-iframe runtime: live params, per-node error boundaries
-apps/server Fastify: project persistence, plan/cook/reprompt API, WS events
+apps/server Fastify: project persistence, plan/cook/reprompt API, WS events,
+                           providers (incl. the `claude` CLI subscription provider),
+                           mesh generation, spend caps; routes split by concern
                            (fixtures/shop = web-code graph the TS-verifier smoke test runs on)
-apps/studio React Flow canvas, inspector, plan approval, live preview pane
+apps/studio React Flow canvas, inspector, plan approval with envelope preview,
+                           3D viewport (measure, explode, export), BOM panel
 examples/cad-clamp hand-authored 3-node CAD reference (plate + L-bracket + M4 screw)
 ```
 

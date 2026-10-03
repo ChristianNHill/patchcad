@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { isCooking } from "@patchcad/shared";
 import { fmtTokens, useStudio } from "./store.js";
-import { isListPrice, projectSpend } from "./cost.js";
+import { billing, projectSpend } from "./cost.js";
 import { Canvas } from "./canvas/Canvas.js";
 import { BusyButton } from "./BusyButton.js";
 import { Modal } from "./Modal.js";
@@ -164,19 +164,23 @@ export function App() {
 
 function CostChip() {
   const graph = useStudio((s) => s.graph);
-  const providerId = useStudio((s) => s.status?.provider?.id);
+  const provider = useStudio((s) => s.status?.provider);
   if (!graph) return null;
   const { calls, tokens, usd } = projectSpend(graph);
   if (calls === 0) return null;
-  const listPrice = isListPrice(providerId);
-  const dollars = usd > 0 ? `$${usd.toFixed(2)}${listPrice ? " ≈ API list price" : ""}` : "";
+  const bill = billing(provider);
+  const dollars =
+    usd > 0 ? `$${usd.toFixed(2)}${bill === "list" ? " ≈ API list price" : bill === "mixed" ? " (part list price)" : ""}` : "";
   return (
     <span
       className="checker cost-chip"
       title={
         `LLM spend on this project, planning included — ${calls} call${calls === 1 ? "" : "s"}, ${fmtTokens(tokens)} tokens` +
         (usd > 0 ? `, $${usd.toFixed(2)}` : " (local model, $0)") +
-        (listPrice ? ". Billed to your subscription; the dollar figure is what the same tokens cost at API list price." : "")
+        (bill === "list" ? ". Billed to your subscription; the dollar figure is what the same tokens cost at API list price." : "") +
+        (bill === "mixed"
+          ? `. Only ${provider!.paid!.join(", ")} bills an API key; the rest is your subscription, counted at API list price.`
+          : "")
       }
     >
       {fmtTokens(tokens)} tok{dollars ? ` · ${dollars}` : ""}

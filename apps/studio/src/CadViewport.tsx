@@ -6,6 +6,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { isCooking, type NodeStatus } from "@patchcad/shared";
 import { useStudio } from "./store.js";
 import { API } from "./api";
+import { download } from "./download.js";
 import { fmtMm, measure, sectionOffset, sectionPlane, type Axis, type MeasurePoint, type Vec3 } from "./measure.js";
 
 /**
@@ -294,6 +295,9 @@ function CadViewportInner() {
     setLoadErrors((prev) => ({ ...prev, [id]: message }));
   }, []);
 
+  // Another project's parts must not frame the camera or steer the explode.
+  useEffect(() => setBounds({}), [graph?.id]);
+
   // Scene refetches ride the store's cook/param signals.
   const sceneRev = useStudio((s) => s.cadSceneRev);
   useEffect(() => {
@@ -310,6 +314,8 @@ function CadViewportInner() {
         setData(d);
         setSceneError(null);
         setLoadErrors({});
+        // A measurement was taken on the geometry this scene replaced.
+        setPicks([]);
         const scores: Record<string, never> = {};
         for (const [id, m] of Object.entries(d.meshes)) {
           if (m.printability) scores[id] = m.printability as never;
@@ -608,31 +614,9 @@ function ExportButton({ nodeId, partCount }: { nodeId: string | null; partCount:
   const run = async () => {
     setBusy(true);
     setError(null);
-    try {
-      const q = new URLSearchParams(nodeId ? { node: nodeId } : {});
-      const res = await fetch(`${API}/api/project/export/${format}?${q}`);
-      if (!res.ok) {
-        const body = (await res.json()) as { error?: string; hint?: string };
-        setError(body.hint ? `${body.error} — ${body.hint}` : (body.error ?? "export failed"));
-        return;
-      }
-      // A blob URL is same-origin, so the browser honours `download` — it
-      // ignored the name on the old cross-origin link to the kernel.
-      const filename = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1];
-      const url = URL.createObjectURL(await res.blob());
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename ?? `patchcad.${format}`;
-      a.click();
-      URL.revokeObjectURL(url);
-      // e.g. imported mesh parts a STEP export had to leave out
-      const warning = res.headers.get("x-patchcad-warning");
-      if (warning) setError(warning);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
+    const q = new URLSearchParams(nodeId ? { node: nodeId } : {});
+    setError(await download(`/api/project/export/${format}?${q}`, `patchcad.${format}`));
+    setBusy(false);
   };
 
   return (

@@ -7,11 +7,11 @@ timeout, a hard native crash kills one worker while the service stays up.
 
 from __future__ import annotations
 
-import sys
 import math
 import os
 import pathlib
 import subprocess
+import sys
 import time
 
 import httpx
@@ -53,7 +53,7 @@ def structural() -> None:
     print("module structure")
     proc = subprocess.run(["uv", "run", "ruff", "check", "--select", "F811,F821", "src/"],
                           cwd=pathlib.Path(__file__).parent,
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, check=False)
     ok = proc.returncode == 0
     # stdout is EMPTY exactly when ruff cannot run at all (not installed, bad
     # rule code, unreadable tree): that goes to stderr. Indexing [-1] blind
@@ -144,6 +144,7 @@ def exports(client: httpx.Client) -> None:
 
     # An imported mesh has no B-rep: STEP leaves it out and SAYS so.
     from build123d import Box
+
     from src.patchcad_kernel.exporters import export_parts
     from src.patchcad_kernel.meshpart import MeshPart
 
@@ -271,6 +272,7 @@ def main() -> None:
         # 3 columns x 2 rows of 220px tiles, unchanged by the triad, scale bar
         # and edge lines; and the light ground the judge's prompt describes.
         import io
+
         from PIL import Image
         img = Image.open(io.BytesIO(png.content)).convert("RGB")
         check(
@@ -328,11 +330,15 @@ def build(p):
     # allowlist bypass is impossible, so test the crash path with sys.exit-like
     # abort available in math? Not possible — so test via a worker-level trick:
     crash = "def build(p):\n    exec(\"import ctypes; ctypes.string_at(0)\", {})\n"
+    respawns = client.get("/health").json()["workers"]["respawns"]
     r7 = client.post("/execute", json={"code": crash, "params": {}})
     body7 = r7.json()
-    check("native crash contained", r7.status_code == 422 and body7.get("stage") in ("KERNEL_CRASH", "G1"),
-          f"stage={body7.get('stage')}")
     health7 = client.get("/health").json()
+    # KERNEL_CRASH and a respawn, both: accepting "G1" too let a crash that
+    # never happened (the exec raising in Python) pass as one contained.
+    check("native crash contained", r7.status_code == 422 and body7.get("stage") == "KERNEL_CRASH"
+          and health7["workers"]["respawns"] > respawns,
+          f"stage={body7.get('stage')} respawns {respawns} -> {health7['workers']['respawns']}")
     check("service alive after crash", health7["ok"], f"workers={health7['workers']}")
     r8 = client.post("/execute", json={"code": PLATE, "params": {**params, "width": 70}}).json()
     check("pool serves after crash", r8["ok"])
@@ -1067,6 +1073,13 @@ def build(p):
         return part
     if k == "dbore":
         return part - (Pos(0, 0, top - 5) * Cylinder(p.d / 2, 10) & Pos(p.flat - 10, 0, top - 5) * Box(20, 20, 10))
+    if k == "groove":
+        return Pos(0, 0, top) * Cylinder(2.5, 40) - Pos(0, 0, top + p.at) * (Cylinder(3, p.w) - Cylinder(p.d / 2, p.w))
+    if k == "rail":
+        land = Box(120, 30, 20)
+        for i in range(5):
+            land = land - bore(4, 8, (i - 2) * 20)
+        return land
     raise ValueError(k)
 """
     hw_top = {"origin": [0, 0, 10], "zAxis": [0, 0, 1], "xAxis": [1, 0, 0]}
@@ -1102,6 +1115,12 @@ def build(p):
         ("HUB_BORE Ø5 D-bore", {"case": "dbore", "d": 5.15, "flat": 2.0}, "HUB_BORE", {"diameter": 5, "flat": 2.0}, None),
         ("HUB_BORE flat in the wrong place", {"case": "dbore", "d": 5.15, "flat": 2.0}, "HUB_BORE", {"diameter": 5, "flat": 1.5}, "the flat at 2.00mm"),
         ("HUB_BORE round", {"case": "tap", "d": 5.15, "depth": 10}, "HUB_BORE", {"diameter": 5}, None),
+        ("LINEAR_BEARING_SEAT LM6UU over a lip", {"case": "seat", "d": 11.95, "depth": 19.5, "lip": 8}, "LINEAR_BEARING_SEAT", {"od": 12, "length": 19, "fit": "press"}, None),
+        ("LINEAR_BEARING_SEAT shorter than its bushing", {"case": "seat", "d": 11.95, "depth": 15, "lip": 8}, "LINEAR_BEARING_SEAT", {"od": 12, "length": 19, "fit": "press"}, "the seat is 15.00mm deep"),
+        ("CLIP_GROOVE Ø4 e-clip groove on a Ø5 shaft", {"case": "groove", "d": 4, "w": 0.74, "at": 0}, "CLIP_GROOVE", {"diameter": 4, "width": 0.74, "shaft_diameter": 5}, None),
+        ("CLIP_GROOVE 0.3mm off its place", {"case": "groove", "d": 4, "w": 0.74, "at": 0.3}, "CLIP_GROOVE", {"diameter": 4, "width": 0.74, "shaft_diameter": 5}, "groove's middle"),
+        ("RAIL_MOUNT MGN9 land, five holes at 20", {"case": "rail"}, "RAIL_MOUNT", {"width": 9, "length": 100, "pitch": 20, "count": 5, "hole_diameter": 4, "depth": 6}, None),
+        ("RAIL_MOUNT declared on a 25 pitch", {"case": "rail"}, "RAIL_MOUNT", {"width": 9, "length": 100, "pitch": 25, "count": 5, "hole_diameter": 4, "depth": 6}, "member"),
     ]:
         r = client.post("/execute", json={"code": hw_part, "params": hw_params,
                                           "ports": [{"key": "host", "type": kind, "pose": hw_top, "params": port_params}]})
@@ -1146,7 +1165,7 @@ def build(p):
     plate4 = (four_holes, {"holes": 4})
     for label, (code, prm), assertion, want in (
         ("solids", plate4, {"kind": "solids", "count": 1}, None),
-        ("solids", (two, {}), {"kind": "solids", "count": 1}, "measured 2"),
+        ("solids", (two, {}), {"kind": "solids", "count": 1}, "2 separate solids"),
         ("volume_range", plate4, {"kind": "volume_range", "min": 20000, "max": 21600}, None),
         ("volume_range", plate4, {"kind": "volume_range", "min": 30000, "max": 40000}, 'assertion "volume_range"'),
         ("bbox_axis", plate4, {"kind": "bbox_axis", "axis": "x", "min": 59.5, "max": 60.5}, None),
@@ -1170,7 +1189,9 @@ def build(p):
             body = r.json()
             fl = body.get("failures") or [{}]
             check(f"G4b {label} fails with expected/measured",
-                  r.status_code == 422 and body.get("stage") == "G4b" and want in body.get("error", "")
+                  # a solids assertion is the G2 count, reported as G2
+                  r.status_code == 422 and body.get("stage") == ("G2" if label == "solids" else "G4b")
+                  and want in body.get("error", "")
                   and "measured" in fl[0] and "expected" in fl[0], body.get("error", r.text)[:160])
 
     # ---- render decimation must not shred the mesh -------------------------
@@ -1181,7 +1202,8 @@ def build(p):
     # it looked random. The contact sheet feeds the vision pass, so a wrong
     # render is a wrong judgement, not a cosmetic bug.
     import numpy as _np
-    from src.patchcad_kernel.render import _decimate, _surface_area, MAX_TRIANGLES
+
+    from src.patchcad_kernel.render import MAX_TRIANGLES, _decimate, _surface_area
 
     _n, _side = 60, 100.0  # 7200 unwelded triangles over a known 10000mm2
     _xs = _np.linspace(0, _side, _n + 1)
@@ -1206,6 +1228,8 @@ def build(p):
     fabricate(client)
     reference_images(client)
     swept(client)
+    gear_mesh(client)
+    audit_fixes(client)
     segmentation()
     catalog_parts()
 
@@ -1390,6 +1414,24 @@ def fabricate(client: httpx.Client) -> None:
     check("no vendor package for a part that fails G4c", z is None and body.get("stage") == "G4c",
           str(body.get("error", ""))[:120])
 
+    # A NEMA 17 plate: the drawing calls out the pilot with the limits G3 held
+    # it to, the screw square about it, and the slot's length read off the part.
+    up = {"zAxis": [0, 0, 1], "xAxis": [1, 0, 0]}
+    ports[:] = [{"key": "motor", "type": "MOTOR_MOUNT", "pose": {"origin": [0, 0, 4], **up},
+                 "params": {"pilot_diameter": 22, "hole_diameter": 3.4, "pitch_x": 31, "pitch_y": 31}},
+                *({"key": f"slot{i}", "type": "SLOT", "pose": {"origin": [x, -20, 4], **up}, "params": {"width": 4.5}}
+                  for i, x in enumerate((-18, 18)))]
+    nema = ("b = Pos(0, 0, 2) * Box(60, 50, 4) - Pos(0, 0, 2) * Cylinder(11.0125, 6)\n"
+            "    for x in (-15.5, 15.5):\n        for y in (-15.5, 15.5):\n"
+            "            b -= Pos(x, y, 2) * Cylinder(1.7, 6)\n"
+            "    for x in (-18, 18):\n        b -= Pos(x, -20, 2) * extrude(SlotCenterToCenter(12, 4.5), 3, both=True)\n"
+            "    return b")
+    body, z = package("cnc", nema)
+    rfq = z.read("RFQ.md").decode() if z else str(body)[:200]
+    check("cnc drawing calls out the motor pilot limits, the 31 square and both slots as one",
+          "Ø22 +0.050/+0.000 THRU" in rfq and "4x Ø3.4 THRU ON 31 x 31 SQUARE ABOUT THE PILOT" in rfq
+          and "2x SLOT 4.5 WIDE x 16.5 LONG THRU" in rfq, rfq[rfq.find("## Critical"):][:400])
+
 
 def swept(client: httpx.Client) -> None:
     """G5 sweeps a moving part through its joint's travel. A rotor whose blades
@@ -1436,6 +1478,135 @@ def swept(client: httpx.Client) -> None:
           len(into) == 1 and into[0]["b"] == "stop" and past == [], f"{into} / {past}")
 
 
+def audit_fixes(client: httpx.Client) -> None:
+    """Kernel audit regressions: instanced rotors sweep about their own axes,
+    a re-import is a new build, screw holes go through, opposite flats both
+    land on their planes."""
+    print("audit regressions")
+    import base64
+    import tempfile
+
+    import trimesh
+
+    n = int(time.time())
+    rotor = ("from build123d import *\ndef build(p):\n    _ = p['nonce']\n"
+             "    return Pos(0, 0, 20) * Cylinder(8, 6) + Pos(30, 0, 20) * Box(60, 10, 3) + Pos(-30, 0, 20) * Box(60, 10, 3)\n")
+    strut = "from build123d import *\ndef build(p):\n    return Pos(p['x'], p['y'], 15) * Box(4, 4, 30)\n"
+
+    def spin(y):
+        # Two placed copies of one rotor node, 200mm apart, each turning about
+        # its own axis: one sweep per copy, `moving` naming the copy.
+        sweep = {"joint": "j1", "type": "revolute", "direction": [0, 0, 1], "limits": [-180, 180]}
+        return client.post("/clash", json={"parts": [
+            {"key": "rotor", "code": rotor, "params": {"nonce": n}, "matrix": []},
+            {"key": "rotor#1", "code": rotor, "params": {"nonce": n}, "matrix": _at(200, 0, 0)},
+            {"key": "strut", "code": strut, "params": {"x": 200, "y": y}, "matrix": []},
+        ], "sweeps": [sweep | {"origin": [0, 0, 0], "moving": ["rotor"]},
+                      sweep | {"origin": [200, 0, 0], "moving": ["rotor#1"]}]}).json()
+
+    clear = spin(70.0)
+    check("swept G5: the second rotor copy turns about its own axis, not the first copy's",
+          clear.get("ok") and clear["clash"]["clashes"] == [] and clear["clash"].get("swept") == [],
+          str(clear.get("clash"))[:300])
+    hit = (spin(45.0).get("clash") or {}).get("swept") or []
+    check("swept G5: ... and still hits a strut inside its own blade circle",
+          len(hit) == 1 and hit[0]["a"] == "rotor#1" and hit[0]["b"] == "strut", str(hit)[:300])
+
+    imports = pathlib.Path(tempfile.mkdtemp())
+    piece = "def build(p):\n    return load_import('piece-0.ply')\n"
+
+    def cook(size):
+        trimesh.creation.box((size, size, size)).export(imports / "piece-0.ply")
+        return client.post("/execute", json={"code": piece, "params": {}, "import_dir": str(imports)}).json()
+
+    missing = client.post("/execute", json={"code": "def build(p):\n    try:\n        return load_import('nope.step')\n"
+                                                "    except FileNotFoundError:\n        return load_import('piece-0.ply')\n",
+                                        "params": {}, "import_dir": str(imports)}).json() if cook(5) else {}
+    check("load_import raises FileNotFoundError for a missing file, so code can fall back",
+          missing.get("ok") and abs(missing["measurements"]["volume_mm3"] - 125) < 1, str(missing)[:200])
+    first, second = cook(10), cook(20)
+    check("a re-import into the same file is a new build, not the cached old one",
+          first.get("ok") and second.get("ok") and second.get("cached") is False
+          and abs(second["measurements"]["volume_mm3"] - 8000) < 1, f"{first.get('measurements', {}).get('volume_mm3')} -> "
+          f"{second.get('measurements', {}).get('volume_mm3')} cached={second.get('cached')}")
+
+    dimples = ("from build123d import *\ndef build(p):\n    part = Box(60, 60, 6)\n"
+               "    for x, y in ((-20, -20), (20, -20), (-20, 20), (20, 20)):\n"
+               "        part -= Pos(x, y, 2.625) * Cylinder(2.25, p['deep'])\n    return part\n")
+    pattern = [{"key": "bolts", "type": "HOLE_PATTERN", "pose": {"origin": [0, 0, 3], "zAxis": [0, 0, 1], "xAxis": [1, 0, 0]},
+                "params": {"diameter": 4.5, "nx": 2, "ny": 2, "pitch_x": 40, "pitch_y": 40}}]
+    r = client.post("/execute", json={"code": dimples, "params": {"deep": 0.75}, "ports": pattern})
+    check("G3 rejects four dimples declared as a bolt pattern", r.status_code == 422 and "bottoms out" in r.json().get("error", ""),
+          r.json().get("error", "")[:120])
+    cbore = ("from build123d import *\ndef build(p):\n"
+             "    return Box(40, 40, 10) - Pos(0, 0, 3.3) * Cylinder(3.25, 3.4) - Pos(0, 0, p['z']) * Cylinder(1.7, p['h'])\n")
+    head = [{"key": "cb", "type": "COUNTERBORE", "pose": {"origin": [0, 0, 5], "zAxis": [0, 0, 1], "xAxis": [1, 0, 0]},
+             "params": {"diameter": 6.5, "depth": 3.4, "through_diameter": 3.4}}]
+    blind = client.post("/execute", json={"code": cbore, "params": {"z": 0.6, "h": 2}, "ports": head})
+    through = client.post("/execute", json={"code": cbore, "params": {"z": 0, "h": 12}, "ports": head})
+    check("G3 holds the bore under a counterbore to passing through",
+          blind.status_code == 422 and "bottoms out" in blind.json().get("error", "") and through.status_code == 200,
+          f"{blind.json().get('error', '')[:100]} / {through.status_code}")
+
+    glb = trimesh.Scene([trimesh.creation.icosphere(subdivisions=4, radius=1.0)]).export(file_type="glb")
+    fit = client.post("/mesh/fit", json={
+        "data_b64": base64.b64encode(glb).decode(), "up": "z", "box": {"center": [0, 0, 0], "dims": [20, 20, 20]},
+        "flats": [{"name": "top", "origin": [0, 0, 10], "normal": [0, 0, 1], "size": 6},
+                  {"name": "bottom", "origin": [0, 0, -10], "normal": [0, 0, -1], "size": 6}],
+    }, timeout=120).json()
+    bbox = fit.get("bbox") or {}
+    check("/mesh/fit: opposite flats both land on their planes",
+          abs(bbox.get("max", [0, 0, 0])[2] - 10) < 0.05 and abs(bbox.get("min", [0, 0, 0])[2] + 10) < 0.05, str(bbox))
+
+
+def gear_mesh(client: httpx.Client) -> None:
+    """A spur pair at m·(z1+z2)/2 meshes: its flanks touch and share, at most,
+    what a 0.1mm backlash band would (g5.ts GEAR_MESH_BAND_MM, allowance
+    0.2·band·m·t·1.5). Half a tooth out of phase, or 0.3mm too close, it shares
+    far more and is a clash. Swept, the pair turns coupled at the ratio and
+    stays in mesh; turned the same way, or with the pinion frozen, it does not."""
+    print("gear mesh")
+    n = int(time.time())
+    gear = ("from build123d import *\ndef build(p):\n    _ = p['nonce']\n"
+            "    g = SpurGear(module=1, tooth_count=int(p['teeth']), pressure_angle=20, thickness=8, rotation=(0, 0, p['phase']))\n"
+            "    return g - Cylinder(2.5, 16)\n")
+    centre = 1 * (17 + 34) / 2
+    allow = [{"a": "pinion", "b": "wheel", "volume_mm3": 0.2 * 0.1 * 1 * 8 * 1.5}]
+
+    def at(x: float) -> list[float]:
+        return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, 0, 1]
+
+    def pair(phase: float, x: float = centre, sweeps: list | None = None) -> dict:
+        return client.post("/clash", json={"parts": [
+            {"key": "pinion", "code": gear, "params": {"nonce": n, "teeth": 17, "phase": 0}, "matrix": []},
+            {"key": "wheel", "code": gear, "params": {"nonce": n, "teeth": 34, "phase": phase}, "matrix": at(x)},
+        ], "allow": allow, "sweeps": sweeps or []}, timeout=120).json()
+
+    meshed = pair(180 / 34)
+    cm = meshed.get("clash") or {}
+    check("G5 gear mesh: a pair at m(z1+z2)/2, half a tooth apart, is not a clash",
+          meshed["ok"] and cm.get("clashes") == [] and cm.get("errors") == [], str(cm)[:300])
+    wrong = (pair(0).get("clash") or {}).get("clashes") or []
+    check("G5 gear mesh: the same pair tooth-on-tooth is a clash past the allowance",
+          len(wrong) == 1 and wrong[0]["volume_mm3"] > 10, str(wrong)[:200])
+    close = (pair(180 / 34, centre - 0.3).get("clash") or {}).get("clashes") or []
+    check("G5 gear mesh: 0.3mm inside the centre distance is a clash", len(close) == 1, str(close)[:200])
+
+    def turn(ratio: float | None) -> dict:
+        sweep = {"joint": "g1", "type": "revolute", "origin": [centre, 0, 0], "direction": [0, 0, 1], "limits": [0, 20], "moving": ["wheel"]}
+        if ratio is not None:
+            sweep["coupled"] = [{"origin": [0, 0, 0], "direction": [0, 0, 1], "ratio": ratio, "moving": ["pinion"]}]
+        return pair(180 / 34, sweeps=[sweep]).get("clash") or {}
+
+    coupled = turn(-34 / 17)
+    check("swept G5: a gear pair turned together at -z2/z1 stays in mesh",
+          coupled.get("swept") == [] and coupled.get("errors") == [], str(coupled.get("swept"))[:300])
+    backwards = turn(34 / 17).get("swept") or []
+    frozen = turn(None).get("swept") or []
+    check("swept G5: turned the same way, or with the pinion frozen, the teeth collide",
+          len(backwards) == 1 and len(frozen) == 1 and backwards[0]["joint"] == "g1", f"{backwards} / {frozen}"[:300])
+
+
 def segmentation() -> None:
     """Joint mode "auto": sites, not cuts. Every site is a disk of the width the
     widest fastening rule needs, with a column of material behind it into both
@@ -1444,6 +1615,7 @@ def segmentation() -> None:
     cut by `cut_joints` and the G3 probes pass them."""
     print("segmentation joints")
     import trimesh
+
     from patchcad_kernel.gates import GateError, _probe_port
     from patchcad_kernel.meshpart import MeshPart, _joint_need, cut_joints, segment
 
@@ -1497,7 +1669,7 @@ def catalog_parts() -> None:
           (_catalog_clearance("M3"), _catalog_clearance("M8")) == (3.4, 9.0))
     pkg = pathlib.Path(__file__).parent.parent
     proc = subprocess.run([str(pkg / "node_modules" / ".bin" / "vitest"), "run", "src/registry.kernel.test.ts"],
-                          cwd=pkg, capture_output=True, text=True,
+                          cwd=pkg, capture_output=True, text=True, check=False,
                           env={**os.environ, "PATCHCAD_KERNEL_LIVE": "1",
                                "PATCHCAD_KERNEL_PORT": BASE.rsplit(":", 1)[1]})
     tail = (proc.stdout + proc.stderr).strip().splitlines()

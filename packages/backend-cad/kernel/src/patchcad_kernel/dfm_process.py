@@ -479,6 +479,8 @@ def g4c_process(shape: Any, process: dict[str, Any]) -> tuple[dict[str, Any], li
     else:
         rules = [("profile", _laser_cut)]
     report: dict[str, Any] = {"kind": kind}
+    if kind == "cnc" and process.get("allow_undercuts"):  # the vendor quotes and fixtures for it
+        report["setups"] = "two or more setups (features open sideways; reach from +Z/-Z was not checked)"
     failures: list[dict[str, Any]] = []
     for name, rule in rules:
         try:

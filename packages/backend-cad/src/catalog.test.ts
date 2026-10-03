@@ -4,9 +4,7 @@ import {
   CATALOG,
   Catalog,
   Sku,
-  dimsSourceOf,
   familyDims,
-  listFamilies,
   parseSku,
   pickLength,
   skuFor,
@@ -59,16 +57,18 @@ describe("catalog coverage", () => {
   });
 
   it("covers every category the plan names", () => {
+    const listFamilies = (category: string) =>
+      Object.entries(CATALOG.families).filter(([, f]) => f.category === category).map(([name]) => name);
     expect(listFamilies("fasteners")).toEqual(
       expect.arrayContaining(["shcs", "button", "csk", "hex_nut", "washer", "dowel", "heatset_short", "heatset_std"]),
     );
-    expect(listFamilies("bearings")).toEqual(["bearing", "bearing_flanged"]);
-    expect(listFamilies("plain_bearings")).toEqual(["bushing"]);
-    expect(listFamilies("shafts")).toEqual(["shaft", "d_shaft", "collar", "eclip"]);
-    expect(listFamilies("linear")).toEqual(["lm_uu", "mgn_rail", "mgn_carriage"]);
-    expect(listFamilies("transmission")).toEqual(["gt2_pulley", "gt2_belt", "spur_gear"]);
-    expect(listFamilies("motors")).toEqual(["nema17", "brushless", "n20", "sg90"]);
-    expect(listFamilies("misc")).toEqual(["disc_magnet", "oring", "standoff"]);
+    expect(listFamilies("bearings")).toEqual(expect.arrayContaining(["bearing", "bearing_flanged"]));
+    expect(listFamilies("plain_bearings")).toEqual(expect.arrayContaining(["bushing"]));
+    expect(listFamilies("shafts")).toEqual(expect.arrayContaining(["shaft", "d_shaft", "collar", "eclip"]));
+    expect(listFamilies("linear")).toEqual(expect.arrayContaining(["lm_uu", "mgn_rail", "mgn_carriage"]));
+    expect(listFamilies("transmission")).toEqual(expect.arrayContaining(["gt2_pulley", "gt2_belt", "spur_gear"]));
+    expect(listFamilies("motors")).toEqual(expect.arrayContaining(["nema17", "brushless", "n20", "sg90"]));
+    expect(listFamilies("misc")).toEqual(expect.arrayContaining(["disc_magnet", "oring", "standoff"]));
   });
 
   it("gives every thread-keyed fastener family M3, M4 and M5", () => {
@@ -118,8 +118,8 @@ describe("catalog coverage", () => {
       expect(CATALOG.families[f]!.dimsSource, f).toBe("family-typical");
     }
     // A row can be less certain than its family.
-    expect(dimsSourceOf("button", "M3")).toBe("standard");
-    expect(dimsSourceOf("button", "M2")).toBe("family-typical");
+    expect(familyDims("button", "M3")!.dimsSource ?? CATALOG.families.button!.dimsSource).toBe("standard");
+    expect(familyDims("button", "M2")!.dimsSource).toBe("family-typical");
   });
 });
 

@@ -12,6 +12,7 @@ import {
   type CadBackend,
   type CadContractPayload,
 } from "@patchcad/backend-cad";
+import { effectiveParams } from "./project.js";
 
 /** What these routes need of the active project, read at request time. */
 interface Active {
@@ -37,7 +38,7 @@ export function registerBomRoutes(app: FastifyInstance, active: () => Active, ca
     if (!q.success) return reply.code(400).send({ error: q.error.message });
     const bom = buildBom(a.store.doc);
     if (q.data.format === "json") return bom;
-    const slug = a.dir.split("/").pop() ?? "patchcad";
+    const slug = path.basename(a.dir) || "patchcad";
     return reply
       .header("content-disposition", `attachment; filename="${safe(slug)}-bom.csv"`)
       .type("text/csv; charset=utf-8")
@@ -56,9 +57,7 @@ export function registerBomRoutes(app: FastifyInstance, active: () => Active, ca
     if (node.status !== "ready" || !node.artifact?.code) {
       return reply.code(409).send({ error: `${nodeId} is ${node.status}: a vendor package needs a part whose gates passed` });
     }
-    const params: Record<string, unknown> = {};
-    for (const p of node.contract.params) params[p.name] = p.default;
-    Object.assign(params, node.params);
+    const params = effectiveParams(node);
     const bom = buildBom(doc);
     const row = [...bom.fabricate, ...bom.print].find((r) => r.nodeId === nodeId);
     const result = await cad.kernel.vendorPackage({
@@ -84,7 +83,7 @@ export function registerBomRoutes(app: FastifyInstance, active: () => Active, ca
     }
     const res = await fetch(`${cad.kernel.baseUrl}${result.file}`);
     if (!res.ok) return reply.code(502).send({ error: `kernel served ${res.status} for the vendor package` });
-    const slug = a.dir.split("/").pop() ?? "patchcad";
+    const slug = path.basename(a.dir) || "patchcad";
     return reply
       .header("content-disposition", `attachment; filename="${safe(`${slug}-${nodeId}`)}-vendor.zip"`)
       .header("x-patchcad-step-schema", result.vendor.step_schema)

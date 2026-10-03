@@ -173,11 +173,11 @@ export function Inspector({ graph }: { graph: GraphDoc }) {
         )}
       </div>
 
-      {node.kind === "imported" && <SegmentBox nodeId={node.id} />}
+      {node.kind === "imported" && <SegmentBox key={node.id} nodeId={node.id} />}
 
       <div className="section">
         <span className="section__label">Change only this node</span>
-        <RepromptBox nodeId={node.id} />
+        <RepromptBox key={node.id} nodeId={node.id} />
         <ProposalCard nodeId={node.id} />
         {node.thread.length > 0 && (
           <div className="thread">
@@ -435,6 +435,8 @@ function RepromptBox({ nodeId }: { nodeId: string }) {
             const message = text.trim();
             setText("");
             setImages([]);
+            // The bytes travel as base64; the thumbnails are done with.
+            for (const img of images) URL.revokeObjectURL(img.url);
             setRouted(null);
             setRouting(true);
             void reprompt(nodeId, message, images)

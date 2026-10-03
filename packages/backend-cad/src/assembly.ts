@@ -237,7 +237,9 @@ export function solveAssembly(
  * which nodes travel with it. Revolute limits are degrees about the axis,
  * prismatic limits millimetres along it; the solved pose is the joint at 0.
  * The scene records these beside the rigid poses, and G5 sweeps the moving
- * nodes through the limits.
+ * nodes through the limits. `coupled` are the parts a drive turns with it,
+ * each group about its own axis at `ratio` degrees per unit of the joint's
+ * travel (a motor gear at -z_driven/z_motor, a lead screw at 360/lead).
  */
 export interface KinematicJoint {
   id: string;
@@ -246,6 +248,7 @@ export interface KinematicJoint {
   direction: [number, number, number];
   limits: [number, number];
   moving: string[];
+  coupled?: { origin: [number, number, number]; direction: [number, number, number]; ratio: number; moving: string[] }[];
 }
 
 /** A joint's axis declared in one node's frame: a port pose, and which of its
@@ -258,15 +261,54 @@ export interface JointAxisDef {
   axis: "x" | "z";
   limits: [number, number];
   moving: string[];
+  /** Coupled groups, each about the z axis of its own pose in the same node's frame. */
+  coupled?: { pose: Pose; ratio: number; moving: string[] }[];
 }
 
-export function kinematicJoints(defs: JointAxisDef[], world: Record<string, Mat4>): KinematicJoint[] {
+/**
+ * One joint per placed copy of the node that carries the axis, and `moving`
+ * names placed COPIES (`node`, `node#1`, …, the keys G5 poses parts under).
+ * Taking the axis from `world[node]` alone swung copies 2..n of an instanced
+ * rotor around copy 1's axis, and G5 reported clashes no real rotor has. Each
+ * moving copy goes with the nearest axis copy, so four rotors on four arm
+ * copies turn about four axes, and four blades on one hub all turn about it.
+ */
+export function kinematicJoints(
+  defs: JointAxisDef[],
+  world: Record<string, Mat4>,
+  instances: Record<string, Mat4[]> = {},
+): KinematicJoint[] {
   return defs.flatMap((d) => {
-    const placed = world[d.node];
-    if (!placed) return [];
-    const m = mul(placed, poseToMat(d.pose));
-    const col = d.axis === "x" ? 0 : 8;
-    const direction = [m[col]!, m[col + 1]!, m[col + 2]!].map((v) => Math.round(v * 1e6) / 1e6) as [number, number, number];
-    return [{ id: d.id, type: d.type, origin: transformPoint(m, [0, 0, 0]), direction, limits: d.limits, moving: d.moving }];
+    const copies = instances[d.node] ?? (world[d.node] ? [world[d.node]!] : []);
+    const joints: KinematicJoint[] = copies.map((placed) => {
+      const axis = (pose: Pose, col: number) => {
+        const m = mul(placed, poseToMat(pose));
+        const direction = [m[col]!, m[col + 1]!, m[col + 2]!].map((v) => Math.round(v * 1e6) / 1e6) as [number, number, number];
+        return { origin: transformPoint(m, [0, 0, 0]), direction };
+      };
+      const coupled = d.coupled?.map((c) => ({ ...axis(c.pose, 8), ratio: c.ratio, moving: [] as string[] }));
+      return { id: d.id, type: d.type, ...axis(d.pose, d.axis === "x" ? 0 : 8), limits: d.limits, moving: [], ...(coupled?.length ? { coupled } : {}) };
+    });
+    const assign = (nodes: string[], group: (j: KinematicJoint) => Pick<KinematicJoint, "origin" | "direction" | "moving">) => {
+      for (const n of nodes) {
+        const placed = instances[n] ?? (world[n] ? [world[n]!] : []);
+        if (!placed.length) group(joints[0]!).moving.push(n);
+        placed.forEach((m, i) => {
+          const at = transformPoint(m, [0, 0, 0]);
+          const nearest = joints.reduce((best, j) => (axisDistance(group(j), at) < axisDistance(group(best), at) ? j : best));
+          group(nearest).moving.push(i === 0 ? n : `${n}#${i}`);
+        });
+      }
+    };
+    if (!joints.length) return [];
+    assign(d.moving, (j) => j);
+    d.coupled?.forEach((c, g) => assign(c.moving, (j) => j.coupled![g]!));
+    return joints;
   });
+}
+
+function axisDistance(axis: { origin: readonly number[]; direction: readonly number[] }, p: readonly number[]): number {
+  const rel = p.map((v, i) => v - axis.origin[i]!);
+  const along = rel.reduce((sum, v, i) => sum + v * axis.direction[i]!, 0);
+  return Math.hypot(...rel.map((v, i) => v - along * axis.direction[i]!));
 }

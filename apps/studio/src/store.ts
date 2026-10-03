@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { Contract, CookFailure, EngineEvent, GraphDoc, NodeStatus, ParamValue } from "@patchcad/shared";
 import { API, WS_API } from "./api";
-import { belongsToOpenProject, mergeNode } from "./events";
+import { mergeNode, reduceEvent } from "./events";
 import { refsBody, type PlanRefs, type RefDraft } from "./refs";
 
 export type PlanPhase = Extract<EngineEvent, { type: "plan:phase" }>["phase"];
@@ -38,9 +38,13 @@ export interface ProjectEntry {
   example: boolean;
 }
 
+export type LlmRoute = "architect" | "generator" | "repair" | "classifier" | "vision";
+
 /** GET /api/status. */
 export interface ServerStatus {
-  provider: { id: string; source: string } | null;
+  /** `paid`: the routes billed in real money (an API key); the rest bill a
+   *  subscription or run locally. Absent from an older server. */
+  provider: { id: string; source: string; paid?: LlmRoute[] } | null;
   /** How to configure one, when `provider` is null. */
   providerHelp: string;
   maxUsd: number | null;
@@ -48,7 +52,7 @@ export interface ServerStatus {
   kernel: { ok: boolean } | null;
 }
 
-interface StudioState {
+export interface StudioState {
   graph: GraphDoc | null;
   previewUrl: string | null;
   selectedNodeId: string | null;
@@ -91,6 +95,8 @@ interface StudioState {
   pushParam: (nodeId: string, name: string, value: ParamValue) => void;
   sendInitialParams: () => void;
   plan: (goal: string, backend?: "web-code" | "cad") => Promise<void>;
+  /** Drop the plan's reference images and free their thumbnails. */
+  clearPlanRefs: () => void;
   approvePlan: () => Promise<void>;
   discardPlan: () => Promise<void>;
   reprompt: (nodeId: string, message: string, images?: RefDraft[]) => Promise<{ tier: "T2" | "T3"; reason: string }>;
@@ -185,6 +191,10 @@ export const useStudio = create<StudioState>((set, get) => ({
   planState: { status: "idle" },
   planRefs: { images: [], symmetric: false },
   setPlanRefs: (planRefs) => set({ planRefs }),
+  clearPlanRefs() {
+    for (const img of get().planRefs.images) URL.revokeObjectURL(img.url);
+    set({ planRefs: { images: [], symmetric: false } });
+  },
   checker: { status: "clean", problems: [] },
   proposal: null,
   projectDir: null,
@@ -228,69 +238,11 @@ export const useStudio = create<StudioState>((set, get) => ({
     const ws = new WebSocket(`${WS_API}/ws`);
     ws.onmessage = (msg) => {
       const event = JSON.parse(msg.data as string) as EngineEvent;
-      if (!belongsToOpenProject(event, get().graph?.id)) return;
-      if (event.type === "graph:replaced") {
-        const st: Record<string, NodeStatus> = {};
-        for (const n of Object.values(event.graph.nodes)) st[n.id] = n.status;
-        // A replaced graph invalidates any server-side proposal.
-        const switched = get().graph?.id !== event.graph.id;
-        set({ graph: event.graph, statuses: st, failures: {}, ...(switched ? { proposal: null } : {}) });
-      } else if (event.type === "node:status") {
-        set((s) => {
-          const failures = { ...s.failures };
-          // Keep the reason a node failed; clear it the moment it recovers.
-          if (event.detail) failures[event.nodeId] = event.detail;
-          else delete failures[event.nodeId];
-          return { statuses: { ...s.statuses, [event.nodeId]: event.status }, failures };
-        });
-      } else if (event.type === "plan:phase") {
-        set((s) =>
-          s.planState.status === "planning"
-            ? { planState: { ...s.planState, phase: event.phase, detail: event.detail } }
-            : {},
-        );
-      } else if (event.type === "job:log") {
-        set((s) => ({ logs: [...s.logs.slice(-99), `[${event.nodeId}] ${event.line}`] }));
-      } else if (event.type === "node:committed") {
-        // Re-fetch the inspected code if the selected node just re-cooked.
-        if (get().selectedNodeId === event.nodeId) void get().selectNode(event.nodeId);
-        set((s) => ({ cadSceneRev: s.cadSceneRev + 1 }));
-      } else if (event.type === "node:updated") {
-        set((s) => (s.graph ? { graph: mergeNode(s.graph, event.node) } : {}));
-      } else if (event.type === "preview:reload") {
-        set((s) => ({ cadSceneRev: s.cadSceneRev + 1 }));
-      } else if (event.type === "checker:status") {
-        set({ checker: { status: event.status, problems: event.problems } });
-      } else if (event.type === "undo:stack") {
-        set({ undo: { depth: event.depth, label: event.label } });
-      } else if (event.type === "cost:update") {
-        // Fold streamed usage into the local graph so totals stay live.
-        set((s) => {
-          if (!s.graph) return {};
-          if (event.bucket) {
-            const prev = s.graph.ledger[event.bucket];
-            const ledger = {
-              ...s.graph.ledger,
-              [event.bucket]: {
-                calls: prev.calls + 1,
-                inputTokens: prev.inputTokens + event.inputTokens,
-                outputTokens: prev.outputTokens + event.outputTokens,
-                usd: prev.usd + event.usd,
-              },
-            };
-            return { graph: { ...s.graph, ledger } };
-          }
-          if (!event.nodeId) return {};
-          const node = s.graph.nodes[event.nodeId];
-          if (!node) return {};
-          node.cost = {
-            calls: node.cost.calls + 1,
-            inputTokens: node.cost.inputTokens + event.inputTokens,
-            outputTokens: node.cost.outputTokens + event.outputTokens,
-            usd: node.cost.usd + event.usd,
-          };
-          return { graph: { ...s.graph } };
-        });
+      const patch = reduceEvent(get(), event);
+      set(patch);
+      // Re-fetch the inspected code if the selected node just re-cooked.
+      if ("cadSceneRev" in patch && event.type === "node:committed" && get().selectedNodeId === event.nodeId) {
+        void get().selectNode(event.nodeId);
       }
     };
     ws.onclose = () => {
@@ -344,7 +296,7 @@ export const useStudio = create<StudioState>((set, get) => ({
     previewFrame.contentWindow.postMessage({ type: "patchcad:params:init", all }, "*");
   },
 
-  async plan(goal, backend = "web-code") {
+  async plan(goal, backend = "cad") {
     set({ planState: { status: "planning", goal, phase: "drafting", detail: "", startedAt: Date.now() } });
     try {
       const res = await fetch(`${API}/api/project/plan`, {
@@ -384,7 +336,8 @@ export const useStudio = create<StudioState>((set, get) => ({
       set({ planState: { status: "error", message: await reason(res, "could not start the cook") } });
       return;
     }
-    set({ planState: { status: "idle" }, selectedNodeId: null, planRefs: { images: [], symmetric: false } });
+    set({ planState: { status: "idle" }, selectedNodeId: null });
+    get().clearPlanRefs();
     // graph:replaced + node statuses arrive over the WS as the cook runs.
   },
 
@@ -443,12 +396,14 @@ export const useStudio = create<StudioState>((set, get) => ({
   async openProject(dir) {
     if (!(await send("/api/project/open", "could not open that project", { body: { dir } }))) return;
     set({ projectDir: dir, projectPickerOpen: false, selectedNodeId: null, proposal: null });
+    get().clearPlanRefs();
     // graph:replaced arrives over the WS with the new project's nodes.
   },
 
   async closeProject() {
     if (!(await send("/api/project/close", "could not close the project"))) return;
     set({ projectDir: null, projectPickerOpen: false, selectedNodeId: null, proposal: null });
+    get().clearPlanRefs();
     // graph:replaced arrives over the WS with the empty graph -> welcome renders.
   },
 
@@ -473,6 +428,7 @@ export const useStudio = create<StudioState>((set, get) => ({
     const data = (await res.json()) as { ok?: boolean; error?: string; dir?: string };
     if (!res.ok || !data.ok) return data.error ?? `import failed (${res.status})`;
     set({ projectDir: data.dir ?? null, selectedNodeId: null, proposal: null });
+    get().clearPlanRefs();
     // graph:replaced + cook statuses stream over the WS.
     return null;
   },
@@ -557,11 +513,8 @@ export const useStudio = create<StudioState>((set, get) => ({
       "*",
     );
     // Optimistic local update so controls stay in sync.
-    if (graph) {
-      const node = graph.nodes[nodeIdValue];
-      if (node) node.params = { ...node.params, [name]: value };
-      set({ graph: { ...graph } });
-    }
+    const node = graph?.nodes[nodeIdValue];
+    if (graph && node) set({ graph: mergeNode(graph, { ...node, params: { ...node.params, [name]: value } }) });
     // Debounced persistence.
     const key = `${nodeIdValue}:${name}`;
     clearTimeout(persistTimers[key]);

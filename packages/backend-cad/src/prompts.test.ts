@@ -95,6 +95,21 @@ describe("generatePrompt exemplars", () => {
     expect(withExemplars([exemplar]).messages[0]!.content).toContain("never the dimensions");
   });
 
+  it("keeps an imported node's start expression out of the system block", () => {
+    const imported = (id: string) => {
+      const c = ctx();
+      return generatePrompt({ ...c, node: { ...c.node, id, kind: "imported", params: { scale: 1 } } } as unknown as Parameters<typeof generatePrompt>[0]);
+    };
+    const [a, b] = [imported("piece-0"), imported("piece-1")];
+    // One system block for every mesh node in the wave, so it stays cached.
+    expect(a.system).toBe(b.system);
+    expect(a.system).toContain("WRAPS AN IMPORTED MESH");
+    expect(a.system).not.toContain("piece-0");
+    expect(a.messages[0]!.content).toContain('part = load_import("piece-0.ply"');
+    expect(b.messages[0]!.content).toContain('part = load_import("piece-1.ply"');
+    expect(a.system).toContain("You write ONE part as build123d");
+  });
+
   it("keeps the system block identical, so it stays prefix-cacheable", () => {
     // Exemplars are per-node; putting them in `system` would give every node
     // in a parallel wave a different prefix.

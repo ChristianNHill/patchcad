@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { JOINT_RULES, SNAP_ENABLED, pickDrive, pickThread, selectJoint, type JointDecision, type JointInput } from "./joints.js";
+import {
+  JOINT_RULES, SNAP_ENABLED, beltCenter, beltLength, gt2PitchD, pickDrive, pickThread, railHoles, selectJoint,
+  type JointDecision, type JointInput,
+} from "./joints.js";
 
 /** The rules are a table, so the tests are too: one row per rule, each the
  *  smallest joint that reaches it, then the fall-through and determinism. */
@@ -32,10 +35,27 @@ describe("selectJoint: one row per rule", () => {
     ["R6 side nut trap", { intent: "permanent", load: "medium", access: "one_side", wallA: 4, wallB: 10, lateral: 12 }, "R6", ["screw:button:M4x12", "nut:hex_nut:M4"]],
     ["M1 rotor on two bearings", { motion: "revolute", duty: "continuous", wallA: 14, wallB: 8 }, "M1", ["bearing_a:bearing:625", "bearing_b:bearing:625", "shaft:d_shaft:5", "collar:collar:5"]],
     ["M2 occasional pivot on bushings", { motion: "revolute", wallA: 12, wallB: 8 }, "M2", ["bushing_a:bushing:5x8x5", "bushing_b:bushing:5x8x5", "shaft:d_shaft:5", "collar:collar:5"]],
-    ["M2p printed pin when allowed", { motion: "revolute", allowPrinted: true }, "M2p", []],
+    ["M2p printed pin when allowed, e-clipped", { motion: "revolute", allowPrinted: true }, "M2p", ["pin_clip:eclip:4"]],
     ["P1 short light slide on LM8UU", { motion: "prismatic", strokeMm: 60, wallA: 12, wallB: 30 }, "P1", ["rod:shaft:8", "linear_bearing:lm_uu:LM8UU"]],
-    ["P2 long slide on a rail", { motion: "prismatic", strokeMm: 200, load: "medium" }, "P2", ["rail:mgn_rail:MGN12x250", "carriage:mgn_carriage:MGN12C"]],
+    ["P2 long slide on a rail, screwed down into inserts", { motion: "prismatic", strokeMm: 200, load: "medium" }, "P2",
+      ["rail:mgn_rail:MGN12x250", "carriage:mgn_carriage:MGN12C", "rail_screw:button:M3x6", "rail_insert:heatset_short:M3"]],
     ["D1 fast driven rotor on a brushless", { motion: "revolute", driven: true, speedClass: "high", duty: "continuous", wallB: 8 }, "D1", ["motor:brushless:2204"]],
+    ["DB a 2:1 belt reduction", { motion: "revolute", driven: true, ratio: 2, wallA: 14, wallB: 8, wallMotor: 6 }, "DB", [
+      "bearing_a:bearing:625", "bearing_b:bearing:625", "shaft:d_shaft:5", "collar:collar:5", "spacer:washer:M5",
+      "motor:nema17:NEMA17", "motor_pulley:gt2_pulley:20T-5", "driven_pulley:gt2_pulley:40T-5", "belt:gt2_loop:6x158",
+    ]],
+    ["DG a 2:1 spur pair at high torque", { motion: "revolute", driven: true, ratio: 2, torqueClass: "high", wallA: 14, wallB: 8, wallMotor: 6 }, "DG", [
+      "bearing_a:bearing:625", "bearing_b:bearing:625", "shaft:d_shaft:5", "collar:collar:5", "spacer:washer:M5",
+      "motor:nema17:NEMA17", "motor_gear:spur_gear:m1.5", "driven_gear:spur_gear:m1.5",
+    ]],
+    ["PL short driven slide on a lead screw", { motion: "prismatic", driven: true, strokeMm: 100, wallA: 10, wallB: 30 }, "PL", [
+      "motor:nema17:NEMA17", "coupler:coupler:5x8", "lead_screw:lead_screw:T8x150", "lead_nut:lead_nut:T8", "rod:shaft:8", "linear_bearing:lm_uu:LM8UU",
+    ]],
+    ["PB fast driven slide on a belt", { motion: "prismatic", driven: true, strokeMm: 100, speedClass: "high", wallA: 8, wallB: 10, wallMotor: 6 }, "PB", [
+      "rail:mgn_rail:MGN9x150", "carriage:mgn_carriage:MGN9C", "rail_screw:button:M3x6", "rail_insert:heatset_short:M3",
+      "motor:nema17:NEMA17", "motor_pulley:gt2_pulley:20T-5", "idler:gt2_idler:20T-5", "idler_washer:washer:M5",
+      "idler_screw:button:M5x20", "idler_insert:heatset_std:M5", "belt:gt2_belt:6x434",
+    ]],
   ];
   for (const [label, input, rule, parts] of rows) {
     it(label, () => {
@@ -47,7 +67,7 @@ describe("selectJoint: one row per rule", () => {
 
   it("every rule in the table is exercised above", () => {
     const covered = new Set(rows.map((r) => r[2]));
-    const untested = JOINT_RULES.map((r) => r.id).filter((id) => !covered.has(id) && !["R7", "PD"].includes(id));
+    const untested = JOINT_RULES.map((r) => r.id).filter((id) => !covered.has(id) && id !== "R7");
     expect(untested).toEqual([]);
   });
 
@@ -94,6 +114,94 @@ describe("thread and drive choice", () => {
     expect(d({ speedClass: "medium" })).toMatchObject({ motor: { family: "nema17" }, coupling: "direct" });
     expect(d({ load: "heavy" }).coupling).toBe("gear");
   });
+
+  it("a ratio or an offset motor is a belt, and a gear pair when it must push hard or turn slowly", () => {
+    const d = (i: Partial<JointInput>) => pickDrive({ ...base, motion: "revolute", driven: true, ...i }).coupling;
+    expect(d({ ratio: 3 })).toBe("gt2");
+    expect(d({ centerMm: 50 })).toBe("gt2");
+    expect(d({ ratio: 1 })).toBe("direct");
+    expect(d({ ratio: 3, torqueClass: "high" })).toBe("gear");
+    expect(d({ centerMm: 50, speedClass: "low" })).toBe("gear");
+  });
+});
+
+describe("belt and gear drives", () => {
+  const drive = { motion: "revolute" as const, driven: true, wallA: 14, wallB: 8, wallMotor: 6 };
+
+  it("snaps the belt to a stocked loop and solves the centre back from it", () => {
+    const d = ok({ ...drive, ratio: 2 });
+    const [p20, p40] = [gt2PitchD(20), gt2PitchD(40)];
+    // The least centre puts the motor body clear of bearing_b's housing
+    // (21.15 + 8 + 2·1.2 + 1 = 32.55), which a 122 loop cannot reach: 158.
+    expect(beltLength(32.55, p20, p40)).toBeGreaterThan(122);
+    expect(beltLength(d.dims.center!, p20, p40)).toBeCloseTo(158, 1);
+    expect(beltCenter(beltLength(40, p20, p40), p20, p40)).toBeCloseTo(40, 9);
+    expect(d.dims.center).toBeCloseTo(48.58, 2);
+  });
+
+  it("takes centerMm as the belt's least centre, and a centre no loop reaches falls to a spur pair", () => {
+    expect(ok({ ...drive, centerMm: 60 })).toMatchObject({ rule: "DB", dims: { center: 63, teethMotor: 16, teethDriven: 16 } });
+    const compact = ok({ ...drive, centerMm: 30 });
+    expect(compact.rule).toBe("DG");
+    expect(compact.dims.center).toBe(33); // m1, 33T:33T, the nearest that clears the motor
+  });
+
+  it("puts a spur pair at m·(z1+z2)/2, stepping the module up until it clears the motor", () => {
+    // m1 tops out at 41 teeth: 20:40 is a 30mm centre, short of 32.55.
+    const d = ok({ ...drive, ratio: 2, torqueClass: "high" });
+    expect(d.dims).toMatchObject({ module: 1.5, teethMotor: 17, teethDriven: 34, center: 38.25, thickness: 9, phase: 0 });
+    expect(d.reasons.join(" ")).toContain("a light load needs m1");
+  });
+
+  it("turns an even motor gear half a tooth, so a gap faces the driven gear's tooth", () => {
+    const even = ok({ ...drive, ratio: 1, centerMm: 34, torqueClass: "high" });
+    expect(even.dims).toMatchObject({ module: 1, teethMotor: 34, teethDriven: 34, center: 34 });
+    expect(even.dims.phase).toBeCloseTo(180 / 34, 2);
+  });
+
+  it("a heavy drive takes module 2 on a Ø10 shaft, the upper collar spacing its gear when no washer is stocked", () => {
+    const d = ok({ ...drive, load: "heavy", wallA: 24, wallB: 12 });
+    expect(d.rule).toBe("DG");
+    expect(d.dims.module).toBe(2);
+    expect(d.parts.find((p) => p.role === "spacer")).toEqual({ role: "spacer", family: "collar", key: "10" });
+  });
+
+  it("a housing too thick for the motor shaft names wallMotor", () => {
+    const r = selectJoint({ ...base, ...drive, id: "j2", wallMotor: undefined, wallA: 20, ratio: 2 });
+    expect((r as { error: string }).error).toMatch(/DB the NEMA 17 shaft ends 4\.0 above a's face.*wallMotor/);
+  });
+});
+
+describe("driven slides", () => {
+  const slide = { motion: "prismatic" as const, driven: true, wallA: 10, wallB: 30, wallMotor: 6 };
+
+  it("a lead screw when short and not fast, a belt when long or fast", () => {
+    expect(ok({ ...slide, strokeMm: 300 }).rule).toBe("PL");
+    expect(ok({ ...slide, strokeMm: 100, speedClass: "high" }).rule).toBe("PB");
+    expect(ok({ ...slide, strokeMm: 320, load: "none" }).rule).toBe("PB");
+  });
+
+  it("a lead screw reaches b's top at full stroke, on a stocked length", () => {
+    const d = ok({ ...slide, strokeMm: 100 });
+    expect(d.dims).toMatchObject({ z0: 30.5, screwStart: 13.5, lead: 8 });
+    // 30.5 - 13.5 + 100 + 30 = 147 → the 150 stock.
+    expect(d.parts.find((p) => p.role === "lead_screw")!.length).toBe(150);
+  });
+});
+
+describe("rail screws", () => {
+  it("one per counterbored hole, centred like the rail's own holes", () => {
+    expect(railHoles("MGN9", 150)).toEqual([-60, -40, -20, 0, 20, 40, 60]);
+    expect(railHoles("MGN12", 250)).toEqual([-112.5, -87.5, -62.5, -37.5, -12.5, 12.5, 37.5, 62.5, 87.5, 112.5]);
+  });
+
+  it("tap a machined a, insert a printed one, by the fixed-joint rules", () => {
+    const rail = { motion: "prismatic" as const, strokeMm: 200, wallA: 8 };
+    expect(roles(ok({ ...rail, processA: "CNC" })).slice(2)).toEqual(["rail_screw:button:M3x8"]);
+    expect(roles(ok({ ...rail, wallA: 10 })).slice(2)).toEqual(["rail_screw:button:M3x10", "rail_insert:heatset_std:M3"]);
+    const thin = selectJoint({ ...base, ...rail, wallA: 3 });
+    expect((thin as { error: string }).error).toContain("P2 MGN9 rail screws: R4 a's wall 3.0 < insert 5.8 + 1.2; a's wall 3.0 < short insert 3.0 + 1.2");
+  });
 });
 
 describe("no rule fits", () => {
@@ -114,9 +222,24 @@ describe("no rule fits", () => {
     expect((r as { error: string }).error).toContain("R7 snap fits are disabled");
   });
 
-  it("a driven slide is refused rather than guessed", () => {
-    const r = selectJoint({ ...base, motion: "prismatic", driven: true });
-    expect((r as { error: string }).error).toContain("PD");
+});
+
+describe("audit fixes", () => {
+  it("a shaft the catalog does not stock is a shortfall, not a crash at expansion", () => {
+    const r = selectJoint({ ...base, motion: "revolute", duty: "continuous", wallA: 20, shaftHint: 7 });
+    expect((r as { error: string }).error).toContain("M1 no Ø7 shaft stocked");
+  });
+
+  it("a metal b too thin to tap takes a through-bolt, at any load", () => {
+    const d = ok({ processB: "CNC", wallA: 3, wallB: 2 });
+    expect(d.rule).toBe("R3");
+    expect(d.thread).toBe("M3");
+    expect(d.reasons[0]).toContain("metal b too thin to tap");
+  });
+
+  it("snap fits are tried before the nut traps", () => {
+    const ids = JOINT_RULES.map((r) => r.id);
+    expect(ids.indexOf("R7")).toBeLessThan(ids.indexOf("R5"));
   });
 });
 

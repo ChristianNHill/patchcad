@@ -5,6 +5,7 @@ import type { NodeRecord } from "@patchcad/shared";
 import type { CadContractPayload, MeshSource } from "@patchcad/backend-cad";
 import { HostedMeshGen } from "./hosted.js";
 import { MeshyMeshGen } from "./meshy.js";
+import type { Budget } from "../spend.js";
 
 /**
  * Image-to-3D for `geometrySource: "mesh"` nodes (Phase 6.4). A provider turns
@@ -27,6 +28,18 @@ export interface MeshGenRequest {
 export interface MeshGenProvider {
   id: string;
   generate(req: MeshGenRequest, signal?: AbortSignal): Promise<{ glb: Buffer; usage?: { usd: number } }>;
+}
+
+/** A generation that failed or was stopped after the vendor started billing:
+ *  `usd` is what it still cost, so a budget and a ledger can count it. */
+export class MeshGenError extends Error {
+  constructor(
+    message: string,
+    readonly usd: number,
+  ) {
+    super(message);
+    this.name = "MeshGenError";
+  }
 }
 
 export const MeshGenConfig = z.discriminatedUnion("provider", [
@@ -74,20 +87,33 @@ export function meshPrompt(node: Pick<NodeRecord, "title" | "contract">): string
   return visualRef ? `${node.title}: ${visualRef}` : node.title;
 }
 
-/** The CAD backend's MeshSource over a configured provider. */
-export function meshSourceFor(provider: MeshGenProvider): MeshSource {
+/** The CAD backend's MeshSource over a configured provider. `budgetFor` finds
+ *  the cook's budget by project dir, so mesh spend counts toward the same
+ *  maxUsd as the wave's LLM calls. */
+export function meshSourceFor(
+  provider: MeshGenProvider,
+  budgetFor: (projectDir: string) => Budget | undefined = () => undefined,
+): MeshSource {
   return {
     async generate({ node, graph, projectDir }, signal) {
-      const out = await provider.generate(
-        {
-          images: await refImages(projectDir, graph.brief.refs),
-          prompt: meshPrompt(node),
-          targetSizeMm: graph.brief.sizeMm,
-          symmetric: graph.brief.symmetric,
-        },
-        signal,
-      );
-      return { glb: out.glb, usd: out.usage?.usd };
+      const budget = budgetFor(projectDir);
+      budget?.check();
+      try {
+        const out = await provider.generate(
+          {
+            images: await refImages(projectDir, graph.brief.refs),
+            prompt: meshPrompt(node),
+            targetSizeMm: graph.brief.sizeMm,
+            symmetric: graph.brief.symmetric,
+          },
+          signal,
+        );
+        budget?.add(out.usage?.usd ?? 0);
+        return { glb: out.glb, usd: out.usage?.usd };
+      } catch (err) {
+        if (err instanceof MeshGenError) budget?.add(err.usd);
+        throw err;
+      }
     },
   };
 }

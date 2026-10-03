@@ -32,7 +32,8 @@ const rowDim = (family: string, field: string) => (thread: string) => {
 };
 
 /** The face a hardware kind bears on, by outer diameter. A screw bears on its
- *  head, a nut on its across-flats, an insert on its flange, a washer on its OD. */
+ *  head, a nut on its across-flats, a washer on its OD. An insert has no
+ *  flange in the registry model: its end face is a ring at the install-hole Ø. */
 export const BEARING_DIAMETER: Record<string, (thread: string) => number | undefined> = {
   fastener: rowDim("shcs", "headD"),
   nut: rowDim("hex_nut", "af"),
@@ -88,45 +89,65 @@ export function threadEngagementVolume(thread: string, engagementLength: number)
   return (Math.PI / 4) * (major ** 2 - spec.tapDrill ** 2) * engagementLength;
 }
 
-/** Engagement length for a screw into each mating kind, from the catalog. */
-export function engagementLength(kind: string, thread: string): number | null {
-  if (kind === "nut") return rowDim("hex_nut", "height")(thread) ?? null;
-  if (kind === "insert") return rowDim("heatset_std", "length")(thread) ?? null;
+/** Engagement length for a screw into each mating kind, from the catalog.
+ *  `family` is the part's own (skuOf): a short heat-set insert engages less
+ *  than a standard one. */
+export function engagementLength(kind: string, thread: string, family?: string): number | null {
+  if (kind === "nut") return rowDim(family ?? "hex_nut", "height")(thread) ?? null;
+  if (kind === "insert") return rowDim(family ?? "heatset_std", "length")(thread) ?? null;
   return null;
 }
 
 /**
- * FDM slip fit: a peg is made SMALLER than the socket that receives it, by this
- * much on diameter. Mirrors the kernel's PEG_CLEARANCE, which is where the
- * import path grows peg joints, and it belongs here too so a planner can reason
- * about a fit it did not generate.
+ * FDM printed-to-printed slip fit: a peg is made SMALLER than the socket that
+ * receives it, by this much on diameter. Mirrors the kernel's PEG_CLEARANCE,
+ * which is where the import path grows peg joints, and it belongs here too so
+ * a planner can reason about a fit it did not generate.
+ *
+ * WIDER THAN THE SLIP BAND ON PURPOSE. FDM_FIT_BANDS_MM.slip [+0.05, +0.25]
+ * is for a BOUGHT part, exact to a few hundredths, in a printed hole: one
+ * print's error to absorb. A printed peg in a printed socket carries both
+ * prints' error, so it needs more than the band's top. Nothing probes this
+ * clearance at G3 (SHAFT and BORE are probed at their declared Ø); G5 checks
+ * it as the expected radial clearance of a shaft in a bore.
  *
  * The direction is the part people get backwards, so it is in the name: a peg
  * larger than its hole does not assemble.
  */
 export const FDM_SLIP_FIT_MM = 0.3;
 
-/**
- * What to CUT, on FDM, for a bought part's host feature, as an offset on the
- * nominal size the port declares. The port says the part (an 8 mm dowel); the
- * G3 probe owns the tolerance band; these are the band midpoints, so a print
- * that lands a little off either way still passes. Bands (kernel probes):
- * press [d−0.1, d], slip [d+0.05, d+0.25], magnet [d+0.05, d+0.2], nut trap
- * across-flats [af, af+0.4]. Never add these to a port param: the probe would
- * count the fit twice.
- */
-export const FDM_FIT_CUT_MM = { press: -0.05, slip: 0.15, magnet: 0.125, nutTrapAf: 0.2 } as const;
+type FitBands = Record<"press" | "slip" | "magnet" | "nutTrapAf", readonly [number, number]>;
 
-/** The same, for a machined part (cnc, sheet_metal, laser_cut), whose G3 bands
- *  are press [d−0.05, d], slip [d, d+0.05], magnet [d, d+0.1]. SLS, MJF and
- *  resin print to the FDM bands. */
-export const MACHINED_FIT_CUT_MM = { press: -0.025, slip: 0.025, magnet: 0.05, nutTrapAf: 0.2 } as const;
+/**
+ * The G3 probes' diameter bands relative to the nominal part, as [lo, hi]:
+ * gates.py FIT_BANDS, plus the nut trap's across-flats [af, af + 0.4]
+ * (NUT_TRAP_SLOP_MM). Pinned to gates.py by grounding.test.ts.
+ */
+export const FDM_FIT_BANDS_MM: FitBands = { press: [-0.1, 0], slip: [0.05, 0.25], magnet: [0.05, 0.2], nutTrapAf: [0, 0.4] };
+
+/** The same, for a machined part (cnc, sheet_metal, laser_cut: gates.py
+ *  MACHINED_FIT_BANDS). SLS, MJF and resin print to the FDM bands. */
+export const MACHINED_FIT_BANDS_MM: FitBands = { press: [-0.05, 0], slip: [0, 0.05], magnet: [0, 0.1], nutTrapAf: [0, 0.4] };
+
+const midpoints = (b: FitBands) =>
+  Object.fromEntries(Object.entries(b).map(([k, [lo, hi]]) => [k, Math.round(((lo + hi) / 2) * 1e4) / 1e4])) as Record<keyof FitBands, number>;
+
+/**
+ * What to CUT for a bought part's host feature, as an offset on the nominal
+ * size the port declares. The port says the part (an 8 mm dowel); the G3
+ * probe owns the tolerance band; these are the band midpoints, so a part that
+ * lands a little off either way still passes. Never add these to a port
+ * param: the probe would count the fit twice.
+ */
+export const FDM_FIT_CUT_MM = midpoints(FDM_FIT_BANDS_MM);
+export const MACHINED_FIT_CUT_MM = midpoints(MACHINED_FIT_BANDS_MM);
 
 /** Port type → the param that carries the nominal size, and which cut applies.
- *  DOWEL_HOLE and BEARING_SEAT take theirs from the port's own `fit`. */
+ *  DOWEL_HOLE and the bearing seats take theirs from the port's own `fit`. */
 const FITTED_PORTS: Record<string, { param: string; cut: keyof typeof FDM_FIT_CUT_MM | "fit" }> = {
   DOWEL_HOLE: { param: "diameter", cut: "fit" },
   BEARING_SEAT: { param: "od", cut: "fit" },
+  LINEAR_BEARING_SEAT: { param: "od", cut: "fit" },
   BUSHING_BORE: { param: "od", cut: "press" },
   HUB_BORE: { param: "diameter", cut: "slip" },
   MOTOR_MOUNT: { param: "pilot_diameter", cut: "slip" },
@@ -146,6 +167,10 @@ export function fitCut(
   machined = false,
 ): string | null {
   if (port.type === "INSERT_POCKET") return "cut at the declared diameter, at least depth + 0.3 deep, 1.2 mm wall around it";
+  if (port.type === "THREADED_HOLE") {
+    const tapDrill = threadSpec(String(port.params.thread ?? ""))?.tapDrill;
+    return tapDrill === undefined ? null : `cut Ø ${tapDrill} (tap drill for ${port.params.thread})`;
+  }
   const spec = FITTED_PORTS[port.type];
   if (!spec) return null;
   const cut = spec.cut === "fit" ? (port.params.fit === "slip" ? "slip" : "press") : spec.cut;
@@ -158,7 +183,10 @@ export function fitCut(
       ? `${spec.param} ${sign} ${Math.abs(offset)}`
       : `${Math.round((nominal + offset) * 1000) / 1000} (${spec.param} ${nominal} ${sign} ${Math.abs(offset)}, ${cut})`;
   const what = port.type === "NUT_TRAP" ? "across the flats" : "Ø";
-  const shoulder = port.type === "BEARING_SEAT" ? "; pocket ≥ width deep on a shoulder lip ≥ 1 mm (bore below ≤ od − 2)" : "";
+  const shoulder =
+    port.type === "BEARING_SEAT" || (port.type === "LINEAR_BEARING_SEAT" && port.params.retention !== "clip")
+      ? `; pocket ≥ ${port.type === "BEARING_SEAT" ? "width" : "length"} deep on a shoulder lip ≥ 1 mm (bore below ≤ od − 2)`
+      : "";
   return `cut ${what} ${size}${shoulder}`;
 }
 

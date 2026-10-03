@@ -68,4 +68,17 @@ describe("LatestWinsQueue", () => {
     expect(ran).toEqual([1, 2]);
     expect(errors).toHaveLength(1);
   });
+
+  it("reports a key busy while its job runs or waits, and idle after", async () => {
+    const { queue, finishNext } = harness();
+    const isA = (k: string) => k.startsWith("a/");
+    queue.push("a/plate", 1);
+    queue.push("a/plate", 2);
+    expect(queue.busy(isA)).toBe(true);
+    expect(queue.busy((k) => k.startsWith("b/"))).toBe(false);
+    await finishNext();
+    expect(queue.busy(isA)).toBe(true);
+    await finishNext();
+    expect(queue.busy(isA)).toBe(false);
+  });
 });

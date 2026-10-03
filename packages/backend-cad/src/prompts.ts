@@ -6,7 +6,7 @@ import { importedPartExpr } from "./segment-joints.js";
 import { resolveDim, resolvePose, type Dim } from "./bindings.js";
 import { matchPitfalls } from "./pitfalls.js";
 import { fitCut } from "./grounding.js";
-import { sourcingOf } from "./sourcing.js";
+import { isMachined, sourcingOf } from "./sourcing.js";
 import { processLines } from "./dfm.js";
 
 /**
@@ -141,10 +141,6 @@ function ownFormula(d: Dim, nodeId: string): string | null {
   return foreign || out === src ? null : out;
 }
 
-/** Processes whose G3 fit bands are the machined ones; every other process
- *  prints to the FDM bands. */
-const MACHINED = new Set(["cnc", "sheet_metal", "laser_cut"]);
-
 /** `cutProcess`: annotate fitted ports with the cut size for that process (own ports only). */
 function portLines(payload: CadContractPayload, graph?: GraphDoc, nodeId?: string, cutProcess?: string): string {
   return payload.ports
@@ -168,7 +164,7 @@ function portLines(payload: CadContractPayload, graph?: GraphDoc, nodeId?: strin
               const d = tryDim(graph, v);
               return typeof d === "number" ? d : undefined;
             },
-            MACHINED.has(cutProcess),
+            isMachined(cutProcess),
           )
         : null;
       return `  - ${p.name} (${p.type}) at origin ${origin}, z-out ${vec(pose.zAxis)}, x ${vec(pose.xAxis)}${params ? ` — ${params}` : ""}${cut ? `; ${cutProcess}: ${cut}` : ""}`;
@@ -271,25 +267,30 @@ export function generatePrompt(ctx: GenerateCtx<CadContractPayload>): PromptSpec
   const graph = paramGraph(ctx);
 
   // A generated mesh (geometrySource "mesh") is edited the same way; its
-  // fitted surface is already at size, so it has no scale param.
+  // fitted surface is already at size, so it has no scale param. The system
+  // paragraph is static; the node's own start expression rides the user turn,
+  // so every mesh node in a wave shares one cacheable system block.
   const meshSource = payload.geometrySource === "mesh";
-  const importedGuidance =
-    ctx.node.kind === "imported" || meshSource
-      ? [
-          "",
-          "THIS NODE WRAPS AN IMPORTED MESH. Do NOT re-model it. Start from",
-          meshSource ? `  part = load_import("${ctx.node.id}.ply")` : `  part = ${importedPartExpr(ctx.node as unknown as NodeRecord)}`,
-          "and MODIFY it with boolean operators against build123d primitives:",
-          "  part - Pos(x, y, z) * Cylinder(r, depth)     # cut a hole",
-          "  part + Pos(x, y, z) * Box(a, b, c)           # add material",
-          "  part & shape                                 # intersect/trim",
-          "Coordinates are the imported model's own frame (see the envelope for",
-          "its bounds). Keep every declared port's geometry intact.",
-        ].join("\n")
-      : "";
+  const wrapsMesh = ctx.node.kind === "imported" || meshSource;
+  const importedGuidance = wrapsMesh
+    ? [
+        "",
+        "THIS NODE WRAPS AN IMPORTED MESH. Do NOT re-model it. Start from the",
+        "`part = ...` expression given with the part below and MODIFY it with",
+        "boolean operators against build123d primitives:",
+        "  part - Pos(x, y, z) * Cylinder(r, depth)     # cut a hole",
+        "  part + Pos(x, y, z) * Box(a, b, c)           # add material",
+        "  part & shape                                 # intersect/trim",
+        "Coordinates are the imported model's own frame (see the envelope for",
+        "its bounds). Keep every declared port's geometry intact.",
+      ].join("\n")
+    : "";
+  const meshStart = wrapsMesh
+    ? `Start from:\n  part = ${meshSource ? `load_import("${ctx.node.id}.ply")` : importedPartExpr(ctx.node as unknown as NodeRecord)}`
+    : "";
 
   const system = [
-    "You write ONE printed part as build123d python for a patch-graph CAD tool.",
+    "You write ONE part as build123d python for a patch-graph CAD tool.",
     "The part's interface contract is pinned: your geometry must physically",
     "realize every declared port at its exact pose and dimensions — external",
     "probes measure the result and reject mismatches. Stay inside the envelope.",
@@ -305,6 +306,7 @@ export function generatePrompt(ctx: GenerateCtx<CadContractPayload>): PromptSpec
     // own description, so hermeticity holds.
     payload.visualRef ? `In the reference image: ${payload.visualRef}` : "",
     `Design brief: ${ctx.brief.goal}`,
+    meshStart,
     // The only channel through which parts can agree on anything the contracts
     // do not pin. Hermeticity is what makes it necessary, not optional.
     ctx.brief.design ? `Shared design intent (every part follows this): ${ctx.brief.design}` : "",

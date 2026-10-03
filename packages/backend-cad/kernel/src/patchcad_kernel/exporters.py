@@ -128,7 +128,7 @@ def _welded(shape: Any) -> Any:
     # reading as open even when the solid is closed — and a slicer trusts that
     # flag. merge_vertices only welds duplicates; it is NOT process(validate=True),
     # which is documented to turn interior hole tunnels inside out.
-    mesh = to_trimesh(shape, 0.05, process=False)  # finer than a render: this gets printed
+    mesh = to_trimesh(shape, 0.05, process=False).copy()  # finer than a render: this gets printed
     mesh.merge_vertices()
     return mesh
 
@@ -170,4 +170,4 @@ def _export_combined(parts: list[dict[str, Any]], tmp: str, fmt: str) -> dict[st
     mesh = trimesh.Trimesh(vertices=v, faces=t, process=False)
     mesh.merge_vertices()  # see _welded
     mesh.export(tmp, file_type=fmt)
-    return {"parts": len(parts), "triangles": int(len(t)), "watertight": bool(mesh.is_watertight)}
+    return {"parts": len(parts), "triangles": len(t), "watertight": bool(mesh.is_watertight)}

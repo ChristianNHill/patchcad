@@ -1,4 +1,6 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { GraphDoc } from "@patchcad/shared";
 import { architectOutputToGraph, reexpandGraph, type ArchitectOutput } from "@patchcad/engine";
 import { CadBackend, type CadContractPayload } from "./index.js";
 import { cadJointRuleLint, expandJoints, jointErrors, staleJoints } from "./expand.js";
@@ -6,6 +8,7 @@ import { solveAssembly } from "./assembly.js";
 import { boundDependents, resolvePose } from "./bindings.js";
 import { buildBom } from "./bom.js";
 import { hardwareAllowances } from "./g5.js";
+import { meshSourceLint } from "./mesh-source.js";
 
 /** Expansion turns intent into graph, so its tests read the graph: which
  *  nodes, which host ports, which edges, and whether every CAD lint is happy
@@ -240,6 +243,8 @@ describe("every recipe expands to a plan the CAD lints accept", () => {
   for (const [label, joint, wa, wb] of cases) {
     it(label, () => {
       const plan = plates(joint, wb, wa);
+      // A rail's screws sit along its whole length, inside the part it is on.
+      if (label.startsWith("rail")) Object.assign((plan.nodes[0]!.contract.payload as CadContractPayload).envelope.volumes[0]!, { d: 300 });
       if (label.startsWith("tapped")) {
         const lid = plan.nodes[1]!.contract.payload as CadContractPayload;
         lid.process.kind = "CNC";
@@ -311,7 +316,7 @@ describe("kinematic joints and the swept G5", () => {
   it("records the revolute joint's world axis, limits and moving parts in the scene", () => {
     const { scene } = new CadBackend().solveScene(graphOf(rotorPlan()));
     expect(scene.joints).toEqual([
-      { id: "j1", type: "revolute", origin: [0, 0, 14], direction: [0, 0, 1], limits: [-180, 180], moving: ["rotor", "j1_shaft", "j1_collar"] },
+      { id: "j1", type: "revolute", origin: [0, 0, 14], direction: [0, 0, 1], limits: [-180, 180], moving: ["rotor", "j1_shaft", "j1_collar", "j1_collar#1"] },
     ]);
   });
 
@@ -340,7 +345,7 @@ describe("kinematic joints and the swept G5", () => {
     } as never;
     const res = await new CadBackend({ kernel }).globalCheck(g, { root: "/tmp/patchcad-sweep" });
     expect(calls[0]!.sweeps).toEqual([
-      { joint: "j1", type: "revolute", origin: [0, 0, 14], direction: [0, 0, 1], limits: [-180, 180], moving: ["rotor", "j1_shaft", "j1_collar"] },
+      { joint: "j1", type: "revolute", origin: [0, 0, 14], direction: [0, 0, 1], limits: [-180, 180], moving: ["rotor", "j1_shaft", "j1_collar", "j1_collar#1"] },
     ]);
     expect(res.ok).toBe(false);
     expect(res.findings).toEqual([
@@ -370,5 +375,198 @@ describe("cooking a joint's hardware", () => {
     expect(store.doc.nodes.j1_screw!.history.at(-1)!.cause).toBe("registry");
     expect(requests.every((r) => r.ports.length === 0 && r.solids === 1)).toBe(true);
     expect(requests.some((r) => r.code.includes("RegularPolygon") || r.code.includes("Cylinder"))).toBe(true);
+  });
+});
+
+describe("drives", () => {
+  /** A base whose top is the joint face and a lid driven against it. */
+  const driven = (joint: Record<string, unknown>, baseH: number, lidH: number, baseD = 200) =>
+    expandJoints({
+      ...plates({}),
+      nodes: [part("base", baseH, [face("top", baseH)], {}, baseD), part("lid", lidH, [face("bottom", 0, 30, [0, 0, -1])])] as never,
+      joints: [{
+        id: "j1", a: { node: "base", port: "top" }, b: { node: "lid", port: "bottom" }, intent: "permanent", load: "light", access: "both_sides",
+        wallA: "param(base.thickness)", wallB: "param(lid.thickness)", ...joint,
+      }],
+    } as ArchitectOutput);
+  const solved = (out: ArchitectOutput) => {
+    const g = graphOf(out);
+    const nodes = Object.values(g.nodes).map((n) => ({
+      id: n.id,
+      ports: Object.fromEntries((n.contract.payload as CadContractPayload).ports.map((p) => [p.name, resolvePose(g, p.pose)])),
+    }));
+    const r = solveAssembly(nodes, g.edges.map((e) => ({ fromNode: e.from, fromPort: e.fromPort, toNode: e.to, toPort: e.toPort })), "base");
+    expect(r.problems).toEqual([]);
+    return (id: string) => r.instances[id]!.map((m) => [m[12], m[13], m[14]].map((v) => Math.round(v! * 100) / 100));
+  };
+
+  it("a belt drive: spindle, spacer, motor beside it, two pulleys level, and the loop between them", () => {
+    const out = driven({ motion: "revolute", driven: true, ratio: 2, wallMotor: 6 }, 14, 8);
+    expect(out.nodes.map((nd) => `${nd.id}:${nd.kind}`).slice(2)).toEqual([
+      "j1_bearing_a:bearing", "j1_bearing_b:bearing", "j1_collar:collar", "j1_spacer:washer", "j1_shaft:shaft",
+      "j1_motor:motor", "j1_motor_pulley:pulley", "j1_driven_pulley:pulley", "j1_belt:belt",
+    ]);
+    expect(lintAll(out)).toEqual([]);
+    expect(param(out, "j1_belt", "sku")).toBe("GT2L-6");
+    expect(param(out, "j1_belt", "length")).toBe(158);
+    expect(param(out, "j1_belt", "center")).toBe(48.58);
+    expect(ports(out, "base")).toContain("j1_motor_mount:MOTOR_MOUNT");
+    const at = solved(out);
+    expect(at("j1_motor")).toEqual([[48.58, 0, 8]]); // in its 6mm pocket under the 14mm housing
+    expect(at("j1_motor_pulley")).toEqual([[48.58, 0, 15]]);
+    expect(at("j1_driven_pulley")).toEqual([[0, 0, 15]]); // on the spacer washer, level with the motor's
+    expect(at("j1_spacer")).toEqual([[0, 0, 14]]);
+    expect(at("j1_collar")).toEqual([[0, 0, 0]]); // one collar now, under bearing_b
+    expect(at("j1_belt")).toEqual([[48.58, 0, 23.5]]); // the rims' middle less half the belt width
+    expect(at("lid")).toEqual([[0, 0, 32]]);
+  });
+
+  it("the belt runs from the motor back to the driven axis, and the motor pulley turns with b at the ratio", () => {
+    const g = graphOf(driven({ motion: "revolute", driven: true, ratio: 2, wallMotor: 6 }, 14, 8));
+    const { scene } = new CadBackend().solveScene(g);
+    const belt = (scene.nodes as unknown as Record<string, { matrix: number[] }>).j1_belt!;
+    expect(belt.matrix[0]).toBeCloseTo(-1); // its +x points from the motor at x=48.58 to the spindle at 0
+    expect(scene.joints).toEqual([{
+      id: "j1", type: "revolute", origin: [0, 0, 14], direction: [0, 0, 1], limits: [-180, 180],
+      moving: ["lid", "j1_shaft", "j1_collar", "j1_spacer", "j1_driven_pulley"],
+      coupled: [{ origin: [48.58, 0, 14], direction: [0, 0, 1], ratio: 2, moving: ["j1_motor_pulley"] }],
+    }]);
+  });
+
+  it("a gear drive: the pair at m·(z1+z2)/2, level, counter-rotating, and G5 allows their mesh", () => {
+    const out = driven({ motion: "revolute", driven: true, ratio: 2, torqueClass: "high", wallMotor: 6 }, 14, 8);
+    expect(lintAll(out)).toEqual([]);
+    const gear = (id: string) => Object.fromEntries(["module", "teeth", "thickness", "bore", "flat", "phase"].map((k) => [k, param(out, id, k)]));
+    expect(gear("j1_motor_gear")).toEqual({ module: 1.5, teeth: 17, thickness: 9, bore: 5, flat: 2, phase: 0 });
+    expect(gear("j1_driven_gear")).toEqual({ module: 1.5, teeth: 34, thickness: 9, bore: 5, flat: 2, phase: 0 });
+    const at = solved(out);
+    expect(at("j1_motor_gear")).toEqual([[38.25, 0, 19.5]]); // centred gears, 9 thick, on the 15 plane
+    expect(at("j1_driven_gear")).toEqual([[0, 0, 19.5]]);
+    expect(at("lid")).toEqual([[0, 0, 25]]);
+    const g = graphOf(out);
+    expect(new CadBackend().solveScene(g).scene.joints[0]!.coupled).toEqual([
+      { origin: [38.25, 0, 14], direction: [0, 0, 1], ratio: -2, moving: ["j1_motor_gear"] },
+    ]);
+    const mesh = hardwareAllowances(g).filter((a) => [a.a, a.b].includes("j1_motor_gear"));
+    expect(mesh).toEqual([{ a: "j1_motor_gear", b: "j1_driven_gear", volume_mm3: expect.any(Number) }]);
+    expect(mesh[0]!.volume_mm3).toBeLessThan(1);
+  });
+
+  it("a lead screw: motor, coupler and screw on the axis, b on the nut, the guide rod beside", () => {
+    const out = driven({ motion: "prismatic", driven: true, strokeMm: 100 }, 10, 30);
+    expect(lintAll(out)).toEqual([]);
+    expect(out.edges.some((e) => e.from === "base" && e.to === "lid")).toBe(false);
+    const at = solved(out);
+    expect(at("j1_coupler")).toEqual([[0, 0, 11]]);
+    expect(at("j1_lead_screw")).toEqual([[0, 0, 23.5]]);
+    expect(at("lid")).toEqual([[0, 0, 40.5]]); // 30.5 over the face: coupler, the nut's flange, 1mm
+    expect(at("j1_lead_nut")).toEqual([[0, 0, 40.5]]);
+    expect(at("j1_rod")).toEqual([[20, 0, 1.2]]);
+    expect(at("j1_linear_bearing")).toEqual([[20, 0, 40.5]]);
+    expect(param(out, "j1_rod", "length")).toBe(169.3); // socket 8.8 + 30.5 + stroke 100 + b 30
+    const { scene } = new CadBackend().solveScene(graphOf(out));
+    expect(scene.joints).toEqual([expect.objectContaining({
+      type: "prismatic", direction: [0, 0, 1], limits: [0, 100], moving: ["lid", "j1_lead_nut", "j1_linear_bearing"],
+      coupled: [{ origin: [0, 0, 10], direction: [0, 0, 1], ratio: 45, moving: ["j1_coupler", "j1_lead_screw"] }],
+    })]);
+  });
+
+  it("a belt carriage: rail screwed down at every hole, motor and idler past its ends, b slotted over the belt", () => {
+    const out = driven({ motion: "prismatic", driven: true, strokeMm: 100, speedClass: "high", wallMotor: 6 }, 8, 10, 400);
+    expect(lintAll(out)).toEqual([]);
+    expect(ports(out, "lid")).toContain("j1_belt_slot:SLOT");
+    expect(out.edges.filter((e) => e.to === "j1_rail_screw")).toHaveLength(7);
+    const at = solved(out);
+    expect(at("j1_rail_screw")).toEqual([-60, -40, -20, 0, 20, 40, 60].map((x) => [x, 0, 11])); // heads on MGN9's counterbore floors
+    expect(at("j1_rail_insert")).toEqual([-60, -40, -20, 0, 20, 40, 60].map((x) => [x, 0, 8]));
+    expect(at("j1_motor_pulley")).toEqual([[-98.15, 19.49, 9]]);
+    expect(at("j1_idler_washer")).toEqual([[98.15, 19.49, 15]]); // on its 7mm boss
+    expect(at("j1_idler")).toEqual([[98.15, 19.49, 16]]);
+    expect(at("j1_belt")).toEqual([[-98.15, 19.49, 17.5]]);
+    expect(param(out, "j1_belt", "length")).toBe(434);
+    expect(param(out, "lid", "j1_belt_slot") ?? null).toBe(null);
+    const slot = (out.nodes[1]!.contract.payload as CadContractPayload).ports.find((p) => p.name === "j1_belt_slot")!;
+    expect(slot.params).toEqual({ width: 2.38, depth: 6 });
+  });
+});
+
+describe.each(["cad-belt-drive", "cad-joints"])("examples/%s", (example) => {
+  const root = new URL(`../../../examples/${example}/`, import.meta.url);
+  const g = GraphDoc.parse(JSON.parse(readFileSync(new URL("patchcad.json", root), "utf8")));
+
+  it("is the plan its joint expands to today, and every lint passes", () => {
+    expect(staleJoints(g)).toEqual([]);
+    expect(new CadBackend().planning.graphLints.flatMap((l) => l.run(g))).toEqual([]);
+  });
+
+  it("keeps the registry's own code for every piece of hardware", () => {
+    const backend = new CadBackend();
+    for (const n of Object.values(g.nodes)) {
+      const code = backend.deterministicArtifact(n)?.code;
+      if (code) expect(readFileSync(new URL(`nodes/${n.id}/v1.code.py`, root), "utf8")).toBe(code);
+    }
+  });
+});
+
+describe("audit fixes", () => {
+  it("a joint id that prefixes an architect's port strips only what the joint minted", () => {
+    const plan = plates({});
+    const base = plan.nodes[0]!.contract.payload as CadContractPayload;
+    base.ports.push({ ...base.ports[0]!, name: "j1_face", pose: { ...base.ports[0]!.pose, origin: [5, 0, 6] } } as never);
+    const out = expandJoints(plan);
+    expect(ports(out, "base")).toContain("j1_face:FLAT_FACE");
+    expect(out.joints![0]).toMatchObject({ expanded: expect.stringContaining("R4"), minted: expect.arrayContaining(["j1_head", "j1_clear"]) });
+    // Only names on the two parts: the hardware's own "head" and "seat" go with the hardware.
+    for (const name of ["j1_face", "head", "seat"]) expect((out.joints![0] as unknown as { minted: string[] }).minted).not.toContain(name);
+    const again = expandJoints(out);
+    expect(again).toEqual(out);
+    expect(ports(again, "base")).toContain("j1_face:FLAT_FACE");
+  });
+
+  it("a recipe that throws strips what it began and the lint says why", () => {
+    const plan = plates({});
+    const lid = plan.nodes[1]!.contract.payload as CadContractPayload;
+    lid.ports[0]!.pose = { ...lid.ports[0]!.pose, xAxis: ["param(lid.thickness)", 0, 0] } as never;
+    const out = expandJoints(plan);
+    expect(out.nodes.map((nd) => nd.id)).toEqual(["base", "lid"]);
+    expect(ports(out, "base")).toEqual(["lid_face:FLAT_FACE"]);
+    expect(cadJointRuleLint.run(graphOf(out))).toEqual([
+      expect.stringContaining("R4 could not be expanded: a joint port's axes must be numbers"),
+    ]);
+  });
+
+  it("the rod socket of a slide has a depth to stop the cut at", () => {
+    const out = expandJoints(plates({ motion: "prismatic", strokeMm: 40 }, 30, 12));
+    const rod = (out.nodes[0]!.contract.payload as CadContractPayload).ports.find((p) => p.name === "j1_rod")!;
+    expect(rod.params.depth).toBe("(param(base.thickness)) - 1.2");
+    expect(ports(out, "lid")).toContain("j1_lm_seat:LINEAR_BEARING_SEAT");
+  });
+
+  it("a joint may end on a mesh node: the features it mints are the rules', not the architect's", () => {
+    const plan = plates({});
+    (plan.nodes[1]!.contract.payload as CadContractPayload).geometrySource = "mesh";
+    const g = graphOf(expandJoints(plan));
+    g.brief.refs = [{ hash: "abc", mask: false }];
+    expect(meshSourceLint(true).run(g)).toEqual([]);
+  });
+
+  it("a printed pin carries its e-clip in a probed groove past b", () => {
+    const out = expandJoints(plates({ motion: "revolute", allowPrinted: true }, 8, 6));
+    expect(lintAll(out)).toEqual([]);
+    const groove = (out.nodes[0]!.contract.payload as CadContractPayload).ports.find((p) => p.name === "j1_clip_groove")!;
+    expect(groove.params).toEqual({ diameter: 4, width: 0.74, shaft_diameter: 5 });
+    // On the pin's axis, half a groove past b's far face.
+    expect(groove.pose.origin).toEqual([0, 0, "(param(base.thickness)) + ((param(lid.thickness)) + 0.37)"]);
+    expect(param(out, "j1_pin_clip", "sku")).toBe("DIN6799-4");
+    expect(expandJoints(out)).toEqual(out);
+  });
+
+  it("a rail sits on a RAIL_MOUNT land whose holes are its screws'", () => {
+    const plan = plates({ motion: "prismatic", strokeMm: 200, load: "medium" }, 10, 6);
+    Object.assign((plan.nodes[0]!.contract.payload as CadContractPayload).envelope.volumes[0]!, { d: 300 });
+    const out = expandJoints(plan);
+    const mount = (out.nodes[0]!.contract.payload as CadContractPayload).ports.find((p) => p.name === "j1_rail_mount")!;
+    expect(mount).toMatchObject({ type: "RAIL_MOUNT", params: { width: 12, length: 250, pitch: 25, count: 10, hole_diameter: "param(base.j1_rail_insert_d)" } });
+    expect(out.edges.filter((e) => e.fromPort === "j1_rail_mount").map((e) => e.to)).toEqual(["j1_rail", "j1_carriage"]);
   });
 });

@@ -88,9 +88,10 @@ export interface RepairCtx<P = unknown> extends GenerateCtx<P> {
   /** Total generation rounds this cook is allowed, so a prompt can say
    *  "attempt 3 of 5" — a last round reads differently from a first. */
   maxAttempts: number;
-  /** Every EARLIER failure, oldest first (`failure` is the latest, and is not
-   *  repeated here). Without these the model re-tries approaches it already
-   *  burned a round on; empty on the first repair. */
+  /** Every failure this cook so far except `failure` (the one being repaired,
+   *  which is the best-scoring, not always the latest), oldest first. Without
+   *  these the model re-tries approaches it already burned a round on; empty
+   *  on the first repair. */
   priorFailures: { stage: string; report: string }[];
   /**
    * What the failed artifact actually looks like, when the backend could
@@ -157,6 +158,9 @@ export interface CheckResult {
    *  them, so no node changes status. For checks with no calibrated
    *  threshold yet (CAD: silhouette IoU against a reference image). */
   advisories?: CheckAdvisory[];
+  /** Some comparison did not run (checker down, a pair not compared). The
+   *  engine then keeps every existing block: silence is not a clear. */
+  incomplete?: boolean;
 }
 
 /** A non-blocking assembly finding, with the nodes most responsible. */
@@ -277,6 +281,10 @@ export interface DomainBackend<P = unknown> {
     architectRules?: string[];
     /** Reprompt routing in this domain's words (tier.ts). */
     tierHints?: TierHints;
+    /** Payload keys no neighbor's code reads (CAD: visualChecks, sourcing
+     *  notes). Editing them changes the hash but not the shape, so nothing
+     *  downstream goes dirty (diffContract). */
+    advisoryPayloadKeys?: string[];
     /** Joints the architect may declare: what a joint must do, never its
      *  hardware. Travels as one JSON string on the wire, like the payload. Omit
      *  for a domain without joints. */
@@ -318,6 +326,15 @@ export interface DomainBackend<P = unknown> {
    * image and the repair stays text-only.
    */
   renderArtifact?(node: NodeRecord, ws: Workspace): Promise<LlmImage | null>;
+
+  /** Failure stages where the part built a shape worth rendering for the
+   *  repair (CAD: port probes and envelope). The engine's own looks-wrong
+   *  stage always renders. Omit and repairs stay text-only. */
+  renderStages?: string[];
+
+  /** System prompt for the visual judge (inspect.ts): what the render shows
+   *  and how to read it, in this domain's terms. Omit for a generic one. */
+  inspectSystem?: string;
 
   /** Extract the node's REAL interface (a .d.ts for code nodes) after verify.
    * Stored on artifact.dts; neighbor verification then checks against actual

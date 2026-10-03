@@ -3,9 +3,21 @@ which is heavy — the parent process must never import it).
 
 G0  static AST scan: import allowlist, `build(p)` entrypoint present.
 G1  execute `build(p)` and get a shape back.
-G2  validity: ≥1 solid, positive volume, BRepCheck-valid, sane bounding box.
+G2  validity: ≥1 solid, positive volume, BRepCheck-valid, sane bounding box;
+    the solid count when the contract declares one.
+G3  port probes against the solid (g3_ports): holes by a fitted circle at the
+    narrowest of several slices, with centre offset, axis tilt and through-ness;
+    faces, bosses, shafts, channels, patterns member by member, and the
+    hardware host features against process-dependent fit bands.
+G4  envelope containment of surface samples, each primitive in its own frame.
+G4b spec assertions (solids, volume, bbox, hole count, symmetry, min wall).
+G4c process DFM (dfm_process.py) for fabricated parts.
+G5  posed clash, mate contact and swept travel across an assembly (g5_clash).
 
-Every failure carries a `hint` templated for the repair prompt.
+contract_gates runs G2-count, G3, G4, G4b and G4c together and raises one
+GateError naming every failure; a declaration no gate can read fails as stage
+CONTRACT. Every failure carries a `hint` templated for the repair prompt.
+Changing what any gate passes means bumping main.GATES_VERSION.
 """
 
 from __future__ import annotations
@@ -323,8 +335,59 @@ def _at(o: list[float], x: list[float], y: list[float], z: list[float],
     )
 
 
+_JOB_CACHE: dict[tuple[int, str], tuple[Any, Any]] = {}
+
+
+def _cached(shape: Any, what: str, make) -> Any:
+    """One OCCT helper per shape per job. build123d's is_inside builds a fresh
+    BRepClass3d_SolidClassifier for every point, and a probe asks thousands of
+    points of one shape: reusing it measured 8.4x faster. The shape is held
+    beside its helper so a recycled id() can never hand one shape another's."""
+    hit = _JOB_CACHE.get((id(shape), what))
+    if hit is None or hit[0] is not shape:
+        hit = _JOB_CACHE[(id(shape), what)] = (shape, make())
+    return hit[1]
+
+
+def reset_job_cache() -> None:
+    """Called by the worker before each job, so helpers never outlive the shapes
+    of the job that made them."""
+    from .meshpart import reset_mesh_memo
+
+    _JOB_CACHE.clear()
+    reset_mesh_memo()
+
+
 def _in_material(shape: Any, p: tuple[float, float, float]) -> bool:
-    return bool(shape.is_inside(p))
+    if getattr(shape, "wrapped", None) is None:  # an imported MeshPart classifies itself
+        return bool(shape.is_inside(p))
+    from OCP.BRepClass3d import BRepClass3d_SolidClassifier
+    from OCP.gp import gp_Pnt
+    from OCP.TopAbs import TopAbs_IN
+
+    classifier = _cached(shape, "classifier", lambda: BRepClass3d_SolidClassifier(shape.wrapped))
+    classifier.Perform(gp_Pnt(*p), 1.0e-6)  # build123d's is_inside, minus the rebuild
+    return classifier.State() == TopAbs_IN or classifier.IsOnAFace()
+
+
+CROSSING_EPS_MM = 1e-3
+
+
+def _line_hits(shape: Any, start: tuple[float, float, float], direction: list[float], reach: float) -> list[float]:
+    """Where the line from `start` along `direction` meets the B-rep's faces,
+    as sorted distances in [0, reach]. Exact, where a 0.25mm march costs four
+    classifier calls per millimetre of depth and steps over a thinner floor."""
+    from OCP.gp import gp_Dir, gp_Lin, gp_Pnt
+    from OCP.IntCurvesFace import IntCurvesFace_ShapeIntersector
+
+    def load() -> Any:
+        it = IntCurvesFace_ShapeIntersector()
+        it.Load(shape.wrapped, 1e-7)
+        return it
+
+    it = _cached(shape, "lines", load)
+    it.Perform(gp_Lin(gp_Pnt(*start), gp_Dir(*direction)), 0.0, reach)
+    return sorted(it.WParameter(i) for i in range(1, it.NbPnt() + 1))
 
 
 def _march(shape: Any, frame, du: float, dv: float, w: float, max_r: float,
@@ -335,7 +398,8 @@ def _march(shape: Any, frame, du: float, dv: float, w: float, max_r: float,
 
     `dw` marches along the frame's z rather than in its plane: du=dv=0, dw=-1 is
     the depth probe that follows the axis down to a channel or hole floor. It
-    was a second function, _march_depth, identical but for the sample point.
+    was a second function, _march_depth, identical but for the sample point. On
+    a B-rep it intersects the line with the faces instead of stepping.
 
     This is the one directional measurement primitive. It was inlined in
     _measure_hole_radius with the median-over-8-rays aggregation baked around
@@ -363,8 +427,19 @@ def _march(shape: Any, frame, du: float, dv: float, w: float, max_r: float,
     # which lies on the mating face — a point the containment test may call
     # either way. _march_depth never had this guard, and a guard that fires on a
     # boundary sample would turn a real floor into None, which reads as "the cut
-    # passes through". Behaviour of the depth path is left exactly as it was.
+    # passes through". The depth path never had the guard and still has none.
     if dw == 0.0 and _in_material(shape, _at(o, x, y, z, 0.0, 0.0, w)) == want_material:
+        return None
+    if dw != 0.0 and getattr(shape, "wrapped", None) is not None:
+        # The depth path on a B-rep: every face the axis meets, each crossing
+        # confirmed by the classifier just past it (a grazing hit changes nothing).
+        # 0.0 first, so a start already in the sought state reads ~0 as before.
+        start = _at(o, x, y, z, 0.0, 0.0, w)
+        d = [x[i] * du + y[i] * dv + z[i] * dw for i in range(3)]
+        for t in [0.0, *_line_hits(shape, start, d, max_r)]:
+            p = tuple(start[i] + d[i] * (t + CROSSING_EPS_MM) for i in range(3))
+            if _in_material(shape, p) == want_material:
+                return t
         return None
     lo, crossing, r = 0.0, None, step
     while r <= max_r:
@@ -475,12 +550,16 @@ def _port_diameter(port: dict[str, Any]) -> float:
     )
 
 
-def _probe_hole(shape: Any, port: dict[str, Any], band: tuple[float, float] | None = None) -> dict[str, Any]:
+def _probe_hole(shape: Any, port: dict[str, Any], band: tuple[float, float] | None = None,
+                through: bool | None = None) -> dict[str, Any]:
     """`band` replaces the ±DIAMETER_TOL_MM window with an explicit [lo, hi]:
     a press or slip fit is a one-sided band 0.1mm wide, which the default
-    tolerance would pass on both sides at once."""
+    tolerance would pass on both sides at once. `through` says the hole must
+    pass through the part; it defaults to true for a CLEARANCE_HOLE only."""
     d = _port_diameter(port)
     key, ptype = port["key"], port["type"]
+    if through is None:
+        through = ptype == "CLEARANCE_HOLE"
     frame = _frame(port["pose"])
     o, x, y, z = frame
     max_r = d * 1.5 + 2.0
@@ -522,7 +601,7 @@ def _probe_hole(shape: Any, port: dict[str, Any], band: tuple[float, float] | No
                 if t is not None:
                     walls.append(t)
         span = sorted(walls)[len(walls) // 2] if walls else PROBE_DEPTH_MM * 3
-    if ptype != "CLEARANCE_HOLE":
+    if not through:
         r_in = d / 2 - DIAMETER_TOL_MM
         if _in_material(shape, _at(o, x, y, z, cu + r_in, cv, -PROBE_DEPTH_MM)):
             span = PROBE_DEPTH_MM
@@ -550,8 +629,8 @@ def _probe_hole(shape: Any, port: dict[str, Any], band: tuple[float, float] | No
     if not band and abs(measured - d) > DIAMETER_TOL_MM:
         where = f" (narrowest, at {at_depth:g}mm depth)" if len(slices) > 1 else ""
         hint = f"change the hole feature to Ø{d:g} as pinned in the contract"
-        if ptype == "CLEARANCE_HOLE" and measured < d:
-            hint += (f". A clearance hole must be Ø{d:g} all the way through; a counterbore above it "
+        if through and measured < d:
+            hint += (f". A through hole must be Ø{d:g} all the way through; a counterbore above it "
                      f"is a SCREW_SEAT port of its own")
         raise GateError("G3", f'port "{key}" ({ptype}): expected Ø{d:g}, measured Ø{measured:.2f}{where}',
                         hint, expected=d, measured=round(measured, 3))
@@ -609,9 +688,11 @@ def _probe_hole(shape: Any, port: dict[str, Any], band: tuple[float, float] | No
     # counterbore's own floor is an annulus and never lies on the axis. The
     # FLAT_FACE grid already taught what an unsatisfiable check costs. Both
     # numbers are still measured and reported, which is the part with value.
-    if port["type"] == "CLEARANCE_HOLE" and floor is not None:
-        raise GateError("G3", f'port "{port["key"]}" (CLEARANCE_HOLE): bottoms out at {floor:.2f}mm instead of passing through',
-                        "cut it through the part, or declare it as a BORE or SCREW_SEAT if it is meant to be a blind seat")
+    if through and floor is not None:
+        raise GateError("G3", f'port "{key}" ({ptype}): bottoms out at {floor:.2f}mm instead of passing through',
+                        "cut it through the part, or declare it as a BORE or SCREW_SEAT if it is meant to be a blind seat"
+                        if ptype == "CLEARANCE_HOLE" else
+                        "cut it through the part, or declare params.depth on the port if it is meant to be blind")
 
     return result
 
@@ -1093,16 +1174,16 @@ def _posed_mesh(shape: Any, matrix: list[float]) -> Any:
 
     from .meshpart import MeshPart, to_trimesh
 
-    mesh = to_trimesh(shape, TESSELLATION_TOL_CLASH)  # welds the b3d branch
-    if isinstance(shape, MeshPart):
-        mesh = mesh.copy()  # to_trimesh hands over the part's own mesh; posing mutates
-        if not mesh.is_watertight:
-            # This branch is where a non-watertight mesh can actually arrive:
-            # an imported STL. The repair used to sit on the build123d branch,
-            # where process=True has already welded and b3d tessellates closed
-            # anyway — guarding the case that could not happen.
-            mesh.merge_vertices(merge_tex=True, merge_norm=True)
-            trimesh.repair.fill_holes(mesh)
+    # Copied: to_trimesh's mesh is shared (the part's own, or the job's memo),
+    # and posing mutates. Two copies of one node would otherwise move it twice.
+    mesh = to_trimesh(shape, TESSELLATION_TOL_CLASH).copy()  # welds the b3d branch
+    if isinstance(shape, MeshPart) and not mesh.is_watertight:
+        # This branch is where a non-watertight mesh can actually arrive:
+        # an imported STL. The repair used to sit on the build123d branch,
+        # where process=True has already welded and b3d tessellates closed
+        # anyway — guarding the case that could not happen.
+        mesh.merge_vertices(merge_tex=True, merge_norm=True)
+        trimesh.repair.fill_holes(mesh)
     if matrix:
         m = np.asarray(matrix, dtype=np.float64).reshape(4, 4).T  # column-major in
         mesh.apply_transform(m)
@@ -1182,7 +1263,9 @@ def _brep_overlap(shape_a: Any, matrix_a: list[float], shape_b: Any, matrix_b: l
     """Exact fallback: intersect the posed B-reps. Slow on curved parts, so it
     only runs when the mesh route cannot."""
     import numpy as np
-    from build123d import Location
+    from build123d import Compound, Location
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
+    from OCP.BRepCheck import BRepCheck_Analyzer
     from OCP.gp import gp_Trsf
 
     def posed(shape: Any, matrix: list[float]) -> Any:
@@ -1193,7 +1276,14 @@ def _brep_overlap(shape_a: Any, matrix_a: list[float], shape_b: Any, matrix_b: l
         t.SetValues(*m[0], *m[1], *m[2])
         return shape.moved(Location(t))
 
-    overlap = posed(shape_a, matrix_a) & posed(shape_b, matrix_b)
+    # BRepAlgoAPI directly, not `&`: a boolean that fails comes back from `&`
+    # as an empty or broken shape, whose volume reads 0, which reads as "no
+    # clash". This route runs for the pairs the mesh route already gave up on,
+    # which is exactly where a failure is likely.
+    op = BRepAlgoAPI_Common(posed(shape_a, matrix_a).wrapped, posed(shape_b, matrix_b).wrapped)
+    if not op.IsDone() or not BRepCheck_Analyzer(op.Shape()).IsValid():
+        raise ValueError("the B-rep intersection failed or came back invalid")
+    overlap = Compound(op.Shape())
     centre = overlap.center() if overlap.volume > 0 else None
     return float(overlap.volume), float(overlap.area), [centre.X, centre.Y, centre.Z] if centre else [0.0, 0.0, 0.0]
 
@@ -1224,47 +1314,83 @@ Between two samples the part jumps no further than this, so only an obstacle
 thinner than it AND a moving feature narrower than it can slip through unseen;
 blades and arms are wider than 3mm."""
 
-SWEEP_SAMPLES = (24, 120)
-"""Bounds on the sample count: a short rotor still turns in 15° steps, a long
-stroke or a big disc stays inside the build budget."""
+SWEEP_SAMPLES = (24, 1000)
+"""Bounds on the sample count: a short rotor still turns in 15° steps. The top
+was 120, which held a 300mm disc to a 7.8mm chord while reporting 3mm; it is a
+runaway guard now, affordable because the boxes of every sample are tested at
+once and a boolean runs only on a sample whose boxes meet. Each swept finding
+reports the chord its sweep actually achieved (`chord_mm`)."""
 
 
-def _sweep_transforms(sweep: dict[str, Any], mesh: Any) -> list[tuple[float, Any]]:
-    """(travel, 4x4 world transform) samples that carry a moving part through
-    its joint's travel: rotations about the axis in degrees for a revolute
-    joint, translations along it in mm for a prismatic one. The scene pose is
-    the joint at 0, so every sample is relative to it."""
+def _turn(o: Any, d: Any, deg: float) -> Any:
+    """4x4 rotation by `deg` about the axis through `o` along unit `d`."""
     import numpy as np
 
-    o = np.asarray(sweep["origin"], dtype=np.float64)
-    d = np.asarray(sweep["direction"], dtype=np.float64)
-    d = d / np.linalg.norm(d)
+    a = math.radians(deg)
+    k_x = np.array([[0, -d[2], d[1]], [d[2], 0, -d[0]], [-d[1], d[0], 0]])
+    r = np.eye(3) + math.sin(a) * k_x + (1 - math.cos(a)) * (k_x @ k_x)
+    t = np.eye(4)
+    t[:3, :3] = r
+    t[:3, 3] = o - r @ o
+    return t
+
+
+def _axis(spec: dict[str, Any]) -> tuple[Any, Any]:
+    import numpy as np
+
+    d = np.asarray(spec["direction"], dtype=np.float64)
+    return np.asarray(spec["origin"], dtype=np.float64), d / np.linalg.norm(d)
+
+
+def _axis_reach(meshes: list[Any], o: Any, d: Any) -> float:
+    """Outermost distance of any vertex from an axis."""
+    import numpy as np
+
+    r = 0.0
+    for mesh in meshes:
+        rel = mesh.vertices - o
+        if len(rel):
+            r = max(r, float(np.linalg.norm(rel - np.outer(rel @ d, d), axis=1).max()))
+    return r
+
+
+def _sweep_groups(sweep: dict[str, Any], meshes: list[tuple[str, Any]]) -> tuple[list[float], list[tuple[set[str], Any]], float]:
+    """The travel samples of one joint, and each group of nodes that moves
+    with it as (nodes, travel -> 4x4 world transform). The first group is the
+    joint's own: rotations about its axis in degrees for a revolute joint,
+    translations along it in mm for a prismatic one. Each `coupled` group turns
+    about its own axis by `ratio` degrees per unit of the joint's travel: a
+    motor's gear against the driven one (negative: external gears counter-
+    rotate), a pulley, a lead screw. The scene pose is the joint at 0, so every
+    sample is relative to it. Last, the chord: how far the outermost moving
+    point travels between two samples."""
+    o, d = _axis(sweep)
     lo, hi = (float(v) for v in sweep["limits"])
     lo_n, hi_n = SWEEP_SAMPLES
-    out = []
-    if sweep["type"] == "revolute":
-        rel = mesh.vertices - o
-        along = rel @ d
-        r_max = float(np.linalg.norm(rel - np.outer(along, d), axis=1).max()) if len(rel) else 0.0
-        span = math.radians(hi - lo)
-        full = span >= 2 * math.pi - 1e-6
-        n = min(hi_n, max(lo_n, math.ceil(span * r_max / SWEEP_CHORD_MM)))
-        k_x = np.array([[0, -d[2], d[1]], [d[2], 0, -d[0]], [-d[1], d[0], 0]])
-        for k in range(n if full else n + 1):
-            a = math.radians(lo) + span * k / n
-            r = np.eye(3) + math.sin(a) * k_x + (1 - math.cos(a)) * (k_x @ k_x)
-            t = np.eye(4)
-            t[:3, :3] = r
-            t[:3, 3] = o - r @ o
-            out.append((round(math.degrees(a), 2), t))
-    else:
-        n = min(hi_n, max(2, math.ceil((hi - lo) / SWEEP_CHORD_MM)))
-        for k in range(n + 1):
-            t = np.eye(4)
-            travel = lo + (hi - lo) * k / n
-            t[:3, 3] = d * travel
-            out.append((round(travel, 3), t))
-    return out
+    revolute = sweep["type"] == "revolute"
+    main = set(sweep.get("moving") or [])
+
+    def own(travel: float) -> Any:
+        import numpy as np
+
+        if revolute:
+            return _turn(o, d, travel)
+        t = np.eye(4)
+        t[:3, 3] = d * travel
+        return t
+
+    groups: list[tuple[set[str], Any]] = [(main, own)]
+    chord = (hi - lo) if not revolute else math.radians(hi - lo) * _axis_reach([m for k, m in meshes if k in main], o, d)
+    for c in sweep.get("coupled") or []:
+        co, cd = _axis(c)
+        ratio = float(c["ratio"])
+        nodes = set(c.get("moving") or [])
+        groups.append((nodes, lambda travel, co=co, cd=cd, ratio=ratio: _turn(co, cd, ratio * travel)))
+        chord = max(chord, math.radians(abs(ratio) * (hi - lo)) * _axis_reach([m for k, m in meshes if k in nodes], co, cd))
+    full = revolute and hi - lo >= 360 - 1e-6
+    n = min(hi_n, max(lo_n if revolute else 2, math.ceil(chord / SWEEP_CHORD_MM)))
+    travels = [lo + (hi - lo) * k / n for k in range(n if full else n + 1)]
+    return [round(t, 2 if revolute else 3) for t in travels], groups, chord / n
 
 
 def _shared(a: Any, b: Any) -> tuple[float, float, list[float]]:
@@ -1281,17 +1407,21 @@ def _shared(a: Any, b: Any) -> tuple[float, float, list[float]]:
 def g5_swept(meshes: list[tuple[str, Any]], sweeps: list[dict[str, Any]],
              allowance: dict[frozenset, float]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
     """Each moving part through its joint's travel, against every part that
-    holds still.
+    holds still and every part that moves differently.
 
     A static clash check sees a rotor at rest, where its blades may happen to
-    miss a strut they will hit a quarter turn later. So the moving part is
-    posed at samples of its travel and each pose is compared like any other
+    miss a strut they will hit a quarter turn later. So the moving parts are
+    posed at samples of the travel and each pose is compared like any other
     solid; the worst pose is the verdict. Pose by pose rather than one unioned
     swept solid: the union of a hundred overlapping copies tessellates to
     hundreds of thousands of triangles and took seconds per pair, while each
-    single pose is the part's own few hundred. Parts that move with it
-    (`moving` names their nodes) are left out, since they turn together.
-    Allowances apply per node pair, as in the static check."""
+    single pose is the part's own few hundred. Groups name placed copies
+    (`node`, `node#1`), so each copy of an instanced rotor turns about its own
+    axis. Parts in the same group
+    (`moving`, or one `coupled` group) are left out against each other, since
+    they turn together; two groups are compared pose by pose, both moved, which
+    is how a gear pair is checked in mesh rather than each gear against the
+    other one frozen. Allowances apply per node pair, as in the static check."""
     import numpy as np
 
     clashes: list[dict[str, Any]] = []
@@ -1304,28 +1434,42 @@ def g5_swept(meshes: list[tuple[str, Any]], sweeps: list[dict[str, Any]],
             solids[key] = _manifold(mesh)
         return solids[key]
 
+    def corners(mesh: Any) -> Any:
+        return np.array([[x, y, z, 1.0] for x in mesh.bounds[:, 0] for y in mesh.bounds[:, 1] for z in mesh.bounds[:, 2]])
+
+    def boxes(mesh: Any, ts: Any) -> tuple[Any, Any]:
+        """The posed bounding box at every sample at once: (n, 3) mins, maxes."""
+        pts = np.einsum("nij,kj->nki", ts, corners(mesh))[:, :, :3]
+        return pts.min(axis=1), pts.max(axis=1)
+
     for sweep in sweeps:
-        moving = set(sweep.get("moving") or [])
+        travels, groups, chord = _sweep_groups(sweep, meshes)
+        poses = [np.stack([move(t) for t in travels]) for _, move in groups]
+        still = np.repeat(np.eye(4)[None], len(travels), axis=0)
+
+        def group_of(key: str, groups: list = groups) -> int | None:
+            return next((g for g, (nodes, _) in enumerate(groups) if key in nodes), None)
+
         for key_m, mesh_m in meshes:
-            if _node_of(key_m) not in moving:
+            g_m = group_of(key_m)
+            if g_m is None:
                 continue
-            samples = _sweep_transforms(sweep, mesh_m)
-            corners = np.array([[x, y, z, 1.0] for x in mesh_m.bounds[:, 0] for y in mesh_m.bounds[:, 1] for z in mesh_m.bounds[:, 2]])
-            boxes = []
-            for _, t in samples:
-                pts = (t @ corners.T).T[:, :3]
-                boxes.append((pts.min(axis=0), pts.max(axis=0)))
             for key_o, mesh_o in meshes:
-                if _node_of(key_o) in moving:
-                    continue
-                o_min, o_max = mesh_o.bounds
+                g_o = group_of(key_o)
+                if g_o is not None and g_o <= g_m:
+                    continue  # same group, or this pair was taken the other way round
+                move_o = groups[g_o][1] if g_o is not None else None
+                ts_m, ts_o = poses[g_m], (poses[g_o] if g_o is not None else still)
+                (m_min, m_max), (o_min, o_max) = boxes(mesh_m, ts_m), boxes(mesh_o, ts_o)
+                # The swept AABB prefilter: only samples whose boxes meet pay a boolean.
+                meet = np.nonzero(np.all(o_min <= m_max, axis=1) & np.all(m_min <= o_max, axis=1))[0]
                 worst = None
                 try:
-                    for (travel, t), (b_min, b_max) in zip(samples, boxes):
-                        if np.any(o_min > b_max) or np.any(b_min > o_max):
-                            continue
-                        posed = solid(key_m, mesh_m).transform(t[:3, :].astype(np.float32))
-                        volume, area, centre = _shared(posed, solid(key_o, mesh_o))
+                    for i in meet:
+                        travel, t_m, t_o = travels[i], ts_m[i], ts_o[i]
+                        posed_m = solid(key_m, mesh_m).transform(t_m[:3, :].astype(np.float32))
+                        posed_o = solid(key_o, mesh_o).transform(t_o[:3, :].astype(np.float32)) if move_o else solid(key_o, mesh_o)
+                        volume, area, centre = _shared(posed_m, posed_o)
                         if volume > 0 and (worst is None or volume > worst[0]):
                             worst = (volume, area, centre, travel)
                 except Exception as err:  # noqa: BLE001
@@ -1338,7 +1482,8 @@ def g5_swept(meshes: list[tuple[str, Any]], sweeps: list[dict[str, Any]],
                 if depth <= CLASH_MIN_DEPTH_MM:
                     continue
                 found = {"joint": sweep.get("joint", ""), "a": key_m, "b": key_o, "volume_mm3": round(volume, 3),
-                         "depth_mm": round(depth, 4), "at": [round(float(c), 2) for c in centre], "travel": travel}
+                         "depth_mm": round(depth, 4), "at": [round(float(c), 2) for c in centre], "travel": travel,
+                         "chord_mm": round(chord, 2)}
                 limit = allowance.get(frozenset((_node_of(key_m), _node_of(key_o))))
                 if limit is not None and volume <= limit:
                     exempt.append(found | {"allowed_mm3": round(limit, 3)})
@@ -1366,7 +1511,8 @@ def g5_clash(parts: list[tuple[str, Any, list[float]]],
     posed 3mm off its face places a part floating 3mm in the air, clean.
 
     `sweeps` are the kinematic joints ({joint, type, origin, direction, limits,
-    moving}): each moving part's swept volume is checked too (g5_swept).
+    moving, coupled?}): each moving part's swept volume is checked too
+    (g5_swept), and `coupled` groups turn with it at a ratio.
 
     Parts are keyed `node#i` per placed copy; `allow` and `contacts` name nodes
     and apply to every copy. Returns a report; raises nothing. A clash is a
@@ -1447,13 +1593,14 @@ PROBED_PORT_TYPES = (
     "GROOVE", "SLOT", "SHAFT", "HOLE_PATTERN", "BOSS_PATTERN",
     "THREADED_HOLE", "INSERT_POCKET", "NUT_TRAP", "COUNTERBORE", "COUNTERSINK", "DOWEL_HOLE",
     "BEARING_SEAT", "BUSHING_BORE", "MOTOR_MOUNT", "MAGNET_POCKET", "HUB_BORE",
+    "LINEAR_BEARING_SEAT", "CLIP_GROOVE", "RAIL_MOUNT",
 )
 
 
 def _probe_port(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     ptype = port.get("type", "")
     if ptype == "HOLE_PATTERN":
-        return _probe_pattern(shape, port, _probe_hole)
+        return _probe_pattern(shape, port, _probe_screw_hole)
     if ptype == "BOSS_PATTERN":
         return _probe_pattern(shape, port, _probe_boss)
     if ptype in HOLE_LIKE:
@@ -1477,6 +1624,24 @@ def _probe_port(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
                     f"the port as one of {', '.join(PROBED_PORT_TYPES)}")
 
 
+MALFORMED = (KeyError, TypeError, ValueError, IndexError)
+
+
+def _unreadable(stage: str, what: str, err: Exception) -> dict[str, Any]:
+    """A gate that raised something other than a GateError. It used to escape
+    contract_gates and come back as "G1 unexpected kernel error" with no
+    failures, which blamed code that was correct. A declaration the gate could
+    not read (a hole_count with only `max`, a symmetry plane that is not one, a
+    box with no size) is the CONTRACT's fault: no code change passes it. Any
+    other error is the gate's own, reported against the thing it was measuring."""
+    if isinstance(err, MALFORMED):
+        return GateError("CONTRACT", f"{what} is malformed: {type(err).__name__}: {err}",
+                         "no code change can pass this: the contract declaration is missing or misspells a field, "
+                         "and the architect must re-declare it").as_failure()
+    return GateError(stage, f"{what} could not be measured: {type(err).__name__}: {err}",
+                     "the geometry kernel failed on this check; simplify the feature it measures").as_failure()
+
+
 def g3_ports(shape: Any, ports: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Every port is probed, failing or not: (report of passes, failures)."""
     report: list[dict[str, Any]] = []
@@ -1488,6 +1653,9 @@ def g3_ports(shape: Any, ports: list[dict[str, Any]]) -> tuple[list[dict[str, An
             # A pattern port fails once per bad member; all of them carry the
             # pattern's key so a score counts the port once.
             failures += [f | {"port": port.get("key", "?")} for f in err.failures]
+        except Exception as err:  # noqa: BLE001 — reported per port, see _unreadable
+            failures.append(_unreadable("G3", f'port "{port.get("key", "?")}" ({port.get("type", "?")})', err)
+                            | {"port": port.get("key", "?")})
     return report, failures
 
 
@@ -1499,7 +1667,8 @@ def contract_gates(shape: Any, ports: list[dict[str, Any]], envelope: list[dict[
     model fixed the one it was shown and the next attempt revealed the next.
     The error's stage is the earliest that failed: G3, then G4, G4b, G4c.
     The solid count needs the contract, so it runs here, and as a G2 failure
-    it comes first."""
+    it comes first. A CONTRACT failure (a declaration no gate could read)
+    outranks all of them: it is the one no repair of the code can fix."""
     measured: dict[str, Any] = {}
     failures: list[dict[str, Any]] = []
     if solids is not None:
@@ -1517,6 +1686,8 @@ def contract_gates(shape: Any, ports: list[dict[str, Any]], envelope: list[dict[
             measured["envelope"] = g4_envelope(shape, envelope)
         except GateError as err:
             failures.append(err.as_failure())
+        except Exception as err:  # noqa: BLE001 — see _unreadable
+            failures.append(_unreadable("G4", "the envelope", err))
     if assertions:
         measured["assertions"], assertion_failures = g4b_assertions(shape, assertions)
         failures += assertion_failures
@@ -1527,6 +1698,7 @@ def contract_gates(shape: Any, ports: list[dict[str, Any]], envelope: list[dict[
         failures += process_failures
     if not failures:
         return measured
+    failures.sort(key=lambda f: f["stage"] != "CONTRACT")
     if len(failures) == 1:
         f = failures[0]
         raise GateError(f["stage"], f["error"], f["hint"], failures=failures)
@@ -1660,6 +1832,26 @@ def _pattern_offsets(port: dict[str, Any]) -> list[tuple[float, float]]:
     return offsets
 
 
+def _probe_screw_hole(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
+    """A hole a screw or pin goes through: a HOLE_PATTERN member, a motor
+    mount's screw holes, the bore under a counterbore or countersink. Only
+    CLEARANCE_HOLE used to be held to passing through, so twelve Ø5 dimples
+    0.75mm deep passed as a bolt pattern. Through, unless the port declares
+    params.depth, and then at least that deep."""
+    depth = _port_dim_opt(port, DEPTH_KEYS)
+    result = _probe_hole(shape, port, through=depth is None)
+    if depth is not None:
+        _require_depth(shape, port, result, depth, _port_diameter(port) / 2)
+    return result
+
+
+def _bore_depth(port: dict[str, Any]) -> dict[str, float]:
+    """A counterbore's or countersink's `bore_depth`, as the depth of the bore
+    under it: `depth` already names the head recess."""
+    bd = _port_dim_opt(port, ("bore_depth", "boreDepth"))
+    return {} if bd is None else {"depth": bd}
+
+
 def _probe_pattern(shape: Any, port: dict[str, Any], probe) -> dict[str, Any]:
     """Expand the pattern into member ports and run the single-feature probe on
     each. Every failing member is reported, with where it should have been."""
@@ -1751,12 +1943,21 @@ def _banded(shape: Any, port: dict[str, Any], band: tuple[float, float]) -> dict
 
 def _require_depth(shape: Any, port: dict[str, Any], result: dict[str, Any], need: float, r: float) -> None:
     """A blind bore's floor must be at least `need` down. A through bore is as
-    deep as the material beside it, read off the wall just outside its radius."""
+    deep as the material beside it, read off the wall just outside its radius:
+    the median over several sides, because one ray on the side a neighbouring
+    hole or the part's edge happens to sit read that feature's depth instead."""
     got = result.get("measured_depth")
     if got is None:
-        got = _axial_depth(shape, _frame(port["pose"]), r + PROBE_INSET_MM, 0.0, _reach(shape), find="void")
-        if got is None:
+        frame, reach, rr = _frame(port["pose"]), _reach(shape), r + PROBE_INSET_MM
+        sides = []
+        for k in range(0, PROBE_DIRECTIONS, 2):
+            a = 2 * math.pi * k / PROBE_DIRECTIONS
+            t = _axial_depth(shape, frame, rr * math.cos(a), rr * math.sin(a), reach, find="void")
+            if t is not None:
+                sides.append(t)
+        if not sides:
             return
+        got = sorted(sides)[len(sides) // 2]
     result["measured_depth"] = round(got, 3)
     if got < need - FIT_EPS_MM:
         raise GateError("G3", f'port "{port["key"]}" ({port["type"]}): needs {need:g}mm of depth, measured {got:.2f}',
@@ -1887,8 +2088,8 @@ def _probe_counterbore(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
         raise GateError("G3", f'port "{key}" (COUNTERBORE): the Ø{d:g} recess {got}, expected {depth:g}mm deep',
                         f"cut the Ø{d:g} recess {depth:g}mm deep, then the Ø{dt:g} bore from its floor",
                         expected=depth, **({} if step is None else {"measured": round(step, 3)}))
-    through = _probe_hole(shape, {"key": key, "type": "COUNTERBORE through bore", "params": {"diameter": dt},
-                                  "pose": {"origin": list(_at(o, x, y, z, 0.0, 0.0, -step)), "zAxis": z, "xAxis": x}})
+    through = _probe_screw_hole(shape, {"key": key, "type": "COUNTERBORE through bore", "params": {"diameter": dt, **_bore_depth(port)},
+                                        "pose": {"origin": list(_at(o, x, y, z, 0.0, 0.0, -step)), "zAxis": z, "xAxis": x}})
     return result | {"measured_depth": round(step, 3), "measured_through_diameter": through["measured_diameter"]}
 
 
@@ -1916,8 +2117,8 @@ def _probe_countersink(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     if abs(measured_angle - angle) > COUNTERSINK_ANGLE_TOL_DEG:
         raise GateError("G3", f'port "{key}" (COUNTERSINK): expected a {angle:g}° cone, measured {measured_angle:.1f}°',
                         f"cut the cone at {angle:g}° included, the head's angle", expected=angle, measured=round(measured_angle, 2))
-    through = _probe_hole(shape, {"key": key, "type": "COUNTERSINK through bore", "params": {"diameter": dt},
-                                  "pose": {"origin": list(_at(o, x, y, z, 0.0, 0.0, -h)), "zAxis": z, "xAxis": x}})
+    through = _probe_screw_hole(shape, {"key": key, "type": "COUNTERSINK through bore", "params": {"diameter": dt, **_bore_depth(port)},
+                                        "pose": {"origin": list(_at(o, x, y, z, 0.0, 0.0, -h)), "zAxis": z, "xAxis": x}})
     return {"key": key, "type": "COUNTERSINK", "measured_diameter": round(mouth, 3),
             "measured_angle": round(measured_angle, 2), "measured_through_diameter": through["measured_diameter"]}
 
@@ -1934,10 +2135,14 @@ def _probe_bearing_seat(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     """A pocket the bearing's outer ring sits in, and a shoulder under it: just
     inside the seat wall, every axial line must meet material below the seat,
     or the bearing falls through."""
-    key = port.get("key", "?")
     od = _port_dim(port, OUTER_D_KEYS, "outer diameter", "declare params.od in mm: the bearing's outer diameter")
     width = _port_dim(port, ("width", "w"), "width", "declare params.width in mm: the bearing's width")
-    result = _banded(shape, port, _fit_band(port, od))
+    return _shouldered(shape, port, _banded(shape, port, _fit_band(port, od)), od, width, "the bearing is {:g} wide")
+
+
+def _shouldered(shape: Any, port: dict[str, Any], result: dict[str, Any], od: float, width: float, says: str) -> dict[str, Any]:
+    """The shoulder under a seat of Ø`od`, at least `width` down."""
+    key, kind = port.get("key", "?"), port.get("type")
     frame = _frame(port["pose"])
     r = od / 2 - SHOULDER_INSET_MM
     floors = [_axial_depth(shape, frame, r * math.cos(2 * math.pi * k / PROBE_DIRECTIONS),
@@ -1945,15 +2150,111 @@ def _probe_bearing_seat(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
               for k in range(PROBE_DIRECTIONS)]
     found = [f for f in floors if f is not None]
     if len(found) < PROBE_DIRECTIONS - 1:
-        raise GateError("G3", f'port "{key}" (BEARING_SEAT): no shoulder under the seat '
+        raise GateError("G3", f'port "{key}" ({kind}): no shoulder under the seat '
                               f'({len(found)}/{PROBE_DIRECTIONS} points {SHOULDER_INSET_MM:g}mm inside the wall meet material below it)',
-                        f"leave a 1-2mm lip or a floor under the seat so the bearing cannot pass through: "
+                        f"leave a 1-2mm lip or a floor under the seat so the part cannot pass through: "
                         f"the bore below the seat must be Ø{od - 2:g} or smaller")
     seat = min(found)
     if seat < width - FIT_EPS_MM:
-        raise GateError("G3", f'port "{key}" (BEARING_SEAT): the seat is {seat:.2f}mm deep, the bearing is {width:g} wide',
+        raise GateError("G3", f'port "{key}" ({kind}): the seat is {seat:.2f}mm deep, {says.format(width)}',
                         f"cut the seat at least {width:g}mm deep down to its shoulder", expected=width, measured=round(seat, 3))
     return result | {"measured_depth": round(seat, 3)}
+
+
+def _probe_linear_bearing_seat(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
+    """An LM-UU's pocket: Ø`od` at the fit, the bushing's whole `length` deep,
+    and held. `retention: "lip"` (the default) is a shoulder under it, as a
+    BEARING_SEAT has; `"clip"` lets the bore run through, a retaining ring in
+    the bushing's own groove taking the load, so only the depth is checked."""
+    od = _port_dim(port, OUTER_D_KEYS, "outer diameter", "declare params.od in mm: the linear bearing's outer diameter")
+    length = _port_dim(port, LENGTH_KEYS, "length", "declare params.length in mm: the linear bearing's length")
+    retention = port.get("params", {}).get("retention", "lip")
+    if retention not in ("lip", "clip"):
+        raise GateError("G3", f'port "{port.get("key", "?")}" (LINEAR_BEARING_SEAT) declares retention {retention!r}',
+                        'declare params.retention as "lip" (a shoulder under it) or "clip" (a ring in its groove)')
+    result = _banded(shape, port, _fit_band(port, od))
+    if retention == "lip":
+        return _shouldered(shape, port, result, od, length, "the bearing is {:g} long")
+    _require_depth(shape, port, result, length, od / 2)
+    return result
+
+
+CLIP_GROOVE_TOL_MM = 0.1   # groove Ø either way: a ring springs into it
+CLIP_WIDTH_SLOP_MM = 0.2   # a groove may be this much wider than declared, never narrower
+
+
+def _probe_clip_groove(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
+    """A retaining-ring groove ON a shaft. The frame's origin is on the shaft
+    axis at the groove's middle, z along the shaft. The groove Ø is where the
+    material ends, marched out from the axis; its width and middle are found
+    from inside it, halfway between the groove floor and the shaft surface,
+    marching both ways along the shaft to the flanks."""
+    key = port.get("key", "?")
+    d = _port_diameter(port)
+    width = _port_dim(port, WIDTH_KEYS, "width", "declare params.width in mm: the groove width (the ring's thickness plus clearance)")
+    shaft = _port_dim(port, ("shaft_diameter", "shaftDiameter"), "shaft diameter", "declare params.shaft_diameter in mm")
+    frame = _frame(port["pose"])
+    o, x, y, z = frame
+    if not _in_material(shape, _at(o, x, y, z, 0.0, 0.0, 0.0)):
+        raise GateError("G3", f'port "{key}" (CLIP_GROOVE): no shaft at the declared origin',
+                        "put the port on the shaft's axis, at the middle of the groove")
+    radii = [_march(shape, frame, math.cos(2 * math.pi * k / PROBE_DIRECTIONS), math.sin(2 * math.pi * k / PROBE_DIRECTIONS),
+                    0.0, shaft, find="void") for k in range(PROBE_DIRECTIONS)]
+    if any(r is None for r in radii):
+        raise GateError("G3", f'port "{key}" (CLIP_GROOVE): the shaft is wider than Ø{shaft:g} at the groove',
+                        f"cut the groove to Ø{d:g} at the port origin")
+    measured = 2 * sorted(radii)[len(radii) // 2]
+    if abs(measured - d) > CLIP_GROOVE_TOL_MM:
+        raise GateError("G3", f'port "{key}" (CLIP_GROOVE): expected Ø{d:g}±{CLIP_GROOVE_TOL_MM:g} at the groove, measured Ø{measured:.2f}',
+                        f"cut the groove to Ø{d:g}: the ring grips the groove floor", expected=d, measured=round(measured, 3))
+    rr = (measured + shaft) / 4
+    inside = (list(_at(o, x, y, z, rr, 0.0, 0.0)), x, y, z)
+    up = _march(shape, inside, 0.0, 0.0, 0.0, 4 * width + 2, dw=1.0)
+    down = _march(shape, inside, 0.0, 0.0, 0.0, 4 * width + 2, dw=-1.0)
+    if up is None or down is None:
+        raise GateError("G3", f'port "{key}" (CLIP_GROOVE): no groove flank {"above" if up is None else "below"} the origin',
+                        f"cut a {width:g}mm groove, not a step: the ring needs a flank on both sides")
+    got, middle = up + down, (up - down) / 2
+    if not width - FIT_EPS_MM <= got <= width + CLIP_WIDTH_SLOP_MM:
+        raise GateError("G3", f'port "{key}" (CLIP_GROOVE): expected a {width:g}mm groove, measured {got:.2f}',
+                        f"cut the groove {width:g} to {width + CLIP_WIDTH_SLOP_MM:g}mm wide", expected=width, measured=round(got, 3))
+    if abs(middle) > HOLE_CENTER_TOL_MM:
+        raise GateError("G3", f'port "{key}" (CLIP_GROOVE): the groove\'s middle is {middle:+.2f}mm along the shaft from the port',
+                        "put the groove where the contract says: the ring locates the part on it",
+                        expected=0.0, measured=round(middle, 3))
+    return {"key": key, "type": "CLIP_GROOVE", "measured_diameter": round(measured, 3), "measured_width": round(got, 3)}
+
+
+def _probe_rail_mount(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
+    """A profile rail's land: flat, exposed, `width` across and `length` along
+    xAxis, with `count` fixing holes of Ø`hole_diameter` on xAxis at `pitch`,
+    centred as the rail's own holes are. The land is sampled at its long edges
+    and between the holes, never over one."""
+    key = port.get("key", "?")
+    hint = "declare params.{} in mm"
+    width = _port_dim(port, WIDTH_KEYS, "width", hint.format("width"))
+    length = _port_dim(port, LENGTH_KEYS, "length", hint.format("length"))
+    pitch = _port_dim(port, ("pitch",), "pitch", hint.format("pitch"))
+    count = int(_port_dim(port, ("count",), "count", "declare params.count: the rail's fixing holes"))
+    hole = _port_dim(port, ("hole_diameter", "holeDiameter"), "hole diameter", hint.format("hole_diameter"))
+    o, x, y, z = _frame(port["pose"])
+    us = [(k - (count - 2) / 2) * pitch for k in range(count - 1)] + [-length / 2 + PROBE_INSET_MM, length / 2 - PROBE_INSET_MM]
+    vs = (-(width / 2 - PROBE_INSET_MM), width / 2 - PROBE_INSET_MM)
+    samples = [(u, v) for u in us for v in vs] + [(u, 0.0) for u in us[:-2]]
+    for u, v in samples:
+        if _in_material(shape, _at(o, x, y, z, u, v, PROBE_EPS_MM)) or not _in_material(shape, _at(o, x, y, z, u, v, -PROBE_EPS_MM)):
+            raise GateError("G3", f'port "{key}" (RAIL_MOUNT): no flat land at u={u:.1f} v={v:.1f} '
+                                  f"(the rail is {width:g} wide and {length:g} long along xAxis)",
+                            f"leave a flat, exposed land at least {width:g} x {length:g} under the rail, centred on the port")
+    depth = _port_dim_opt(port, DEPTH_KEYS)
+
+    def member(s: Any, p: dict[str, Any]) -> dict[str, Any]:
+        result = _banded(s, p, (hole - TAP_TOL_MM, hole + TAP_TOL_MM))
+        if depth is not None:
+            _require_depth(s, p, result, depth, hole / 2)
+        return result
+    holes = _probe_pattern(shape, {**port, "params": {"nx": count, "ny": 1, "pitch_x": pitch, "pitch_y": 1.0}}, member)
+    return {"key": key, "type": "RAIL_MOUNT", "probed_size": width, "holes": holes["members"]}
 
 
 def _probe_bushing_bore(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
@@ -1975,7 +2276,9 @@ def _probe_motor_mount(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     layout = {k: params[k] for k in ("count", "pcd", "start_angle", *GRID_KEYS) if k in params}
     if "pcd" not in layout:
         layout = {"nx": 2, "ny": 2} | layout
-    holes = _probe_pattern(shape, {**port, "params": {"diameter": hole, **layout}}, _probe_hole)
+    depth = _port_dim_opt(port, DEPTH_KEYS)
+    holes = _probe_pattern(shape, {**port, "params": {"diameter": hole, **layout, **({} if depth is None else {"depth": depth})}},
+                           _probe_screw_hole)
     return result | {"holes": holes["members"]}
 
 
@@ -2043,6 +2346,9 @@ HARDWARE_PROBES = {
     "MOTOR_MOUNT": _probe_motor_mount,
     "MAGNET_POCKET": _probe_magnet_pocket,
     "HUB_BORE": _probe_hub_bore,
+    "LINEAR_BEARING_SEAT": _probe_linear_bearing_seat,
+    "CLIP_GROOVE": _probe_clip_groove,
+    "RAIL_MOUNT": _probe_rail_mount,
 }
 
 
@@ -2061,6 +2367,7 @@ HOLE_CLOSURE = 0.95       # fraction of a full turn a hole's wall must close
 HOLE_CLOSURE_KEYED = 0.70  # ... or this much, when a flat or key closes the rest
 MIN_WALL_TOL_MM = 0.1     # the wall measurement runs on a 0.2mm tessellation
 BBOX_TOL_MM = 0.25
+AXIS_TOL_MM = 0.01        # two hole walls closer than this in axis and radius are one bore
 
 
 def _count_holes(shape: Any) -> int:
@@ -2080,8 +2387,7 @@ def _count_holes(shape: Any) -> int:
     if not hasattr(shape, "faces"):
         raise GateError("G4b", 'assertion "hole_count": holes cannot be counted on an imported mesh',
                         "hole_count needs B-rep geometry; drop the assertion for imported parts")
-    spans: dict[tuple, float] = {}
-    walls: dict[tuple, list] = {}
+    groups: list[dict[str, Any]] = []  # one per (axis, radius): its walls and their summed turn
     for face in shape.faces():
         if face.geom_type != GeomType.CYLINDER:
             continue
@@ -2107,12 +2413,29 @@ def _count_holes(shape: Any) -> int:
             continue
         s = sum(foot[i] * d[i] for i in range(3))
         on_axis = [foot[i] - s * d[i] for i in range(3)]  # axis point nearest the origin
-        key = (tuple(round(c, 3) for c in d), tuple(round(c, 2) for c in on_axis), round(r, 2))
-        spans[key] = spans.get(key, 0.0) + (u1 - u0)
-        walls.setdefault(key, []).append((surf, foot))
-    return len({k[:2] for k, span in spans.items()
-                if span >= HOLE_CLOSURE * 2 * math.pi
-                or (span >= HOLE_CLOSURE_KEYED * 2 * math.pi and _gap_closed(shape, k, walls[k]))})
+        # Clustered within a tolerance, never by rounding: two walls of one
+        # bore whose axis sits at x.xx5 round to either side of it, and a 45°
+        # bore through a split wall counted as two or three holes.
+        g = next((g for g in groups if abs(g["r"] - r) < AXIS_TOL_MM and _same_axis(g, d, on_axis)), None)
+        if g is None:
+            g = {"d": d, "on_axis": on_axis, "r": r, "span": 0.0, "walls": []}
+            groups.append(g)
+        g["span"] += u1 - u0
+        g["walls"].append((surf, foot))
+    axes: list[dict[str, Any]] = []
+    for g in groups:
+        if any(_same_axis(a, g["d"], g["on_axis"]) for a in axes):
+            continue  # a counterbore over its pilot: one axis, one hole
+        if (g["span"] >= HOLE_CLOSURE * 2 * math.pi
+                or (g["span"] >= HOLE_CLOSURE_KEYED * 2 * math.pi
+                    and _gap_closed(shape, (g["d"], g["on_axis"], g["r"]), g["walls"]))):
+            axes.append(g)
+    return len(axes)
+
+
+def _same_axis(g: dict[str, Any], d: list[float], on_axis: list[float]) -> bool:
+    return (abs(sum(a * b for a, b in zip(g["d"], d))) > 1 - 1e-6
+            and math.dist(g["on_axis"], on_axis) < AXIS_TOL_MM)
 
 
 def _gap_closed(shape: Any, key: tuple, faces: list) -> bool:
@@ -2122,7 +2445,7 @@ def _gap_closed(shape: Any, key: tuple, faces: list) -> bool:
     at the wall's mid-height; each ray must meet material within 2r. A
     breakout meets air."""
     d, _, r = key
-    surf, foot = faces[0]
+    _, foot = faces[0]
     x = _unit([1.0, 0.0, 0.0] if abs(d[0]) < 0.9 else [0.0, 1.0, 0.0])
     x = _unit([a - sum(p * q for p, q in zip(x, d)) * b for a, b in zip(x, d)])
     frame = _frame({"origin": foot, "zAxis": list(d), "xAxis": x})
@@ -2191,14 +2514,10 @@ def _assertion_failure(label: str, expected: float, measured: float, says: str, 
 def _check_assertion(shape: Any, a: dict[str, Any]) -> dict[str, Any]:
     kind = a.get("kind")
     if kind == "solids":
-        want = int(a["count"])
-        got = len(shape.solids())
-        if got != want:
-            raise _assertion_failure("solids", want, got, f"{want} solid(s)",
-                                     f"the part must be exactly {want} separate solid(s): overlap features that "
-                                     "belong to one body by at least 0.5 mm before the union, and keep apart the "
-                                     "ones declared separate")
-        return {"kind": kind, "measured": got}
+        # The G2 count, so both ways of declaring it report the same per-solid
+        # bboxes that let a repair find the piece that does not meet the rest.
+        g2_solid_count(shape, int(a["count"]))
+        return {"kind": kind, "measured": len(shape.solids())}
     if kind == "volume_range":
         vol = float(shape.volume)
         lo, hi = float(a["min"]), float(a["max"])
@@ -2268,6 +2587,8 @@ def g4b_assertions(shape: Any, assertions: list[dict[str, Any]]) -> tuple[list[d
             report.append(_check_assertion(shape, a))
         except GateError as err:
             failures.append(err.as_failure())
+        except Exception as err:  # noqa: BLE001 — see _unreadable
+            failures.append(_unreadable("G4b", f'assertion "{a.get("kind", "?")}"', err))
     return report, failures
 
 
@@ -2283,7 +2604,22 @@ def _raise_selfcheck(msg: str) -> None:
 # directly against shapes built here, so a bad radius or a flipped polarity
 # fails in a second with a line number. There is no pytest in this package.
 if __name__ == "__main__":  # pragma: no cover
-    from build123d import Axis, Box, BuildPart, Cone, Cylinder, GeomType, Locations, Mode, Pos, RegularPolygon, Rot, chamfer, extrude, fillet
+    from build123d import (
+        Axis,
+        Box,
+        BuildPart,
+        Cone,
+        Cylinder,
+        GeomType,
+        Locations,
+        Mode,
+        Pos,
+        RegularPolygon,
+        Rot,
+        chamfer,
+        extrude,
+        fillet,
+    )
 
     fails: list[str] = []
 
@@ -2661,6 +2997,32 @@ if __name__ == "__main__":  # pragma: no cover
            host("BEARING_SEAT", 0, blind(21.95, 7) + Cylinder(9.5, 30), od=22, width=7, fit="press"))
     expect("a 608 seat cut straight through has no shoulder",
            host("BEARING_SEAT", 0, Cylinder(10.975, 30), od=22, width=7, fit="press"), "no shoulder")
+    expect("an LM6UU seat 19 deep over a lip passes",
+           host("LINEAR_BEARING_SEAT", 0, blind(11.95, 19.5) + Cylinder(4, 30), od=12, length=19, fit="press"))
+    expect("an LM6UU seat shorter than the bushing fails",
+           host("LINEAR_BEARING_SEAT", 0, blind(11.95, 15) + Cylinder(4, 30), od=12, length=19, fit="press"), "the seat is 15.00mm deep")
+    expect("a clip-retained LM8UU seat may run through",
+           host("LINEAR_BEARING_SEAT", 0, Cylinder(7.475, 30), od=15, length=19, fit="press", retention="clip"))
+
+    def grooved(d, w, at):
+        return Cylinder(2.5, 40) - Pos(0, 0, at) * (Cylinder(3, w) - Cylinder(d / 2, w))
+
+    def groove(shaft_, d, w):
+        return lambda: _probe_port(shaft_, {"key": "g", "type": "CLIP_GROOVE", "pose": pose((0, 0, 0)),
+                                            "params": {"diameter": d, "width": w, "shaft_diameter": 5}})
+    expect("a Ø4 x 0.74 e-clip groove where the port is passes", groove(grooved(4, 0.74, 0), 4, 0.74))
+    expect("a groove cut 0.3mm along the shaft fails", groove(grooved(4, 0.74, 0.3), 4, 0.74), "groove's middle is +0.30mm")
+    expect("a groove too shallow for its ring fails", groove(grooved(4.4, 0.74, 0), 4, 0.74), "measured Ø4.40")
+    land = Box(120, 30, 10)
+    for k in range(5):
+        land = land - Pos((k - 2) * 20, 0, 1) * Cylinder(2, 8)
+
+    def rail(width, pitch):
+        return lambda: _probe_port(land, {"key": "r", "type": "RAIL_MOUNT", "pose": pose((0, 0, 5)),
+                                          "params": {"width": width, "length": 100, "pitch": pitch, "count": 5, "hole_diameter": 4, "depth": 6}})
+    expect("an MGN9 land with its five holes at 20 passes", rail(9, 20))
+    expect("the same land declared at a 25 pitch fails a hole", rail(9, 25), "member")
+    expect("a land narrower than the rail fails", rail(40, 20), "no flat land")
 
     def trap(rot):
         return Pos(0, 0, 7.4) * Rot(0, 0, rot) * extrude(RegularPolygon(5.7 / math.sqrt(3), 6), 2.6) + Cylinder(1.7, 30)
@@ -2684,7 +3046,7 @@ if __name__ == "__main__":  # pragma: no cover
     thin_cup = Cylinder(20, 30) - Pos(0, 0, 1) * Cylinder(19.6, 30)
     for label, shape_, a, want in (
         ("solids 1 on one solid", four, {"kind": "solids", "count": 1}, None),
-        ("solids 1 on two solids", two_solids, {"kind": "solids", "count": 1}, "expected 1 solid(s), measured 2"),
+        ("solids 1 on two solids", two_solids, {"kind": "solids", "count": 1}, "result is 2 separate solids, the contract expects 1"),
         ("volume in range", Box(10, 10, 10), {"kind": "volume_range", "min": 900, "max": 1100}, None),
         ("volume too small", Box(10, 10, 10), {"kind": "volume_range", "min": 2000, "max": 3000}, 'assertion "volume_range"'),
         ("bbox x = 60", four, {"kind": "bbox_axis", "axis": "x", "min": 60, "max": 60}, None),
@@ -2703,6 +3065,63 @@ if __name__ == "__main__":  # pragma: no cover
         ("a 0.4mm cup wall is not 1.2", thin_cup, {"kind": "min_wall", "mm": 1.2}, 'assertion "min_wall"'),
     ):
         expect(f"assertion: {label}", lambda s=shape_, aa=a: contract_gates(s, [], [], [aa]), want)
+
+    print("through holes — pattern members, motor screws, the bore under a head")
+    dimples = Box(60, 60, 6)
+    for sx, sy in ((-20, -20), (20, -20), (-20, 20), (20, 20)):
+        dimples = dimples - Pos(sx, sy, 3 - 0.375) * Cylinder(2.25, 0.75)
+    for label, params, want in (("four Ø4.5 dimples 0.75mm deep are not a bolt pattern", grid, "bottoms out"),
+                                ("the same dimples declaring their 0.7mm depth pass", grid | {"depth": 0.7}, None),
+                                ("declared 3mm deep they are too shallow", grid | {"depth": 3}, "needs 3mm of depth")):
+        expect(label, lambda pp=params: _probe_port(dimples, {"key": "h", "type": "HOLE_PATTERN", "pose": pose((0, 0, 3)), "params": pp}),
+               want)
+    nema = {"pilot_diameter": 22, "hole_diameter": 3.4, "pitch_x": 31, "pitch_y": 31}
+
+    def mount(screw_depth):
+        part = Box(60, 60, 10) - Cylinder(11.075, 12)
+        for sx, sy in ((-15.5, -15.5), (15.5, -15.5), (-15.5, 15.5), (15.5, 15.5)):
+            part = part - Pos(sx, sy, 5 - screw_depth / 2) * Cylinder(1.7, screw_depth)
+        return lambda: _probe_port(part, {"key": "m", "type": "MOTOR_MOUNT", "pose": pose((0, 0, 5)), "params": nema})
+    expect("a motor mount with through screw holes passes", mount(12))
+    expect("a motor mount with 1mm screw dimples fails", mount(1), "bottoms out")
+    head = Pos(0, 0, 10 - 1.7) * Cylinder(3.25, 3.4)
+    expect("a counterbore over a through bore passes",
+           host("COUNTERBORE", 6.5, head + Cylinder(1.7, 30), depth=3.4, through_diameter=3.4))
+    expect("a counterbore over a 4mm blind bore fails", host("COUNTERBORE", 6.5, head + Pos(0, 0, 4.6) * Cylinder(1.7, 4),
+                                                             depth=3.4, through_diameter=3.4), "bottoms out")
+    expect("... unless it declares bore_depth", host("COUNTERBORE", 6.5, head + Pos(0, 0, 4.6) * Cylinder(1.7, 4),
+                                                     depth=3.4, through_diameter=3.4, bore_depth=4))
+    cone = Pos(0, 0, 10 - 1.15) * Cone(1.7, 4, 2.3)
+    expect("a countersink over a through bore passes",
+           host("COUNTERSINK", 8, cone + Cylinder(1.7, 30), angle=90, through_diameter=3.4))
+    expect("a countersink over a blind bore fails",
+           host("COUNTERSINK", 8, cone + Pos(0, 0, 5.7) * Cylinder(1.7, 4), angle=90, through_diameter=3.4), "bottoms out")
+
+    print("hole_count clusters axes, contract errors are the contract's")
+    tilted = Pos(7.83, 0, 0) * Rot(0, 45, 0)
+    split = (Box(40, 40, 20) - tilted * Pos(0, 0, -15) * Cylinder(3, 30) - tilted * Pos(0, 0, 15) * Cylinder(3, 30)
+             - tilted * Cylinder(4, 2))
+    expect("a 45° bore at x.xx5 cut from both sides counts once",
+           lambda: contract_gates(split, [], [], [{"kind": "hole_count", "min": 1, "max": 1}]))
+    for label, envelope, assertion in (("a hole_count with only max", [], {"kind": "hole_count", "max": 4}),
+                                       ("a symmetry plane that is not one", [], {"kind": "symmetry", "plane": "ab"}),
+                                       ("an envelope box with no size", [{"kind": "box", "center": [0, 0, 0]}], None)):
+        expect(f"{label} fails as CONTRACT",
+               lambda e=envelope, a=assertion: contract_gates(four, [], e, [a] if a else []), "is malformed")
+
+    def _contract_first():
+        try:
+            contract_gates(four, [{"key": "x", "type": "BORE", "pose": pose((0, 0, 3)), "params": {"diameter": 4}}], [],
+                           [{"kind": "hole_count", "max": 4}])
+        except GateError as err:
+            if err.stage != "CONTRACT" or len(err.failures) != 2:
+                _raise_selfcheck(f"stage {err.stage}, {len(err.failures)} failures")
+            return
+        _raise_selfcheck("passed")
+    expect("a CONTRACT failure leads a combined report", _contract_first)
+    fin = Box(100, 100, 50) + Pos(0, 0, 27.5) * Box(0.5, 10, 5)
+    expect("a 0.5mm fin on a big block fails min_wall 1.2 (2% of the area never saw it)",
+           lambda: contract_gates(fin, [], [], [{"kind": "min_wall", "mm": 1.2}]), 'assertion "min_wall"')
 
     print()
     if fails:

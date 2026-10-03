@@ -22,6 +22,11 @@ export class LatestWinsQueue<T> {
     void this.drain(key, job);
   }
 
+  /** Is any job whose key matches running or waiting? */
+  busy(match: (key: string) => boolean): boolean {
+    return [...this.running, ...this.waiting.keys()].some(match);
+  }
+
   private async drain(key: string, first: T): Promise<void> {
     this.running.add(key);
     let job: T | undefined = first;

@@ -6,7 +6,8 @@ import { GraphDoc } from "@patchcad/shared";
 import { ConfigSchema, readMeshGen } from "../providers.js";
 import { HostedMeshGen } from "./hosted.js";
 import { MeshyMeshGen } from "./meshy.js";
-import { createMeshGen, meshSourceFor, type MeshGenProvider } from "./index.js";
+import { createMeshGen, MeshGenError, meshSourceFor, type MeshGenProvider } from "./index.js";
+import { Budget } from "../spend.js";
 
 /** Request/response mapping with a mocked fetch: no live calls, no key. */
 
@@ -81,6 +82,29 @@ describe("meshy", () => {
   it("reports a failed task with Meshy's reason", async () => {
     const { fetch } = scripted([json({ result: "t" }), json({ status: "FAILED", task_error: { message: "no subject" } })]);
     await expect(meshy(fetch).generate({ images: [{ pngB64: "AA" }] })).rejects.toThrow("FAILED: no subject");
+  });
+
+  it("bills the credits a failed task consumed", async () => {
+    const { fetch } = scripted([json({ result: "t" }), json({ status: "FAILED", consumed_credits: 20 })]);
+    const err = await meshy(fetch, { usdPerCredit: 0.01 }).generate({ images: [{ pngB64: "AA" }] }).catch((e) => e);
+    expect(err).toBeInstanceOf(MeshGenError);
+    expect(err.usd).toBeCloseTo(0.2);
+  });
+
+  it("reads what a stopped task consumed before giving up", async () => {
+    const ctl = new AbortController();
+    const { fetch } = scripted([
+      json({ result: "t" }),
+      json({ status: "IN_PROGRESS" }),
+      json({ status: "IN_PROGRESS", consumed_credits: 5 }),
+    ]);
+    const gen = new MeshyMeshGen({ provider: "meshy", apiKey: "k", usdPerCredit: 0.1 }, fetch, 60_000);
+    const pending = gen.generate({ images: [{ pngB64: "AA" }] }, ctl.signal).catch((e) => e);
+    await new Promise((r) => setTimeout(r, 10));
+    ctl.abort();
+    const err = await pending;
+    expect(err).toBeInstanceOf(MeshGenError);
+    expect(err.usd).toBeCloseTo(0.5);
   });
 
   it("reports an HTTP error and refuses a download that is not a GLB", async () => {
@@ -182,5 +206,38 @@ describe("meshSourceFor", () => {
       symmetric: undefined,
     });
     expect(out).toEqual({ glb: GLB, usd: 0.3 });
+  });
+
+  const graph = GraphDoc.parse({
+    schemaVersion: 1,
+    id: "g",
+    backend: "cad",
+    brief: { goal: "", refs: [] },
+    nodes: {
+      body: {
+        id: "body", kind: "part", title: "Body", spec: "", status: "planned",
+        contract: { name: "body", summary: "", params: [], provides: [], requires: [], payload: {}, hash: "" },
+      },
+    },
+    edges: [],
+    assembly: { entryNodeId: "body" },
+  });
+
+  it("counts mesh spend toward the cook's budget, failures included", async () => {
+    const budget = new Budget(1);
+    let n = 0;
+    const provider: MeshGenProvider = {
+      id: "fake",
+      generate: async () => {
+        if (n++ === 0) return { glb: GLB, usage: { usd: 0.6 } };
+        throw new MeshGenError("vendor failed", 0.5);
+      },
+    };
+    const source = meshSourceFor(provider, () => budget);
+    await source.generate({ node: graph.nodes.body!, graph, projectDir: "/p" });
+    await expect(source.generate({ node: graph.nodes.body!, graph, projectDir: "/p" })).rejects.toThrow("vendor failed");
+    expect(budget.spent).toBeCloseTo(1.1);
+    await expect(source.generate({ node: graph.nodes.body!, graph, projectDir: "/p" })).rejects.toThrow("cook budget $1.00 reached");
+    expect(n).toBe(2);
   });
 });

@@ -1,4 +1,4 @@
-import { hashValue } from "@patchcad/shared";
+import { hashValue, type NodeRecord, type NodeStatus } from "@patchcad/shared";
 import type {
   CheckResult,
   DomainBackend,
@@ -12,7 +12,7 @@ import { selectExemplars } from "./exemplars.js";
 import { findReusable } from "./similarity.js";
 import { inspectFeedback, inspectNode } from "./inspect.js";
 import { LlmCallError, type LlmImage, type LlmProvider, type LlmUsage } from "./llm.js";
-import { codeDiff, type NodeLibrary } from "./library.js";
+import type { LibraryListing, NodeLibrary } from "./library.js";
 import type { GraphStore } from "./graph/store.js";
 
 /**
@@ -33,11 +33,8 @@ const DEFAULT_MAX_ATTEMPTS = 3;
  *  round starts over from a fresh generate. */
 const STALE_REPAIRS = 2;
 
-/** Failure stages where the part built a shape worth showing the repair. Stage
- *  names are backend-defined: CAD's port probes (G3) and envelope (G4), plus
- *  the engine's own looks-wrong verdict. A backend whose stages never match
- *  simply repairs text-only. */
-const RENDER_STAGES = new Set(["G3", "G4", "LOOKS"]);
+/** The engine's own looks-wrong stage: a passing part, so always renderable. */
+const LOOKS = "LOOKS";
 
 type Failure = { stage: string; report: string };
 type Draft = { code: string; testCode: string };
@@ -72,33 +69,66 @@ export interface CookSummary {
   failed: { nodeId: string; stage: string; message: string }[];
 }
 
+/** A cook whose node a newer cook has claimed. It stops without touching the
+ *  node: the newer cook owns its status and its commit. */
+class Superseded extends Error {
+  constructor(nodeId: string) {
+    super(`${nodeId}: superseded by a newer cook`);
+  }
+}
+
+/** The backend's deterministic artifact, with a throw RETURNED: the scheduler
+ *  sorts on it, and cookOne fails the node with it. */
+function deterministicArtifact(
+  backend: DomainBackend<unknown>,
+  node: NodeRecord,
+): { code: string; testCode?: string } | null | Error {
+  try {
+    return backend.deterministicArtifact?.(node) ?? null;
+  } catch (err) {
+    return err instanceof Error ? err : new Error(String(err));
+  }
+}
+
+/** One library listing per cook: reuse and exemplars both read it, and a
+ *  listing reads every stored entry. */
+function listOnce(library: NodeLibrary): NodeLibrary {
+  const list = library.list?.bind(library);
+  if (!list) return library;
+  let all: Promise<LibraryListing[]> | undefined;
+  return {
+    lookup: (b, h) => library.lookup(b, h),
+    capture: (b, h, e) => library.capture(b, h, e),
+    list: async (b, opts) => (await (all ??= list(b))).filter((e) => !opts?.kind || e.kind === opts.kind),
+  };
+}
+
+/** The checker status a check result shows, shared with every other caller of
+ *  `globalCheck` so the problem bar means one thing. `extra` is problems found
+ *  outside the check. Advisories never make it failing; a check that did not
+ *  fully run never reads clean. */
+export function checkStatus(check: CheckResult, extra: string[] = []): "clean" | "failing" {
+  return check.ok && !check.incomplete && extra.length === 0 ? "clean" : "failing";
+}
+
+const IN_FLIGHT = new Set<NodeStatus>(["queued", "generating", "building", "verifying", "repairing"]);
+
 export async function cookNodes(deps: CookDeps, nodeIds: string[]): Promise<CookSummary> {
   const summary: CookSummary = { succeeded: [], failed: [] };
-  // DETERMINISTIC NODES FIRST. A registry screw or an imported piece needs no
-  // model call and commits in a fifth of a second, but the queue was emission
-  // order and the check for it lives inside cookOne — so a screw emitted sixth
-  // waited behind an LLM node for a slot it needed 0.2s of. The viewport
-  // already refetches on every commit, so ordering alone is the difference
-  // between real geometry on screen in seconds and nothing for three minutes.
-  //
-  // Stable within each group: emission order is the architect's own reading of
-  // the assembly, and there is no reason to disturb it beyond this split.
-  const isDeterministic = (id: string) => {
-    try {
-      return deps.backend.deterministicArtifact?.(deps.store.node(id)) != null;
-    } catch {
-      return false; // a backend that throws on inspection is not a fast path
-    }
-  };
-  // One pass, so the backend hook is consulted once per node. It happens to be
-  // pure today (a table lookup and string construction), but a scheduler should
-  // not depend on that.
+  // Deterministic nodes first: a registry screw commits in a fraction of a
+  // second and should not wait behind an LLM node for a worker.
   const noModel: string[] = [];
   const needsModel: string[] = [];
-  for (const id of nodeIds) (isDeterministic(id) ? noModel : needsModel).push(id);
+  for (const id of nodeIds) {
+    const d = deterministicArtifact(deps.backend, deps.store.node(id));
+    (d && !(d instanceof Error) ? noModel : needsModel).push(id);
+  }
   const queue = [...noModel, ...needsModel];
   const workers = Math.max(1, Math.min(deps.backend.generation?.concurrency ?? 4, queue.length));
 
+  // Claimed at queue time, so a cook already running on one of these stops
+  // writing before this wave's `queued` can confuse its transitions.
+  const tokens = new Map(queue.map((id) => [id, deps.store.beginCook(id)]));
   for (const id of queue) deps.store.setStatus(id, "queued");
 
   await Promise.all(
@@ -107,18 +137,28 @@ export async function cookNodes(deps: CookDeps, nodeIds: string[]): Promise<Cook
         if (deps.signal?.aborted) return;
         const id = queue.shift()!;
         try {
-          await cookOne(deps, id);
+          await cookOne(deps, id, tokens.get(id));
           summary.succeeded.push(id);
         } catch (err) {
           summary.failed.push({
             nodeId: id,
-            stage: "cook",
+            stage: err instanceof Superseded ? "superseded" : "cook",
             message: (err as Error).message,
           });
         }
       }
     }),
   );
+
+  if (deps.signal?.aborted) {
+    // Never started: release them rather than leave them queued forever.
+    for (const id of queue) {
+      if (deps.store.cookToken(id) === tokens.get(id) && deps.store.node(id).status === "queued") {
+        deps.store.setStatus(id, "cancelled");
+      }
+    }
+    return summary;
+  }
 
   // Barrier: assembly + global check once the wave settles.
   const graph = deps.store.doc;
@@ -129,9 +169,10 @@ export async function cookNodes(deps: CookDeps, nodeIds: string[]): Promise<Cook
   deps.store.emit({
     type: "checker:status",
     projectId: graph.id,
-    status: check.ok ? "clean" : "failing",
+    status: checkStatus(check),
     problems: check.problems,
     findings: check.findings ?? [],
+    advisories: check.advisories ?? [],
   });
 
   return summary;
@@ -149,7 +190,8 @@ export const ASSEMBLY_STAGE = "assembly";
  * goes back to ready. Nothing is re-cooked: the user decides whether that is a
  * T0 nudge, a reprompt or a contract edit, so no model is spent unasked.
  * Only nodes this function blocked are released; a node its own cook failed
- * keeps its status.
+ * keeps its status. An `incomplete` check releases nothing: a pair it did not
+ * compare is not a pair it cleared.
  */
 export function applyCheck(store: GraphStore, check: CheckResult): void {
   const blamed = new Map<string, string[]>();
@@ -161,25 +203,67 @@ export function applyCheck(store: GraphStore, check: CheckResult): void {
     const blockedHere = n.status === "error_contract" && n.statusDetail?.stage === ASSEMBLY_STAGE;
     if (message && (n.status === "ready" || (blockedHere && n.statusDetail?.message !== message))) {
       store.setStatus(n.id, "error_contract", { stage: ASSEMBLY_STAGE, message, attribution: "contract-infeasible" });
-    } else if (!message && blockedHere) {
+    } else if (!message && blockedHere && !check.incomplete) {
       store.setStatus(n.id, "ready");
     }
   }
 }
 
-export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void> {
+/**
+ * Cook one node. `token` is the claim cookNodes took when it queued the node;
+ * a direct caller (reprompt) omits it and the cook claims the node itself.
+ * Whatever throws, the node never stays in flight: a cook that still owns it
+ * settles it in error_code (cancelled on abort), and one a newer cook has
+ * superseded leaves it alone.
+ */
+export async function cookOne(deps: CookDeps, nodeIdValue: string, token?: number): Promise<void> {
+  const owner = token ?? deps.store.beginCook(nodeIdValue);
+  try {
+    await cookBody(deps, nodeIdValue, owner);
+  } catch (err) {
+    const { store } = deps;
+    const n = store.doc.nodes[nodeIdValue];
+    if (!(err instanceof Superseded) && n && store.cookToken(nodeIdValue) === owner && IN_FLIGHT.has(n.status)) {
+      try {
+        if (deps.signal?.aborted) store.setStatus(nodeIdValue, "cancelled");
+        else store.setStatus(nodeIdValue, "error_code", {
+          stage: "cook",
+          message: (err as Error).message.slice(0, 2000),
+          attribution: "unknown",
+        });
+      } catch {
+        /* the original error is the one worth reporting */
+      }
+    }
+    throw err;
+  }
+}
+
+async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Promise<void> {
   const { store, backend, provider, workspace } = deps;
   const graph = store.doc;
   const projectId = graph.id;
   const log = (line: string) =>
     store.emit({ type: "job:log", projectId, nodeId: nodeIdValue, line });
 
+  /** Throws unless this cook still owns the node. Every write to the node's
+   *  status or artifact checks first, so a superseded cook cannot clobber the
+   *  cook that replaced it. Billing is not guarded: that spend happened. */
+  const own = () => {
+    if (store.cookToken(nodeIdValue) !== token) throw new Superseded(nodeIdValue);
+  };
+  const setStatus = (status: NodeStatus, detail?: NodeRecord["statusDetail"]) => {
+    own();
+    store.setStatus(nodeIdValue, status, detail);
+  };
+  const checkAbort = () => {
+    if (deps.signal?.aborted) throw new Error("cancelled");
+  };
+
   // cookOne must be self-sufficient on status: direct callers (reprompt) may
   // hand it a node in any settled state, and only `queued` legally reaches
   // `generating`/`building`.
-  if (store.node(nodeIdValue).status !== "queued") {
-    store.setStatus(nodeIdValue, "queued");
-  }
+  if (store.node(nodeIdValue).status !== "queued") setStatus("queued");
 
   const baseVersion = store.node(nodeIdValue).version;
   const baseContractHash = store.node(nodeIdValue).contract.hash;
@@ -190,7 +274,7 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
     if (!backend.extractInterface) return;
     try {
       const dts = await backend.extractInterface(store.node(nodeIdValue), workspace);
-      if (dts) {
+      if (dts && store.cookToken(nodeIdValue) === token) {
         store.applyOp((g) => {
           const n = g.nodes[nodeIdValue]!;
           if (n.artifact) n.artifact = { ...n.artifact, dts };
@@ -209,10 +293,13 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
    *  current. Written in the same op as the version, BEFORE `node:committed`:
    *  the server reads the record on that event. */
   const commit = (cause: string, measurements: unknown) => {
+    own();
+    checkAbort();
     const node = store.node(nodeIdValue);
     if (node.contract.hash !== baseContractHash || node.version !== baseVersion) {
       throw new Error("superseded: contract or version changed mid-cook");
     }
+    if (node.status !== "verifying") throw new Error(`commit refused: node is ${node.status}, not verifying`);
     store.applyOp(
       (g) => {
         const n = g.nodes[nodeIdValue]!;
@@ -230,7 +317,7 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
       },
       { immediate: true },
     );
-    store.setStatus(nodeIdValue, "ready");
+    setStatus("ready");
     store.emit({
       type: "node:committed",
       projectId,
@@ -239,10 +326,11 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
     });
   };
 
-  const bill = (usage: LlmUsage) => {
+  /** `calls` is 0 for spend that was not a model call (prepareArtifact). */
+  const bill = (usage: LlmUsage, calls = 1) => {
     store.applyOp((g) => {
       const n = g.nodes[nodeIdValue]!;
-      n.cost.calls += 1;
+      n.cost.calls += calls;
       n.cost.inputTokens += usage.inputTokens;
       n.cost.outputTokens += usage.outputTokens;
       n.cost.usd += usage.usd;
@@ -275,11 +363,13 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
         node: { title: node.title, spec: node.spec, kind: node.kind },
         questions,
         image,
+        system: backend.inspectSystem,
         signal: deps.signal,
       });
       bill(result.usage);
       return result.failed.length > 0 ? result.failed : null;
-    } catch {
+    } catch (err) {
+      if (err instanceof LlmCallError && err.usage) bill(err.usage);
       return null;
     }
   };
@@ -295,10 +385,11 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
     dts?: string,
     look = false,
   ): Promise<string | null> => {
+    checkAbort();
     // After an earlier prebuilt missed (repairing), building is reached via
     // queued: repairing → building is not a legal transition.
-    if (store.node(nodeIdValue).status === "repairing") store.setStatus(nodeIdValue, "queued");
-    store.setStatus(nodeIdValue, "building");
+    if (store.node(nodeIdValue).status === "repairing") setStatus("queued");
+    setStatus("building");
     store.applyOp((g) => {
       const n = g.nodes[nodeIdValue]!;
       n.artifact = { code, testCode, dts, hash: hashValue(code) };
@@ -306,7 +397,8 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
     const exec = await backend.execute(store.node(nodeIdValue), workspace, graph);
     let failure: { stage: string; report: string } | null = exec.ok ? null : exec;
     if (exec.ok) {
-      store.setStatus(nodeIdValue, "verifying");
+      checkAbort();
+      setStatus("verifying");
       const verify = await backend.verify(store.node(nodeIdValue), graph, workspace);
       const verdict = verify.ok && look && deps.inspect && backend.renderArtifact ? await inspectArtifact() : null;
       if (verify.ok && !verdict) {
@@ -316,40 +408,46 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
         log(`ready (v${store.node(nodeIdValue).version}, ${cause})`);
         return null;
       }
-      failure = verdict ? { stage: "LOOKS", report: inspectFeedback(verdict) } : (verify as Failure);
+      failure = verdict ? { stage: LOOKS, report: inspectFeedback(verdict) } : (verify as Failure);
     }
     log(`${cause} artifact failed ${failure!.stage}: ${failure!.report.slice(0, 200)}`);
     // Fall through to generation (repairing → generating is legal).
-    store.setStatus(nodeIdValue, "repairing");
+    setStatus("repairing");
     return `${failure!.stage}: ${failure!.report}`;
   };
 
+  // What the node held before this cook. A fresh start modifies this, never a
+  // failed draft, and a prebuilt miss puts it back.
+  const original = store.node(nodeIdValue).artifact;
+
   // -- preparation: e.g. a generated mesh the deterministic artifact loads --
-  const preparing = backend.prepareArtifact?.(store.node(nodeIdValue), workspace, graph, deps.signal, log);
-  if (preparing) {
-    store.setStatus(nodeIdValue, "generating");
-    try {
+  try {
+    const preparing = backend.prepareArtifact?.(store.node(nodeIdValue), workspace, graph, deps.signal, log);
+    if (preparing) {
+      setStatus("generating");
       const cost = await preparing;
-      if (cost) bill({ inputTokens: 0, outputTokens: 0, usd: cost.usd });
-    } catch (err) {
-      if (deps.signal?.aborted) store.setStatus(nodeIdValue, "cancelled");
-      else store.setStatus(nodeIdValue, "error_code", {
-        stage: "prepare",
-        message: (err as Error).message.slice(0, 1800),
-        attribution: "unknown",
-      });
-      throw err;
+      if (cost) bill({ inputTokens: 0, outputTokens: 0, usd: cost.usd }, 0);
+      checkAbort();
     }
+  } catch (err) {
+    if (!(err instanceof Superseded) && !deps.signal?.aborted) {
+      setStatus("error_code", { stage: "prepare", message: (err as Error).message.slice(0, 1800), attribution: "unknown" });
+    }
+    throw err;
   }
 
   // -- registry fast path: domain-deterministic parts never touch an LLM --
-  const prebuilt = backend.deterministicArtifact?.(store.node(nodeIdValue));
+  const prebuilt = deterministicArtifact(backend, store.node(nodeIdValue));
+  if (prebuilt instanceof Error) {
+    setStatus("error_code", { stage: "registry", message: prebuilt.message.slice(0, 1800), attribution: "unknown" });
+    throw prebuilt;
+  }
   if (prebuilt) {
     log("registry part — deterministic code, no LLM call");
     const failed = await tryPrebuilt(prebuilt.code, prebuilt.testCode ?? "", "registry");
     if (!failed) return;
     // Never fall through to an LLM for registry parts — surface instead.
-    store.setStatus(nodeIdValue, "error_code", {
+    setStatus("error_code", {
       stage: "registry",
       message: `registry artifact failed gates: ${failed.slice(0, 1800)}`,
       attribution: "code-invalid",
@@ -358,26 +456,29 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
   }
 
   // -- regate: a dirty wave re-checks what the node already has --
-  // A neighbor's contract moved, or this node's own did without a word from
-  // the user. The part in hand may still satisfy every gate against the
-  // contract as it is now — then it commits and no model is asked. Skipped
-  // when the artifact is not the committed one (a failed draft) or the user
-  // has asked for something since that commit (a reprompt wants new code).
+  // The part in hand may still satisfy every gate, and then it commits with
+  // no model asked. Only when nobody asked this part to change: its contract
+  // is the committed one (a neighbor moved) or plan expansion rewrote it, and
+  // no user message is newer than the commit. A person's edit to this
+  // contract wants new code.
   const held = store.node(nodeIdValue);
   const lastCommit = held.history.at(-1);
   const lastAsk = held.thread.filter((m) => m.role === "user").at(-1)?.at ?? 0;
-  if (held.artifact && lastCommit?.artifactHash === held.artifact.hash && lastAsk <= lastCommit.at) {
+  const contractUnasked =
+    lastCommit?.contractHash === held.contract.hash || held.expandedContractHash === held.contract.hash;
+  if (held.artifact && lastCommit?.artifactHash === held.artifact.hash && lastAsk <= lastCommit.at && contractUnasked) {
     log("re-checking the existing part against the current contract — no LLM call");
     const { code, testCode, dts } = held.artifact;
     if ((await tryPrebuilt(code, testCode, "regate", dts)) === null) return;
   }
 
+  const library = deps.library && listOnce(deps.library);
   const reused = (hash: string) => void deps.library?.recordReuse?.(backend.id, hash).catch(() => {});
 
   // -- library fast path: exact contract-hash hit skips the generator --
   const unspecialized = store.node(nodeIdValue).thread.length === 0;
-  if (deps.library && unspecialized) {
-    const hit = await deps.library.lookup(backend.id, baseContractHash);
+  if (library && unspecialized) {
+    const hit = await library.lookup(backend.id, baseContractHash);
     if (hit) {
       log("library hit — reusing verified code, no LLM call");
       if ((await tryPrebuilt(hit.code, hit.testCode, "library", hit.dts)) === null) return reused(baseContractHash);
@@ -392,7 +493,7 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
     // The trade is one kernel round trip against one LLM call.
     const tried = new Set<string>([baseContractHash]);
     for (const cand of await findReusable({
-      library: deps.library,
+      library,
       backendId: backend.id,
       contract: store.node(nodeIdValue).contract,
       kind: store.node(nodeIdValue).kind,
@@ -409,13 +510,21 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
     }
   }
 
+  // A prebuilt miss left its candidate installed; put back what the node had.
+  if (store.node(nodeIdValue).artifact !== original) {
+    own();
+    store.applyOp((g) => {
+      g.nodes[nodeIdValue]!.artifact = original;
+    });
+  }
+
   // Mined once per cook, not per attempt: the graph and the node's contract
   // cannot move mid-cook (the commit guard enforces that), so re-querying on
   // every repair round would return the same entries.
   const exemplars =
-    deps.library && unspecialized
+    library && unspecialized
       ? await selectExemplars({
-          library: deps.library,
+          library,
           backendId: backend.id,
           node: store.node(nodeIdValue),
           graph: store.doc,
@@ -471,14 +580,9 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
    *  the round fails only if NONE of them yields code — one rate-limited draft
    *  out of three is not a reason to give up the other two. */
   const draft = async (prompt: PromptSpec, attempt: number, n: number): Promise<Draft[]> => {
-    // Owned by the backend: what a part costs to write is a fact about the
-    // domain, and a number picked here against one adapter's default is a
-    // reduction against another's. Repairs get the SAME tier as the first
-    // attempt unless the backend asks to escalate — raising effort against an
-    // unchanged output ceiling is how a repair spends its whole budget thinking
-    // and returns no text at all (`stop: max_tokens`), so an escalation carries
-    // its own ceiling. Depth on a repair comes from the failure report and the
-    // render.
+    // Repairs keep the first round's tier unless the backend escalates, and an
+    // escalation carries its own ceiling: more effort under the same maxTokens
+    // returns no text at all.
     const tier = gen?.escalate && attempt >= gen.escalate.fromAttempt ? gen.escalate : gen;
     const settled = await Promise.allSettled(
       Array.from({ length: n }, () =>
@@ -502,9 +606,10 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
     if (results.length === 0) {
       // Provider failures (quota, rate limit, network) must land the node in
       // a resumable error state — never leave it stuck mid-transition.
+      checkAbort();
       const err = (settled[0] as PromiseRejectedResult).reason as Error;
       log(`llm call failed: ${err.message.slice(0, 200)}`);
-      store.setStatus(nodeIdValue, "error_code", {
+      setStatus("error_code", {
         stage: "llm",
         message: err.message.slice(0, 2000),
         attribution: "unknown",
@@ -515,17 +620,11 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
       .map((r) => ({ code: r.data.code, testCode: r.data.testCode ?? "" }))
       .filter((d) => d.code.trim() !== "");
 
-    // A completion carrying NO CODE AT ALL is a provider failure, not a gate
-    // failure, and retrying the same prompt against the same budget reproduces
-    // it. This used to fall through to the gates: the empty string went to the
-    // backend, came back as a confusing G0/G1 report, and the loop spent the
-    // whole budget on it — one node on disk has a 0-byte artifact and
-    // cost.calls: 5. Land it in error_code instead, which cook-dirty resumes.
-    // (Emptiness is the only domain-agnostic check available here; what counts
-    // as *valid* code is the backend's business, and the gates ask that.)
+    // No code at all is a provider failure the same prompt would reproduce, so
+    // it lands in error_code instead of spending the budget on the gates.
     if (drafts.length === 0) {
       log("provider returned no code — not retrying, the prompt and budget are unchanged");
-      store.setStatus(nodeIdValue, "error_code", {
+      setStatus("error_code", {
         stage: "llm",
         message:
           "the model returned an empty completion (no code). This is usually the whole " +
@@ -544,15 +643,17 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
    *  copy of the node carrying its own artifact, so candidates never share
    *  `node.artifact`; a kernel with a fixed pool just queues what it cannot
    *  run at once. Self-sufficient on status: building/verifying → building is
-   *  not a legal transition, so a re-run routes via repairing. */
+   *  not a legal transition, so a re-run routes via repairing. A backend that
+   *  THROWS (kernel unreachable) fails that candidate at stage "execute". */
   const gate = async (ds: Draft[]): Promise<Gated[]> => {
+    checkAbort();
     if (store.node(nodeIdValue).status !== "generating") {
-      store.setStatus(nodeIdValue, "repairing");
-      store.setStatus(nodeIdValue, "generating");
+      setStatus("repairing");
+      setStatus("generating");
     }
-    store.setStatus(nodeIdValue, "building");
+    setStatus("building");
     const tag = (i: number) => (ds.length > 1 ? `candidate ${i + 1}: ` : "");
-    const results = await Promise.all(
+    const settled = await Promise.allSettled(
       ds.map(async (d, i): Promise<Gated> => {
         const node = { ...store.node(nodeIdValue), artifact: { code: d.code, testCode: d.testCode, hash: hashValue(d.code) } };
         const exec = await backend.execute(node, workspace, graph);
@@ -568,16 +669,25 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
         return { ok: true, verify };
       }),
     );
-    store.setStatus(nodeIdValue, "verifying");
+    const results = settled.map((r, i): Gated => {
+      if (r.status === "fulfilled") return r.value;
+      const report = `the backend threw: ${(r.reason as Error)?.message ?? String(r.reason)}`;
+      log(`${tag(i)}${report.slice(0, 200)}`);
+      return { ok: false, failure: { stage: "execute", report } };
+    });
+    checkAbort();
+    setStatus("verifying");
     return results;
   };
 
   /** Make a gated draft the node's artifact: what inspect renders, what the
    *  commit records, and what a failed node shows. */
-  const install = (d: Draft) =>
+  const install = (d: Draft) => {
+    own();
     store.applyOp((g) => {
       g.nodes[nodeIdValue]!.artifact = { code: d.code, testCode: d.testCode, hash: hashValue(d.code) };
     });
+  };
 
   /** Commit the artifact `gate` just verified (guarded: superseded cooks are
    *  discarded). */
@@ -585,9 +695,9 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
     await storeInterface();
     commit(cause, verify.measurements);
     // Freshly verified, unspecialized code joins the library for future briefs.
-    if (capture && deps.library && unspecialized) {
+    if (capture && library && unspecialized) {
       const n = store.node(nodeIdValue);
-      void deps.library
+      void library
         .capture(backend.id, n.contract.hash, {
           code: d.code,
           testCode: d.testCode,
@@ -610,7 +720,9 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
    *  to execute has nothing to show, and a render is a kernel round trip plus
    *  image tokens. Best-effort: a render failure must never cost the round. */
   const renderFailed = async (a: Attempt): Promise<LlmImage | undefined> => {
-    if (!backend.renderArtifact || !RENDER_STAGES.has(a.failure.stage)) return undefined;
+    if (!backend.renderArtifact || !(a.failure.stage === LOOKS || backend.renderStages?.includes(a.failure.stage))) {
+      return undefined;
+    }
     try {
       const node = store.node(nodeIdValue);
       const shown = { ...node, artifact: { code: a.code, testCode: a.testCode, hash: hashValue(a.code) } };
@@ -622,9 +734,7 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
     }
   };
 
-  // Captured before any draft overwrites the artifact: a fresh start must
-  // modify what the user had, never the code that just failed.
-  const startingCode = store.node(nodeIdValue).artifact?.code;
+  const startingCode = original?.code;
   const candidates = Math.max(1, gen?.firstRoundCandidates ?? 1);
   /** The repair base: best score so far, ties to the latest. */
   let best: Attempt | undefined;
@@ -640,8 +750,8 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
     // Two hops, deliberately: building/verifying → generating is NOT a legal
     // transition, so a repair has to route through "repairing" to get back to
     // "generating". Collapsing these throws "illegal status transition".
-    store.setStatus(nodeIdValue, attempt === 1 ? "generating" : "repairing");
-    if (attempt > 1) store.setStatus(nodeIdValue, "generating");
+    setStatus(attempt === 1 ? "generating" : "repairing");
+    if (attempt > 1) setStatus("generating");
 
     // Patching the same code again after it stopped improving keeps refining
     // an approach that is not converging. Start over instead, carrying the
@@ -704,29 +814,32 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
             ? await inspectArtifact()
             : null;
         if (!verdict) {
-          // What the repair changed to clear a gate, for the pitfall miner.
-          if (repairedFrom && repairedFrom.failure.stage !== "LOOKS") {
+          // Which failure a repair cleared, for the pitfall miner. No code.
+          if (repairedFrom && repairedFrom.failure.stage !== LOOKS) {
             const { stage, report } = repairedFrom.failure;
-            void deps.library?.recordFix?.(backend.id, { stage, report, diff: codeDiff(repairedFrom.code, d.code) }).catch(() => {});
+            void deps.library?.recordFix?.(backend.id, { stage, report }).catch(() => {});
           }
           await finish(attempt === 1 ? "generate" : `repair-${attempt}`, d, gated.verify, true, attempt);
           return;
         }
-        inspectRetries += 1;
-        bestPassing = { ...d, verify: gated.verify };
         log(`looks wrong: ${verdict.map((a) => a.question).join(" / ")}`);
-        // Passing code outranks every gate failure, so the rewrite builds on it.
+        // The first looks-wrong pass is the rewrite base: passing code outranks
+        // every gate failure. Later passing candidates are still looked at
+        // before a round is spent on it.
+        if (bestPassing) continue;
+        bestPassing = { ...d, verify: gated.verify };
         round = {
           ...d,
           attempt,
-          failure: { stage: "LOOKS", report: inspectFeedback(verdict) },
+          failure: { stage: LOOKS, report: inspectFeedback(verdict) },
           score: Number.POSITIVE_INFINITY,
         };
-        break; // spend one round on it; the gates still guard the result
+        continue;
       }
       const a: Attempt = { ...d, attempt, failure: gated.failure, score: gated.score };
       if (!round || rank(a) > rank(round)) round = a;
     }
+    if (round?.failure.stage === LOOKS) inspectRetries += 1;
 
     install(round!);
     failures.push(round!.failure);
@@ -763,10 +876,6 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
     message: last.report.slice(0, 2000),
     attribution,
   };
-  store.setStatus(
-    nodeIdValue,
-    attribution === "contract-infeasible" ? "error_contract" : "error_code",
-    detail,
-  );
+  setStatus(attribution === "contract-infeasible" ? "error_contract" : "error_code", detail);
   throw new Error(`${nodeIdValue}: ${attribution} after ${maxAttempts} attempts (${last.stage})`);
 }

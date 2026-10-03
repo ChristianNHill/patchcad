@@ -157,7 +157,7 @@ describe("mesh node cook", () => {
     expect(node.status).toBe("ready");
     expect(node.artifact?.code).toBe(meshNodeCode(node));
     expect(kernel.executed).toEqual([meshNodeCode(node)]);
-    expect(node.cost).toMatchObject({ calls: 1, usd: 0.4 });
+    expect(node.cost).toMatchObject({ calls: 0, usd: 0.4 }); // a mesh job is spend, not a model call
     expect(node.history.at(-1)?.cause).toBe("registry");
   });
 });

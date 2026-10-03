@@ -244,6 +244,11 @@ export const NodeRecord = z.object({
   measurements: NodeMeasurements.nullable().default(null),
   version: z.number().default(0),
   history: z.array(NodeVersionMeta).default([]),
+  /** Set when deterministic plan expansion (not a person) last rewrote this
+   *  node's contract, to that contract's hash. A cook may then re-check the
+   *  committed part against it before generating; any other edit moves the
+   *  hash past it. */
+  expandedContractHash: z.string().optional(),
   cost: NodeCost.default(ZERO_COST),
 });
 export type NodeRecord = z.infer<typeof NodeRecord>;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ProjectLedger, type GraphDoc } from "@patchcad/shared";
-import { isListPrice, projectSpend } from "./cost";
+import { billing, projectSpend } from "./cost";
 
 const cost = (calls: number, tokens: number, usd: number) => ({
   calls,
@@ -40,11 +40,16 @@ describe("projectSpend", () => {
   });
 });
 
-describe("isListPrice", () => {
-  it("is true for the subscription provider, alone or composed", () => {
-    expect(isListPrice("subscription")).toBe(true);
-    expect(isListPrice("composite(subscription+vision:claude)")).toBe(true);
-    expect(isListPrice("claude")).toBe(false);
-    expect(isListPrice(undefined)).toBe(false);
+describe("billing", () => {
+  it("reads the paid routes the server reports", () => {
+    expect(billing({ id: "subscription", paid: [] })).toBe("list");
+    expect(billing({ id: "composite(subscription+vision:claude)", paid: ["vision"] })).toBe("mixed");
+    expect(billing({ id: "claude", paid: ["architect", "generator", "repair", "classifier", "vision"] })).toBe("api");
+  });
+
+  it("falls back to the provider id on an older server", () => {
+    expect(billing({ id: "composite(subscription+vision:claude)" })).toBe("list");
+    expect(billing({ id: "claude" })).toBe("api");
+    expect(billing(undefined)).toBe("api");
   });
 });

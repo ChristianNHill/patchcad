@@ -19,7 +19,9 @@ export type PersistFn = (graph: GraphDoc) => Promise<void>;
  * — the superseded-commit guard discards the loser's writes. */
 const STATUS_TRANSITIONS: Record<NodeStatus, NodeStatus[]> = {
   planned: ["queued", "cancelled"],
-  queued: ["generating", "building", "cancelled"],
+  // queued → error_code: a cook can fail before it starts work (a backend
+  // that throws on its registry lookup), and must still settle the node.
+  queued: ["generating", "building", "error_code", "cancelled"],
   generating: ["queued", "building", "repairing", "error_code", "error_contract", "cancelled"],
   building: ["queued", "verifying", "repairing", "error_code", "error_contract", "cancelled"],
   verifying: ["queued", "ready", "repairing", "error_code", "error_contract", "cancelled"],
@@ -38,6 +40,10 @@ export class GraphStore {
   private persist: PersistFn;
   private bus: EventBus;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The cook that owns each node. In memory only: after a restart no cook is
+   *  live, so there is nothing to own. */
+  private cooks = new Map<string, number>();
+  private nextCook = 0;
 
   constructor(graph: GraphDoc, bus: EventBus, persist: PersistFn) {
     this.graph = graph;
@@ -84,6 +90,19 @@ export class GraphStore {
       n.statusDetail = detail;
     });
     this.emit({ type: "node:status", projectId: this.graph.id, nodeId, status, detail });
+  }
+
+  /** Claim a node for a new cook. Every earlier cook of it is superseded from
+   *  here on: its writes are refused and its commit discarded (cook.ts). */
+  beginCook(nodeId: string): number {
+    this.nextCook += 1;
+    this.cooks.set(nodeId, this.nextCook);
+    return this.nextCook;
+  }
+
+  /** The token of the cook that currently owns `nodeId`. */
+  cookToken(nodeId: string): number | undefined {
+    return this.cooks.get(nodeId);
   }
 
   setParams(nodeId: string, params: Record<string, ParamValue>): void {

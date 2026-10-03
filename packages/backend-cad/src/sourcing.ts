@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ArchitectOutput } from "@patchcad/engine";
 import type { GraphDoc, NodeRecord } from "@patchcad/shared";
 import type { CadContractPayload } from "./index.js";
 import { REGISTRY_HARDWARE } from "./registry.js";
@@ -48,6 +49,12 @@ export function sourcingOf(node: SourcedNode): Sourcing {
   return { class: "print", process: "fdm" };
 }
 
+/** Processes held to the machined G3 fit bands (gates.py MACHINED); every
+ *  other process prints to the FDM bands. */
+export function isMachined(process: string | undefined): boolean {
+  return process === "cnc" || process === "sheet_metal" || process === "laser_cut";
+}
+
 /** True when FDM allowances (slip-fit oversize, nut-trap AF growth) apply. */
 export function isFdmPart(node: SourcedNode): boolean {
   const s = sourcingOf(node);
@@ -57,6 +64,32 @@ export function isFdmPart(node: SourcedNode): boolean {
 /** Processes a vendor makes that G4c has rules for. */
 export function isVendorProcess(s: Sourcing): boolean {
   return s.class !== "buy" && s.process !== undefined && s.process !== "fdm";
+}
+
+/**
+ * Plan expansion: a cnc part with a feature port that does not open along ±Z
+ * (the motor holes on the upright of an L, a cross hole in a shaft) cannot be
+ * reached by a 3-axis mill in one setup. That is a property of the contract
+ * the generator can never repair, and G4c's undercut rule would burn the whole
+ * budget proving it, so the setup count is decided here, deterministically.
+ * FLAT_FACE ports are stock faces, not machined features, and never count. An
+ * explicit `allowUndercuts: false` is the architect's call and stays.
+ */
+export function markCncSetups<T extends ArchitectOutput>(out: T): T {
+  for (const n of out.nodes) {
+    const payload = n.contract.payload as Partial<CadContractPayload> | undefined;
+    const s = payload?.sourcing;
+    if (!s || s.class !== "fabricate" || s.process !== "cnc" || s.allowUndercuts !== undefined) continue;
+    const sideways = (payload.ports ?? []).some((p) => {
+      if (p.type === "FLAT_FACE") return false;
+      const z = p.pose.zAxis.map(Number);
+      if (z.some(Number.isNaN)) return false;
+      const len = Math.hypot(...z);
+      return len > 0 && Math.abs(z[2]!) / len < 0.999;
+    });
+    if (sideways) s.allowUndercuts = true;
+  }
+  return out;
 }
 
 /**

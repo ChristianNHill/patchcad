@@ -39,17 +39,24 @@ def write_step(shape: Any, name: str, path: str) -> None:
         printer.SetTraceLevel(Message_Gravity.Message_Fail)
     STEPCAFControl_Controller.Init_s()
     STEPControl_Controller.Init_s()
-    Interface_Static.SetCVal_s("write.step.schema", STEP_SCHEMA)
-    Interface_Static.SetCVal_s("write.step.unit", "MM")
-    shape.label = name
-    doc = _create_xde(shape, Unit.MM, auto_naming=True)
-    writer = STEPCAFControl_Writer(XSControl_WorkSession(), False)
-    writer.SetNameMode(True)
-    writer.SetColorMode(True)
-    writer.Transfer(doc, STEPControl_StepModelType.STEPControl_AsIs)
-    tmp = f"{path}.tmp"
-    writer.Write(tmp)
-    os.replace(tmp, path)
+    # The statics are process-wide and this is a warm worker: put them back,
+    # or the next /export STEP from this worker comes out AP242 too.
+    saved = {k: Interface_Static.CVal_s(k) for k in ("write.step.schema", "write.step.unit")}
+    try:
+        Interface_Static.SetCVal_s("write.step.schema", STEP_SCHEMA)
+        Interface_Static.SetCVal_s("write.step.unit", "MM")
+        shape.label = name
+        doc = _create_xde(shape, Unit.MM, auto_naming=True)
+        writer = STEPCAFControl_Writer(XSControl_WorkSession(), False)
+        writer.SetNameMode(True)
+        writer.SetColorMode(True)
+        writer.Transfer(doc, STEPControl_StepModelType.STEPControl_AsIs)
+        tmp = f"{path}.tmp"
+        writer.Write(tmp)
+        os.replace(tmp, path)
+    finally:
+        for k, v in saved.items():
+            Interface_Static.SetCVal_s(k, v)
 
 
 def _profile_dxf(shape: Any, path: str) -> float:
@@ -112,15 +119,18 @@ def _rfq(meta: dict[str, Any], info: dict[str, Any], files: list[str], dfm: dict
         "",
         *[f"- `{f}`" for f in files],
         "",
-        f"The STEP file is the master geometry ({STEP_SCHEMA}, millimetres). The drawing is for reference "
-        "and inspection; where they disagree, the STEP governs.",
+        (
+            f"The STEP file is the master geometry ({STEP_SCHEMA}, millimetres). The drawing is for reference "
+            "and inspection; where they disagree, the STEP governs."
+        ),
         "",
         "## Critical dimensions",
         "",
         f"- Overall envelope: {ext[0]:.2f} x {ext[1]:.2f} x {ext[2]:.2f} mm (X x Y x Z)",
     ]
     for h in info["holes"]:
-        got = f", measured Ø{h['measured']:.3f} in the gate" if h["measured"] else ""
+        got = (f", measured {'' if h['type'] == 'SLOT' else 'Ø'}{h['measured']:.3f} in the gate"
+               if h["measured"] else "")
         lines.append(f"- {h['letter']} `{h['key']}` ({h['type']}): {h['text']}{got}")
     lines += ["", "## Tolerances and fits", "", *[f"- {n}" for n in info["notes"]], ""]
     if dfm:
@@ -166,6 +176,8 @@ def vendor_package(shape: Any, ports: list[dict[str, Any]], meta: dict[str, Any]
                         "pattern with your own bend deductions.")
         files[f"{name}.dxf"] = dxf
 
+    if dfm and dfm.get("setups"):
+        meta = {**meta, "notes": [f"MACHINED IN {dfm['setups'].upper()}.", *meta.get("notes", [])]}
     svg, info = build_sheet(shape, ports, meta, measured)
     files[f"{name}-drawing.pdf"] = os.path.join(out_dir, f"{name}-drawing.pdf")
     svg_to_pdf(svg, files[f"{name}-drawing.pdf"])

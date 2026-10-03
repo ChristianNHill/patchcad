@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { LlmCallError, type LlmProvider, type LlmRequest } from "@patchcad/engine";
 import { z } from "zod";
-import { addCost, addUsage, budgeted, metered } from "./spend.js";
+import { addCost, addUsage, Budget, budgeted, metered } from "./spend.js";
 
 const usage = (usd: number) => ({ inputTokens: 100, outputTokens: 10, usd });
 
@@ -57,7 +57,7 @@ describe("metered", () => {
 describe("budgeted", () => {
   it("refuses the call after the cap is reached, without reaching the provider", async () => {
     const inner = priced([0.6, 0.6, 0.6]);
-    const p = budgeted(inner, 1);
+    const p = budgeted(inner, new Budget(1));
     await p.complete(req);
     await p.complete(req);
     await expect(p.complete(req)).rejects.toThrow("cook budget $1.00 reached ($1.20 spent)");
@@ -66,16 +66,19 @@ describe("budgeted", () => {
 
   it("counts the spend of a failed call toward the cap", async () => {
     const inner = priced([-1.5, 0.1]);
-    const p = budgeted(inner, 1);
+    const p = budgeted(inner, new Budget(1));
     await expect(p.complete(req)).rejects.toThrow("schema failed");
     await expect(p.complete(req)).rejects.toThrow("cook budget");
     expect(inner.calls).toBe(1);
   });
 
-  it("gives each wrapper its own budget", async () => {
-    const inner = priced([0.9, 0.9]);
-    await budgeted(inner, 1).complete(req);
-    await budgeted(inner, 1).complete(req);
+  it("gives each budget its own cap, and shares one budget across wrappers", async () => {
+    const inner = priced([0.9, 0.9, 0.9]);
+    await budgeted(inner, new Budget(1)).complete(req);
+    const shared = new Budget(1);
+    await budgeted(inner, shared).complete(req);
+    shared.add(0.2); // mesh generation billed to the same cook
+    await expect(budgeted(inner, shared).complete(req)).rejects.toThrow("cook budget");
     expect(inner.calls).toBe(2);
   });
 });

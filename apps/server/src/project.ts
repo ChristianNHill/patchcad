@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { GraphDoc, hashValue } from "@patchcad/shared";
+import { GraphDoc, hashValue, type NodeRecord } from "@patchcad/shared";
 import { EventBus, GraphStore } from "@patchcad/engine";
 
 /**
@@ -28,6 +28,24 @@ export function codeExt(backendId: string): string {
  *  looked for a file that never exists and failed as "no stored code". */
 export function codeFile(dir: string, nodeIdValue: string, version: number, ext: string): string {
   return path.join(dir, "nodes", nodeIdValue, `v${version}.code.${ext}`);
+}
+
+/** The values a node builds with: contract defaults under the user's edits. */
+export function effectiveParams(node: Pick<NodeRecord, "contract" | "params">): Record<string, unknown> {
+  const params: Record<string, unknown> = {};
+  for (const p of node.contract.params) params[p.name] = p.default;
+  return Object.assign(params, node.params);
+}
+
+/** A project dir name: the goal, kebab-cased, plus a time suffix. */
+export function slugify(goal: string): string {
+  const base = goal
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32)
+    .replace(/-+$/g, "");
+  return `${base || "project"}-${Date.now().toString(36)}`;
 }
 
 export async function loadProject(dir: string, bus: EventBus): Promise<LoadedProject> {

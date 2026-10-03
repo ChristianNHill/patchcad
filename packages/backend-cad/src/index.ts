@@ -95,6 +95,9 @@ export const PROBED_PORT_TYPES = [
   "MOTOR_MOUNT",
   "MAGNET_POCKET",
   "HUB_BORE",
+  "LINEAR_BEARING_SEAT",
+  "CLIP_GROOVE",
+  "RAIL_MOUNT",
 ] as const;
 
 export const CadPortType = z.enum(PROBED_PORT_TYPES);
@@ -112,6 +115,9 @@ export const HARDWARE_PORT_TYPES = new Set<string>([
   "MOTOR_MOUNT",
   "MAGNET_POCKET",
   "HUB_BORE",
+  "LINEAR_BEARING_SEAT",
+  "CLIP_GROOVE",
+  "RAIL_MOUNT",
 ]);
 
 /** True when a port's feature is wider than every envelope volume, so no cut
@@ -214,19 +220,20 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { KernelClient, type ExportResult, type KernelResult } from "./kernel.js";
 import { generatePrompt, repairPrompt } from "./prompts.js";
-import { FASTENING_HARDWARE, REGISTRY_HARDWARE, REGISTRY_SOLIDS, resolveDeterministic } from "./registry.js";
+import { FASTENING_HARDWARE, REGISTRY_HARDWARE, REGISTRY_SOLIDS, resolveDeterministic, skuOf, unresolvedHardware } from "./registry.js";
 import { CadJoint } from "./joints.js";
 import { CATALOG, skuFor } from "./catalog.js";
 import { cadJointRuleLint, expandJoints, isJointHardware, jointAxes } from "./expand.js";
 import { kinematicJoints, poseToMat, solveAssembly, type AssemblyMate, type AssemblyNode } from "./assembly.js";
 import { resolveDim, resolvePose } from "./bindings.js";
-import { clashFindings, contactQueries, fitFindings, hardwareAllowances, threadAllowances } from "./g5.js";
+import { DIAMETER_KEYS, clashFindings, contactQueries, fitFindings, hardwareAllowances, threadAllowances } from "./g5.js";
 import { cadPlanGeometryLint } from "./plan-geometry.js";
 import { silhouetteAdvisories } from "./silhouette.js";
 import { geometrySourceGuidance, isMeshNode, meshNodeCode, meshSourceLint, prepareMeshNode, type MeshSource } from "./mesh-source.js";
-import { Sourcing, cadSourcingLint } from "./sourcing.js";
+import { Sourcing, cadSourcingLint, markCncSetups } from "./sourcing.js";
 import { G4C_SCORE, kernelProcess } from "./dfm.js";
 import { WORKED_PLAN, WORKED_PLAN_GOAL } from "./worked-plan.js";
+import { CAD_INSPECT_SYSTEM } from "./judge.js";
 import {
   BEARING_DIAMETER,
   SEAT_POSE,
@@ -319,7 +326,9 @@ export const cadFastenerJustifiedLint = {
         FASTENED_PORT_TYPES.has(p.type),
       );
     for (const n of Object.values(graph.nodes)) {
-      if (!FASTENING_HARDWARE.has(n.kind)) continue;
+      // A joint's own hardware answers to cadJointRuleLint: a drive's spacer
+      // washer sits on a bearing, not in a hole, and is no less real for it.
+      if (!FASTENING_HARDWARE.has(n.kind) || isJointHardware(graph, n.id)) continue;
       const neighbors = graph.edges
         .filter((e) => e.from === n.id || e.to === n.id)
         .map((e) => (e.from === n.id ? e.to : e.from));
@@ -458,7 +467,6 @@ export const cadEnvelopeCoherentLint = {
  * have been. Catching it at plan time turns it into an architect repair.
  */
 const HOLE_PORT_TYPES = new Set(["CLEARANCE_HOLE", "SCREW_SEAT", "BORE", "HOLE_PATTERN"]);
-const DIAMETER_KEYS = ["diameter", "dia", "holeDia", "hole_diameter", "d", "boreDia"];
 const FACE_SIZE_KEYS = ["size", "faceSize", "face_size", "width", "flatWidth", "flat_width"];
 const CHANNEL_PORT_TYPES = new Set(["GROOVE", "SLOT"]);
 const PATTERN_PORT_TYPES = new Set(["HOLE_PATTERN", "BOSS_PATTERN"]);
@@ -617,13 +625,23 @@ export const cadMateConnectivityLint = {
   },
 };
 
+/** Hardware is built only from the catalog. A sku or thread that names no
+ *  catalog row would otherwise surface mid-cook as a G1 failure on a node
+ *  with no repair round; here it is an architect repair. */
+export const cadHardwareResolvesLint = {
+  run(graph: GraphDoc): string[] {
+    return Object.values(graph.nodes).flatMap((n) => unresolvedHardware(n) ?? []);
+  },
+};
+
 export const cadHardwareSeatLint = {
   run(graph: GraphDoc): string[] {
     const problems: string[] = [];
     for (const n of Object.values(graph.nodes)) {
-      if (!BEARING_DIAMETER[n.kind]) continue;
-      const declared = n.contract.params.find((p) => p.name === "thread")?.default;
-      const thread = typeof declared === "string" ? declared : undefined;
+      // Joint hardware's ports are mate frames (INSET_POSE), never probed.
+      if (!BEARING_DIAMETER[n.kind] || isJointHardware(graph, n.id)) continue;
+      // Hardware may name a sku rather than a thread; skuOf reads either.
+      const thread = skuOf(n)?.key;
       // The band comes from grounding.ts rather than being recomputed here: the
       // same numbers are rendered into the architect's guidance, and a lint that
       // derives them separately can disagree with what the model was told.
@@ -855,8 +873,10 @@ function portHoles(graph: GraphDoc, p: CadContractPayload["ports"][number]): num
   switch (p.type) {
     case "CLEARANCE_HOLE": case "SCREW_SEAT": case "BORE": case "THREADED_HOLE": case "INSERT_POCKET":
     case "COUNTERBORE": case "COUNTERSINK": case "DOWEL_HOLE": case "BEARING_SEAT": case "BUSHING_BORE":
-    case "MAGNET_POCKET": case "HUB_BORE":
+    case "MAGNET_POCKET": case "HUB_BORE": case "LINEAR_BEARING_SEAT": case "CLIP_GROOVE":
       return 1;
+    case "RAIL_MOUNT":
+      return v("count") || 1;
     case "HOLE_PATTERN":
       return grid;
     case "MOTOR_MOUNT":
@@ -997,7 +1017,9 @@ function failureReport(result: KernelFailed): string {
   return `${failures.length} gate failures — fix all of them in this attempt:\n${items.join("\n")}`;
 }
 
-const CONTRACT_STAGES = new Set(["G3", "G4", "G4b"]);
+// CONTRACT: the kernel could not read a declaration (a hole_count with only
+// `max`, a box with no size). The part built; the contract is what is broken.
+const CONTRACT_STAGES = new Set(["G3", "G4", "G4b", "G4c", "CONTRACT"]);
 
 /** Higher = closer to passing, so the engine can repair from the best attempt.
  *  G3 earns partial credit for the fraction of ports that measured right. */
@@ -1016,7 +1038,7 @@ function gateScore(result: KernelResult, totalPorts: number): number {
     const worst = (result.failures ?? []).find((f) => f.stage === "G4")?.measured;
     return typeof worst === "number" ? 4 + 0.5 / (1 + worst) : 4.25;
   }
-  const rank: Record<string, number> = { G0: 0, G1: 1, G2: 2, G4b: 4.75, G4c: G4C_SCORE, TIMEOUT: 0.5, KERNEL_CRASH: 0.5 };
+  const rank: Record<string, number> = { G0: 0, G1: 1, G2: 2, G4b: 4.75, G4c: G4C_SCORE, CONTRACT: 3, TIMEOUT: 0.5, KERNEL_CRASH: 0.5 };
   return rank[result.stage] ?? 0;
 }
 
@@ -1048,7 +1070,7 @@ export const CAD_TIER_HINTS: TierHints = {
 
 /** Kinds the joint rules mint. The architect never declares them: it declares
  *  a joint and gets them. */
-const JOINT_HARDWARE_KINDS = new Set(["washer", "dowel", "bearing", "bushing", "shaft", "collar", "eclip", "linear_bearing", "rail", "carriage", "motor"]);
+const JOINT_HARDWARE_KINDS = new Set(["washer", "dowel", "bearing", "bushing", "shaft", "collar", "eclip", "linear_bearing", "rail", "carriage", "motor", "coupler", "lead_nut"]);
 
 /** Every other catalog kind, from the catalog, so a new family is plannable. */
 function catalogKinds() {
@@ -1084,7 +1106,7 @@ function cadPlanning(meshAvailable: boolean) {
       ...catalogKinds(),
     ],
     jointSchema: CadJoint,
-    expandPlan: expandJoints,
+    expandPlan: (...args: Parameters<typeof expandJoints>) => markCncSetups(expandJoints(...args)),
     paramUnit: "mm",
     payloadSchema: CadContractPayload as z.ZodType<CadContractPayload>,
     graphLints: [
@@ -1095,6 +1117,7 @@ function cadPlanning(meshAvailable: boolean) {
       cadProbedPortsLint,
       cadAssertionsCoherentLint,
       cadFaceHoleConflictLint,
+      cadHardwareResolvesLint,
       cadHardwareSeatLint,
       cadMateConnectivityLint,
       cadPlanGeometryLint,
@@ -1127,6 +1150,11 @@ function cadPlanning(meshAvailable: boolean) {
       '"finish"?, "qty"?} — process AND material are required — and set process.kind',
       '"CNC" exactly when the process is cnc. A fabricated part is still generated and',
       "gated like any other, plus that process's manufacturability rules.",
+      "CNC SETUPS: a 3-axis mill reaches only faces it sees from +Z or -Z. A cnc part",
+      "whose features open in more than one direction (holes on both legs of an L)",
+      'is machined in two setups: set sourcing.allowUndercuts true (expansion does it',
+      "for you when a non-FLAT_FACE port's +z is off the Z axis), or lay every feature",
+      "along Z if one setup matters to the user.",
       "",
       "FRAME CONVENTION (critical): every part is modeled in its OWN LOCAL frame,",
       "roughly centered on the origin — the assembly places parts later via port",
@@ -1180,6 +1208,12 @@ function cadPlanning(meshAvailable: boolean) {
       '  MOTOR_MOUNT {"pilot_diameter", "hole_diameter", "pcd"+"count" | "pitch_x"+"pitch_y"}: pilot + screw pattern.',
       '  MAGNET_POCKET {"diameter", "depth"}: disc magnet pocket, 0.05-0.2 over the magnet Ø.',
       '  HUB_BORE {"diameter", "flat"?}: slip bore on a shaft; flat = axis-to-flat distance along +xAxis.',
+      '  LINEAR_BEARING_SEAT {"od", "length", "fit", "retention": "lip"|"clip"}: LM-UU pocket, length deep;',
+      '    "lip" stands it on a shoulder (bore below ≤ od − 2), "clip" may run through.',
+      '  CLIP_GROOVE {"diameter", "width", "shaft_diameter"}: e-clip groove ON a shaft, origin on the axis',
+      "    at the groove's middle, +z along the shaft.",
+      '  RAIL_MOUNT {"width", "length", "pitch", "count", "hole_diameter", "depth"?}: flat rail land along',
+      "    xAxis with its fixing holes at pitch, centred.",
       "  For DOWEL_HOLE, BEARING_SEAT, BUSHING_BORE, MAGNET_POCKET, HUB_BORE and the MOTOR_MOUNT",
       "  pilot, declare the PART's nominal size (the dowel, bearing, magnet); the gate adds the fit.",
       "",
@@ -1241,11 +1275,19 @@ function cadPlanning(meshAvailable: boolean) {
       "  mm), driven + speedClass/torqueClass low|medium|high (adds a motor),",
       "  strokeMm (prismatic), shaftHint/threadHint (mm / M3..M8), allowPrinted",
       "  (a printed pin pivot), lateral (room for a side nut trap).",
+      "  A driven revolute joint with ratio (motor turns per output turn) or",
+      "  centerMm (motor axis to driven axis) gets a NEMA 17 beside the axis and a",
+      "  GT2 belt, or a spur pair at high torque / low speed / a short centre;",
+      "  the motor sits on +x of a's port, under a. wallMotor: a's thickness",
+      "  under the motor when thinner than wallA (a pocket in a's underside).",
+      "  A driven prismatic joint gets a lead screw (stroke <= 300, not fast:",
+      "  axis along a's port +z) or a belt-driven rail carriage (along +x).",
       "  A rotor that spins freely is revolute/continuous: a gets two bearing seats",
       "  (wallA must hold two bearings and a shoulder), b gets a hub bore on the",
       "  shaft, and the swept clearance of b around the axis is checked.",
       "Never emit a fastener, nut, insert, washer, dowel, bearing, shaft, collar,",
-      "rail or motor node for a joint: the rules mint them, with ids like",
+      "rail, motor, pulley, belt, gear, coupler or lead nut node for a joint: the",
+      "rules mint them, with ids like",
       "j1_screw. Hardware no joint owns must still be justified by a host port.",
       "",
       "",
@@ -1367,6 +1409,7 @@ function cadPlanning(meshAvailable: boolean) {
     ].join("\n"),
     architectRules: CAD_ARCHITECT_RULES,
     tierHints: CAD_TIER_HINTS,
+    advisoryPayloadKeys: ["visualChecks", "visualRef", "sourcing"],
   };
 }
 
@@ -1393,6 +1436,10 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     firstRoundCandidates: 3,
     escalate: { fromAttempt: 3, effort: "high", maxTokens: 32000 },
   } as const;
+
+  /** Port probes (G3) and envelope (G4) fail on a built shape worth showing. */
+  readonly renderStages = ["G3", "G4"];
+  readonly inspectSystem = CAD_INSPECT_SYSTEM;
 
 
   /** Makes the surface of `geometrySource: "mesh"` nodes; absent = none. */
@@ -1587,6 +1634,10 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     // was still converging on to the architect as unbuildable.
     const persistent = Math.max(2, Math.ceil((evidence.attempts * 2) / 3));
 
+    // A declaration the kernel could not read fails the same way whatever the
+    // code does, so one round of it is already proof.
+    if (evidence.failures.some((f) => f.stage === "CONTRACT" || /\[CONTRACT\]/.test(f.report))) return "contract-infeasible";
+
     // A persistent envelope escape means the box the architect drew is too
     // small for the features it demanded — only the architect can fix that.
     // A combined G3 report carries the envelope verdict too, tagged `[G4]`.
@@ -1635,6 +1686,11 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       for (const label of hit) budget.set(label, (budget.get(label) ?? 0) + 1);
     }
     for (const n of budget.values()) if (n >= persistent) return "contract-infeasible";
+    // A persistent cnc undercut is the setup count: the contract's port poses
+    // put features where a 3-axis mill cannot reach them from ±Z, and only a
+    // contract change (sourcing.allowUndercuts) or a re-posed port fixes it.
+    const undercuts = evidence.failures.filter((f) => f.stage === "G4c" && /"undercut"/.test(f.report));
+    if (undercuts.length >= persistent) return "contract-infeasible";
     return "code-invalid";
   }
 
@@ -1666,7 +1722,7 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     // Motion joints are kinematic, not rigid: the poses above are each joint
     // at 0, and this says which axis it turns or slides along, how far, and
     // which parts go with it (G5 sweeps them).
-    const joints = kinematicJoints(jointAxes(graph), world);
+    const joints = kinematicJoints(jointAxes(graph), world, instances);
     const scene = {
       nodes: Object.fromEntries(
         Object.values(graph.nodes).map((n) => [
@@ -1716,6 +1772,8 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     // shape in this file, one commit after two were deleted, so the reason is
     // reported as a problem of its own.
     const findings: CheckFinding[] = fitFindings(graph);
+    /** A pair went uncompared, so applyCheck must not release its blocks. */
+    let incomplete = false;
     // Every placed copy, keyed node#i past the first: a second arm hung off
     // the same seat is a part in space like any other.
     const posed = Object.values(graph.nodes)
@@ -1740,8 +1798,10 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
         for (const e of res.clash.errors ?? []) {
           problems.push(`clash check incomplete — ${e}. Those two parts were not compared.`);
         }
+        if ((res.clash.errors ?? []).length > 0) incomplete = true;
         findings.push(...clashFindings(graph, res.clash));
       } catch (err) {
+        incomplete = true;
         problems.push(
           `clash check did not run: ${(err as Error).message}. Parts may overlap without this reporting it — the gate is skipped, not passed.`,
         );
@@ -1753,7 +1813,7 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     // it never sets ok; in `problems` too so the user actually reads it.
     const advisories = await this.silhouetteCheck(graph, ws, posed, problems);
     problems.push(...advisories.map((a) => a.message));
-    return { ok, problems, findings, advisories };
+    return { ok, problems, findings, advisories, incomplete };
   }
 
   private async silhouetteCheck(

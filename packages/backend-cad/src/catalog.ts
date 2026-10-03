@@ -140,13 +140,6 @@ export function pickLength(family: string, key: string, range: { min: number; ma
   return standardLengths(family, key).find((l) => l >= range.min - 1e-9 && (range.max === undefined || l <= range.max + 1e-9));
 }
 
-/** Family names, optionally one category's, in catalog order. */
-export function listFamilies(category?: Category): string[] {
-  return Object.entries(CATALOG.families)
-    .filter(([, f]) => !category || f.category === category)
-    .map(([name]) => name);
-}
-
 /** Families a node kind can build, default first. */
 export function familiesOfKind(kind: string): string[] {
   return Object.entries(CATALOG.families)
@@ -184,10 +177,4 @@ export function parseSku(id: string): Sku | undefined {
     if (key) return skuFor(family, key, Number(m[2]));
   }
   return undefined;
-}
-
-/** Where a dimension came from, the row's own mark over the family's. */
-export function dimsSourceOf(family: string, key: string) {
-  const f = CATALOG.families[family];
-  return familyDims(family, key)?.dimsSource ?? f?.dimsSource;
 }

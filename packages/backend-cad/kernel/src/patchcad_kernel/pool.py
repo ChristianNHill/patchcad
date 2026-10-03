@@ -9,7 +9,6 @@ from __future__ import annotations
 import multiprocessing as mp
 import os
 import re
-import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -44,10 +43,12 @@ def _timeout_line(trace_path: str, code: str) -> str | None:
 
 
 class Worker:
-    def __init__(self) -> None:
+    def __init__(self, trace_path: str) -> None:
+        """`trace_path` is this pool slot's own fixed file. A mkstemp name per
+        worker leaked one file per kernel that died by SIGKILL, since nothing
+        ran to unlink it; a slot's file is reused by the next kernel instead."""
         self.respawns = 0
-        fd, self.trace_path = tempfile.mkstemp(prefix="patchcad-trace-", suffix=".txt")
-        os.close(fd)
+        self.trace_path = trace_path
         self._start()
 
     def _start(self) -> None:
@@ -69,7 +70,7 @@ class Worker:
             try:
                 self.process.kill()
                 self.process.join(5)
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110 — reaping is best-effort, the boot error is the one to raise
                 pass
             raise
 
@@ -93,14 +94,16 @@ class Worker:
         raise WorkerTimeout(f"job exceeded {timeout_s:.0f}s")
 
     def respawn(self) -> None:
+        # Best-effort teardown of a worker already known dead or hung: a failure
+        # here changes nothing, and the respawn below is what matters.
         try:
             self.process.kill()
             self.process.join(5)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110
             pass
         try:
             self.parent_conn.close()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110
             pass
         self.respawns += 1
         self._start()
@@ -109,19 +112,16 @@ class Worker:
         try:
             self.parent_conn.send(None)
             self.process.join(2)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110 — a dead pipe means a dead worker; the kill below covers both
             pass
         if self.process.is_alive():
             self.process.kill()
-        try:
-            os.unlink(self.trace_path)
-        except OSError:
-            pass
 
 
 class WorkerPool:
-    def __init__(self, size: int = 2) -> None:
+    def __init__(self, size: int, trace_dir: str) -> None:
         self.size = size
+        os.makedirs(trace_dir, exist_ok=True)
         # Boot the workers CONCURRENTLY. Worker() blocks until its child has
         # imported build123d, so a list comprehension made startup linear in
         # pool size — the reason the pool stayed at 2 was that widening it made
@@ -133,7 +133,7 @@ class WorkerPool:
         # nothing would hold a reference to shut them down. daemon=True only
         # covers a clean interpreter exit, and each orphan pins ~200MB of OCP.
         with ThreadPoolExecutor(max_workers=size) as boot:
-            futures = [boot.submit(Worker) for _ in range(size)]
+            futures = [boot.submit(Worker, os.path.join(trace_dir, f"worker-{i}.txt")) for i in range(size)]
         started, failure = [], None
         for f in futures:
             try:

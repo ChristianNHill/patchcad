@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { NodeRecord } from "@patchcad/shared";
 import { API } from "./api.js";
+import { BusyButton } from "./BusyButton.js";
+import { download } from "./download.js";
 import { Modal } from "./Modal.js";
 import { useStudio } from "./store.js";
 
@@ -59,19 +61,31 @@ function BomPanel({ onClose }: { onClose: () => void }) {
   const rev = useStudio((s) => s.graph?.rev);
 
   useEffect(() => {
+    let live = true;
     fetch(`${API}/api/project/bom`)
-      .then(async (r) => (r.ok ? setBom((await r.json()) as Bom) : setError(((await r.json()) as { error?: string }).error ?? `HTTP ${r.status}`)))
-      .catch((e: Error) => setError(e.message));
+      .then(async (r) => {
+        const body = (await r.json()) as Bom & { error?: string };
+        if (!live) return;
+        if (!r.ok) return setError(body.error ?? `HTTP ${r.status}`);
+        setBom(body);
+        setError(null);
+      })
+      .catch((e: Error) => live && setError(e.message));
+    return () => {
+      live = false;
+    };
   }, [rev]);
+
+  const save = async (path: string, fallbackName: string) => setError(await download(path, fallbackName));
 
   return (
     <Modal label="bill of materials" onClose={onClose}>
       <div className="modal__head">
         <h2 className="modal__title">Bill of materials</h2>
         <span className="modal__actions">
-          <a className="btn btn--quiet btn--tiny" href={`${API}/api/project/bom?format=csv`} download>
+          <BusyButton onClick={() => save("/api/project/bom?format=csv", "bom.csv")} busyLabel="CSV…">
             CSV
-          </a>
+          </BusyButton>
           <button className="btn btn--quiet btn--tiny" onClick={onClose}>
             close
           </button>
@@ -130,9 +144,12 @@ function BomPanel({ onClose }: { onClose: () => void }) {
                 <td className="bom__num">×{r.qty}</td>
                 <td>
                   {r.vendorPackage ? (
-                    <a className="btn btn--quiet btn--tiny" href={`${API}${r.vendorPackage}`} download>
+                    <BusyButton
+                      onClick={() => save(r.vendorPackage!, `${r.nodeId}-vendor.zip`)}
+                      busyLabel="packaging…"
+                    >
                       vendor package
-                    </a>
+                    </BusyButton>
                   ) : (
                     <span className="bom__sub">gates not passed yet</span>
                   )}

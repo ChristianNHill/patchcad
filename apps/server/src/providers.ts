@@ -98,9 +98,9 @@ type Config = z.infer<typeof ConfigSchema>;
 export class CompositeProvider implements LlmProvider {
   id = "composite";
   constructor(
-    private routes: Record<LlmRole, LlmProvider>,
+    readonly routes: Record<LlmRole, LlmProvider>,
     /** Takes any call carrying an image, whatever its role. */
-    private vision?: LlmProvider,
+    readonly vision?: LlmProvider,
   ) {
     const ids = [...new Set(Object.values(routes).map((p) => p.id))];
     const extra = vision && !ids.includes(vision.id) ? `+vision:${vision.id}` : "";
@@ -116,6 +116,22 @@ export class CompositeProvider implements LlmProvider {
     if (this.vision && req.messages.some((m) => m.images?.length)) return this.vision.complete(req);
     return this.routes[req.role].complete(req);
   }
+}
+
+export type LlmRoute = LlmRole | "vision";
+
+/** Providers that bill real money per call. A subscription's cost is list-price
+ *  attribution, and a local model's is zero. */
+const PAID = new Set(["claude", "openrouter"]);
+
+/** The routes whose calls are billed in real money, so the studio can say which
+ *  of its dollar figures are spend and which are attribution. */
+export function paidRoutes(provider: LlmProvider): LlmRoute[] {
+  const roles: LlmRole[] = ["architect", "generator", "repair", "classifier"];
+  if (!(provider instanceof CompositeProvider)) return PAID.has(provider.id) ? roles : [];
+  const paid: LlmRoute[] = roles.filter((r) => PAID.has(provider.routes[r].id));
+  if (provider.vision && PAID.has(provider.vision.id)) paid.push("vision");
+  return paid;
 }
 
 function buildEntry(name: z.infer<typeof ProviderName>, config: Config): LlmProvider {
@@ -280,17 +296,26 @@ export async function resolveProvider(
 }
 
 /** The per-cook cap from the config file. Read on its own because it applies
- *  whichever provider resolution picked, env keys included. */
+ *  whichever provider resolution picked, env keys included, and parsed on its
+ *  own because a cap must not vanish with an unrelated typo elsewhere in the
+ *  file. Throws when a cap is set but unreadable: the caller refuses to cook
+ *  rather than run uncapped. */
 export async function readMaxUsd(
   configPath = path.join(os.homedir(), ".patchcad", "config.json"),
 ): Promise<number | undefined> {
   if (!existsSync(configPath)) return undefined;
+  let raw: { maxUsd?: unknown };
   try {
-    return ConfigSchema.parse(JSON.parse(await readFile(configPath, "utf8"))).maxUsd;
-  } catch {
-    // resolveProvider already warns about an invalid file.
-    return undefined;
+    raw = JSON.parse(await readFile(configPath, "utf8"));
+  } catch (err) {
+    throw new Error(`${configPath} is not valid JSON, so its maxUsd cannot be read: ${(err as Error).message}`);
   }
+  if (raw.maxUsd === undefined) return undefined;
+  const parsed = ConfigSchema.shape.maxUsd.safeParse(raw.maxUsd);
+  if (!parsed.success) {
+    throw new Error(`maxUsd in ${configPath} must be a positive number of dollars, got ${JSON.stringify(raw.maxUsd)}`);
+  }
+  return parsed.data;
 }
 
 /** The mesh-generation entry, or null when there is none. An invalid entry

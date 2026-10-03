@@ -61,13 +61,17 @@ export interface LlmUsage {
 }
 
 /** A failed call that still consumed tokens. Providers throw this so the cook
- *  can bill it; a plain Error left real spend out of node.cost. */
+ *  can bill it; a plain Error left real spend out of node.cost. Every provider
+ *  must throw THIS class: cook and spend match it with `instanceof`, so a
+ *  provider-local copy silently drops the usage. */
 export class LlmCallError extends Error {
   constructor(
     message: string,
     readonly usage?: LlmUsage,
+    options?: { cause?: unknown },
   ) {
-    super(message);
+    super(message, options);
+    this.name = "LlmCallError";
   }
 }
 

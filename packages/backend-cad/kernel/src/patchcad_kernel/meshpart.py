@@ -24,7 +24,6 @@ from typing import Any
 import numpy as np
 import trimesh
 
-
 TESSELLATION_LIMIT = 500_000  # faces; imports beyond this get decimated
 
 # Alignment pegs (joint mode "pegs"): the PEG IS SMALLER THAN ITS SOCKET —
@@ -96,17 +95,18 @@ class MeshPart:
         # (process=True) so the result is a closed volume manifold can boolean.
         mesh = to_trimesh(other, 0.05)
         if not mesh.is_watertight:
+            mesh = mesh.copy()  # to_trimesh's mesh is shared for the job
             mesh.merge_vertices(merge_tex=True, merge_norm=True)
             trimesh.repair.fill_holes(mesh)
         return mesh
 
-    def __sub__(self, other: Any) -> "MeshPart":
+    def __sub__(self, other: Any) -> MeshPart:
         return MeshPart(_boolean(self.mesh, "difference", self._coerce(other)))
 
-    def __add__(self, other: Any) -> "MeshPart":
+    def __add__(self, other: Any) -> MeshPart:
         return MeshPart(_boolean(self.mesh, "union", self._coerce(other)))
 
-    def __and__(self, other: Any) -> "MeshPart":
+    def __and__(self, other: Any) -> MeshPart:
         return MeshPart(_boolean(self.mesh, "intersection", self._coerce(other)))
 
     def export_glb(self, path: str) -> None:
@@ -126,19 +126,32 @@ def to_trimesh(shape: Any, tol: float, process: bool = True) -> trimesh.Trimesh:
     `isinstance(.mesh, Trimesh)`) — isinstance, never hasattr, because a
     build123d shape carries a .mesh METHOD.
 
-    A MeshPart hands over its OWN mesh, not a copy: callers that transform or
-    repair must copy first. build123d shapes tessellate at `tol` and are welded
-    (process=True) unless the caller only wants the raw arrays — OCP emits
-    vertices duplicated per face, and a boolean or a watertight flag read off
-    an unwelded shell is nonsense."""
+    Never a private copy: a MeshPart hands over its OWN mesh, and a build123d
+    shape's mesh is memoized per (shape, tol) for the job, because one verify
+    tessellated the same part at 0.2 three times (printability, min_wall, G4c).
+    Callers that transform or repair must copy first. build123d shapes are
+    welded (process=True) unless the caller only wants the raw arrays — OCP
+    emits vertices duplicated per face, and a boolean or a watertight flag read
+    off an unwelded shell is nonsense."""
     if isinstance(shape, MeshPart):
         return shape.mesh
-    verts, faces = shape.tessellate(tol)
-    return trimesh.Trimesh(
-        vertices=[(v.X, v.Y, v.Z) for v in verts],
-        faces=[tuple(f) for f in faces],
-        process=process,
-    )
+    hit = _MESH_MEMO.get((id(shape), tol, process))
+    if hit is None or hit[0] is not shape:
+        verts, faces = shape.tessellate(tol)
+        mesh = trimesh.Trimesh(
+            vertices=[(v.X, v.Y, v.Z) for v in verts],
+            faces=[tuple(f) for f in faces],
+            process=process,
+        )
+        hit = _MESH_MEMO[(id(shape), tol, process)] = (shape, mesh)
+    return hit[1]
+
+
+_MESH_MEMO: dict[tuple[int, float, bool], tuple[Any, trimesh.Trimesh]] = {}
+
+
+def reset_mesh_memo() -> None:
+    _MESH_MEMO.clear()
 
 
 # --- loading ----------------------------------------------------------------
@@ -159,6 +172,7 @@ def load_mesh_file(filename: str, data: bytes) -> list[trimesh.Trimesh]:
     if ext in (".step", ".stp"):
         # B-rep in → tessellate each solid so segmentation is uniform mesh math.
         import tempfile
+
         from build123d import import_step
 
         with tempfile.NamedTemporaryFile(suffix=".step", delete=False) as f:
@@ -224,7 +238,7 @@ def _area_profile(solid: trimesh.Trimesh, axis: int, stations: int = 64) -> tupl
     if len(analysis.faces) > 40_000:
         try:
             analysis = analysis.simplify_quadric_decimation(face_count=40_000)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110 — analysis only: the full mesh is a slower, correct fallback
             pass
     lo, hi = float(solid.bounds[0][axis]), float(solid.bounds[1][axis])
     span = hi - lo
@@ -383,7 +397,7 @@ def _probed_face_size(solid: trimesh.Trimesh, anchor: np.ndarray, axis: int, cap
         try:
             if solid.contains(arr - off).all() and solid.contains(arr + off).all():
                 return round(s * 2, 2)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110 — an unclassifiable grid tries the next, smaller size
             pass
     return 0.6
 
@@ -578,9 +592,9 @@ def segment(
         spans = _crossing_spans(solid, axis, plane)
         u, v = [a for a in range(3) if a != axis]
 
-        def to3(u_val: float, v_val: float, _u: int = u, _v: int = v) -> np.ndarray:
+        def to3(u_val: float, v_val: float, _u: int = u, _v: int = v, _plane: float = plane) -> np.ndarray:
             pt = np.zeros(3)
-            pt[axis] = plane
+            pt[axis] = _plane
             pt[_u] = u_val
             pt[_v] = v_val
             return pt
@@ -819,6 +833,14 @@ def run_mesh_fit(job: dict[str, Any]) -> dict[str, Any]:
     mesh.apply_translation(center - mesh.bounds.mean(axis=0))
 
     notes: list[str] = []
+    # Every flat's push is measured on the fitted mesh first, the mesh moves
+    # ONCE, and only then is anything cut. Pushing and cutting flat by flat let
+    # the second flat of an opposite pair drag the first cut off its plane: a
+    # sphere with flats at z=±10 came out with its top at z=8. Two flats facing
+    # apart on one axis cannot both be reached by a shift, so that axis is
+    # stretched instead, each extreme landing its own depth past its plane.
+    cuts: list[tuple[dict[str, Any], np.ndarray, int, float]] = []
+    targets: dict[int, dict[float, float]] = {}
     for flat in job.get("flats") or []:
         origin = np.asarray(flat["origin"], dtype=float)
         normal = np.asarray(flat["normal"], dtype=float)
@@ -829,7 +851,7 @@ def run_mesh_fit(job: dict[str, Any]) -> dict[str, Any]:
             continue
         sign = float(np.sign(normal[axis]))
         size = float(flat.get("size", 0.0))
-        # Push the mesh's extreme on that side past the plane, shallowest first.
+        # How far the mesh's extreme on that side must pass the plane, shallowest first.
         extreme = mesh.bounds[1 if sign > 0 else 0][axis]
         depth = FLAT_CUT_STEPS_MM[-1]
         for step in FLAT_CUT_STEPS_MM:
@@ -838,9 +860,19 @@ def run_mesh_fit(job: dict[str, Any]) -> dict[str, Any]:
             if _flat_width(mesh, probe, normal) >= size:
                 depth = step
                 break
-        shift = np.zeros(3)
-        shift[axis] = origin[axis] + sign * depth - extreme
-        mesh.apply_translation(shift)
+        targets.setdefault(axis, {})[sign] = origin[axis] + sign * depth
+        cuts.append((flat, origin, axis, sign))
+    move = np.eye(4)
+    for axis, ends in targets.items():
+        lo, hi = mesh.bounds[0][axis], mesh.bounds[1][axis]
+        if len(ends) == 2:
+            k = (ends[1.0] - ends[-1.0]) / max(hi - lo, 1e-9)
+            move[axis, axis], move[axis, 3] = k, ends[-1.0] - k * lo
+        else:
+            (sign, end), = ends.items()
+            move[axis, 3] = end - (hi if sign > 0 else lo)
+    mesh.apply_transform(move)
+    for flat, origin, axis, sign in cuts:
         bounds = mesh.bounds.copy()
         bounds[0] -= 1.0
         bounds[1] += 1.0
@@ -896,6 +928,10 @@ def load_import_part(import_dir: str, name: str, scale: float = 1.0) -> MeshPart
     build(p) body for imported pieces. Scale is the T0 dimension surface."""
     safe = os.path.basename(name)
     path = os.path.join(import_dir, safe)
+    # trimesh says ValueError("string is not a file"); registry code falls back
+    # from a missing vendor STEP to the parametric model on FileNotFoundError only.
+    if not os.path.exists(path):
+        raise FileNotFoundError(path)
     # process=False: the stored PLY is manifold-clean; trimesh's default vertex
     # merging fuses near-duplicates on dense organic meshes and breaks
     # watertightness (real 300k-face STL regression).

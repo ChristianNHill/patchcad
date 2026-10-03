@@ -1,7 +1,11 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   BEARING_DIAMETER,
+  FDM_FIT_BANDS_MM,
   FDM_FIT_CUT_MM,
+  MACHINED_FIT_BANDS_MM,
+  MACHINED_FIT_CUT_MM,
   FDM_SLIP_FIT_MM,
   fitCut,
   SEAT_POSE,
@@ -12,6 +16,7 @@ import {
   threadEngagementVolume,
 } from "./grounding.js";
 import { METRIC } from "./registry.js";
+import { HARDWARE_PORT_TYPES } from "./index.js";
 
 /** Each of these numbers was measured in this repo before it was written down.
  *  The tests assert the measurement, not the arithmetic. */
@@ -76,6 +81,8 @@ describe("grounded facts match what the probes and gates actually measured", () 
   it("returns an engagement length for the kinds a screw threads into, and null otherwise", () => {
     expect(engagementLength("nut", "M4")).toBe(METRIC.M4!.nutH);
     expect(engagementLength("insert", "M4")).toBe(METRIC.M4!.insertL);
+    // The part's own family: a short insert engages 4mm, not the standard 8.1.
+    expect(engagementLength("insert", "M4", "heatset_short")).toBe(4);
     expect(engagementLength("fastener", "M4")).toBeNull();
   });
 
@@ -112,6 +119,8 @@ describe("fit cut targets for the generator", () => {
     expect(cut("HUB_BORE", { diameter: 5 })).toBe("cut Ø 5.15 (diameter 5 + 0.15, slip)");
     expect(cut("MOTOR_MOUNT", { pilot_diameter: 22, hole_diameter: 3.4, pcd: 43.84, count: 4 })).toBe("cut Ø 22.15 (pilot_diameter 22 + 0.15, slip)");
     expect(cut("INSERT_POCKET", { diameter: 4, depth: 5.8 })).toContain("depth + 0.3");
+    expect(cut("THREADED_HOLE", { thread: "M4", depth: 8 })).toBe("cut Ø 3.3 (tap drill for M4)");
+    expect(cut("THREADED_HOLE", { thread: "M99" })).toBeNull();
     expect(cut("FLAT_FACE", {})).toBeNull();
   });
 
@@ -123,5 +132,48 @@ describe("fit cut targets for the generator", () => {
 
   it("falls back to the rule when a size is an unresolved expression", () => {
     expect(cut("DOWEL_HOLE", { diameter: "param(x.d)", fit: "slip" })).toBe("cut Ø diameter + 0.15");
+  });
+});
+
+/** The cut constants are claims about gates.py: each must be its band's
+ *  midpoint, and the bands must be the ones the probes grade against. */
+describe("fit bands agree with the kernel", () => {
+  const gates = readFileSync(new URL("../kernel/src/patchcad_kernel/gates.py", import.meta.url), "utf8");
+  const pyBands = (name: string) => {
+    const m = gates.match(new RegExp(`^${name} = \\{([^}]*)\\}`, "m"));
+    if (!m) throw new Error(`${name} not found in gates.py`);
+    return Object.fromEntries(
+      [...m[1]!.matchAll(/"(\w+)": \(([-\d.]+), ([-\d.]+)\)/g)].map((x) => [x[1]!, [Number(x[2]), Number(x[3])]]),
+    );
+  };
+  const slop = Number(gates.match(/^NUT_TRAP_SLOP_MM = ([\d.]+)/m)?.[1]);
+
+  it("FDM and machined bands match gates.py FIT_BANDS and MACHINED_FIT_BANDS", () => {
+    for (const [ts, py] of [
+      [FDM_FIT_BANDS_MM, pyBands("FIT_BANDS")],
+      [MACHINED_FIT_BANDS_MM, pyBands("MACHINED_FIT_BANDS")],
+    ] as const) {
+      const { nutTrapAf, ...probed } = ts;
+      expect(probed).toEqual(py);
+      expect(nutTrapAf).toEqual([0, slop]);
+    }
+  });
+
+  it("cuts every fit at its band midpoint", () => {
+    for (const [cuts, bands] of [
+      [FDM_FIT_CUT_MM, FDM_FIT_BANDS_MM],
+      [MACHINED_FIT_CUT_MM, MACHINED_FIT_BANDS_MM],
+    ] as const) {
+      for (const [fit, [lo, hi]] of Object.entries(bands)) {
+        expect(cuts[fit as keyof typeof cuts], fit).toBeCloseTo((lo + hi) / 2, 9);
+      }
+    }
+  });
+
+  it("HARDWARE_PORT_TYPES matches gates.py HARDWARE_PROBES", () => {
+    const m = gates.match(/^HARDWARE_PROBES = \{([^}]*)\}/m);
+    expect(m, "HARDWARE_PROBES not found in gates.py").toBeTruthy();
+    const keys = [...m![1]!.matchAll(/"(\w+)":/g)].map((x) => x[1]!).sort();
+    expect([...HARDWARE_PORT_TYPES].sort()).toEqual(keys);
   });
 });

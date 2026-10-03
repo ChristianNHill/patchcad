@@ -17,9 +17,17 @@ import type { CadContractPayload } from "./index.js";
 import type { ClashResult } from "./kernel.js";
 import { METRIC, skuOf } from "./registry.js";
 import { familyDims } from "./catalog.js";
-import { sourcingOf } from "./sourcing.js";
+import { isMachined, sourcingOf } from "./sourcing.js";
 import { resolveDim } from "./bindings.js";
-import { FDM_SLIP_FIT_MM, engagementLength, majorDiameter, threadEngagementVolume } from "./grounding.js";
+import { jointOwner } from "./expand.js";
+import {
+  FDM_FIT_BANDS_MM,
+  FDM_SLIP_FIT_MM,
+  MACHINED_FIT_BANDS_MM,
+  engagementLength,
+  majorDiameter,
+  threadEngagementVolume,
+} from "./grounding.js";
 
 /** Mated parts further apart than this at the mate point are not touching.
  *  Above the clash mesh's 0.1mm chord deviation only on curved approaches,
@@ -46,7 +54,7 @@ const CONTACT_RADIUS_MM = 5;
 const THREADED_PORTS = new Set(["THREADED_HOLE", "SCREW_BOSS"]);
 
 /** The kernel's diameter aliases (gates.py `_port_diameter`). */
-const DIAMETER_KEYS = ["diameter", "dia", "holeDia", "hole_diameter", "d", "boreDia"];
+export const DIAMETER_KEYS = ["diameter", "dia", "holeDia", "hole_diameter", "d", "boreDia"];
 
 type Port = CadContractPayload["ports"][number];
 
@@ -74,22 +82,32 @@ function diameterOf(graph: GraphDoc, n: NodeRecord, port: Port): { d: number; me
   }
 }
 
+/** A screw's thread: its own param, else its SKU's (joint-minted screws name a sku). */
+function threadOf(screw: NodeRecord): string | undefined {
+  const thread = param(screw, "thread") ?? skuOf(screw)?.key;
+  return typeof thread === "string" && METRIC[thread] ? thread : undefined;
+}
+
 /** Overlap volume each pair of nodes is designed to share: the thread. */
 export function threadAllowances(graph: GraphDoc): { a: string; b: string; volume_mm3: number }[] {
   const out: { a: string; b: string; volume_mm3: number }[] = [];
   const screws = Object.values(graph.nodes).filter((n) => n.kind === "fastener");
   for (const screw of screws) {
-    // Joint-minted screws name a sku, not a thread.
-    const thread = param(screw, "thread") ?? skuOf(screw)?.key;
-    if (typeof thread !== "string" || !METRIC[thread]) continue;
+    const thread = threadOf(screw);
+    if (!thread) continue;
+    const owner = jointOwner(graph, screw.id);
     // 1.5x, because the engagement can be longer than the table's nominal when
     // a screw runs past a nut, and a thread is the only thing that overlaps at
     // all at this scale.
     const allow = (len: number) => threadEngagementVolume(thread, len) * 1.5;
     // A nut or insert is matched by KIND, not by edge: a through-bolt is
     // wired screw→plate-a and nut→plate-b, so the two never share a mate.
+    // Joint-minted hardware is scoped to its own joint, so a screw against
+    // another joint's nut is still clash-checked.
     for (const m of Object.values(graph.nodes)) {
-      const len = engagementLength(m.kind, thread);
+      const mOwner = jointOwner(graph, m.id);
+      if ((owner || mOwner) && owner !== mOwner) continue;
+      const len = engagementLength(m.kind, thread, skuOf(m)?.family);
       if (len != null) out.push({ a: screw.id, b: m.id, volume_mm3: allow(len) });
     }
     // A tapped hole or a boss pilot is matched by the mate that seats the
@@ -107,6 +125,10 @@ export function threadAllowances(graph: GraphDoc): { a: string; b: string; volum
   }
   return out;
 }
+
+/** How far a gear pair's centre may sit inside m·(z1+z2)/2 and still be
+ *  meshing, not clashing: measured, see hardwareAllowances. */
+export const GEAR_MESH_BAND_MM = 0.1;
 
 /** Diameter interference a press fit may carry: the gate's press band is
  *  up to 0.1 under the part (gates.py FIT_BANDS). */
@@ -160,6 +182,8 @@ export function hardwareAllowances(graph: GraphDoc): { a: string; b: string; vol
         push(hostId, partId, ring(Number.isFinite(od) ? od : p("diameter") + 2 * KNURL_MM, p("diameter"), p("depth")));
       } else if (port.type === "BEARING_SEAT" && press && part.kind === "bearing") {
         push(hostId, partId, ring(p("od"), p("od") - PRESS_INTERFERENCE_MM, p("width")));
+      } else if (port.type === "LINEAR_BEARING_SEAT" && press && part.kind === "linear_bearing") {
+        push(hostId, partId, ring(p("od"), p("od") - PRESS_INTERFERENCE_MM, p("length")));
       } else if (port.type === "DOWEL_HOLE" && press && part.kind === "dowel") {
         push(hostId, partId, ring(p("diameter"), p("diameter") - PRESS_INTERFERENCE_MM, p("depth")));
       } else if (port.type === "NUT_TRAP" && part.kind === "nut") {
@@ -175,6 +199,15 @@ export function hardwareAllowances(graph: GraphDoc): { a: string; b: string; vol
     const bore = hwDim(bearing, "bore");
     const width = hwDim(bearing, "width");
     for (const shaft of shafts) push(shaft.id, bearing.id, ring(bore + PRESS_INTERFERENCE_MM, bore, width));
+  }
+  // A spur pair in mesh touches along its flanks by design. Two exact
+  // involutes at m·(z1+z2)/2 share nothing; brought GEAR_MESH_BAND_MM closer
+  // (a backlash band's worth) an m1 × 8 pair shares 0.14mm³, and 0.3mm closer
+  // 1.7mm³, while a pair half a tooth out of phase shares 35mm³. So the pair
+  // may share what the band makes and nothing like a wrong phase or centre.
+  for (const j of graph.joints ?? []) {
+    const [a, b] = [graph.nodes[`${j.id}_motor_gear`], graph.nodes[`${j.id}_driven_gear`]];
+    if (a && b) push(a.id, b.id, 0.2 * GEAR_MESH_BAND_MM * hwDim(a, "module") * hwDim(a, "thickness"));
   }
   return out;
 }
@@ -233,11 +266,10 @@ export function fitFindings(graph: GraphDoc): CheckFinding[] {
       // Unmeasured, the seat is taken at the middle of its band, so what is
       // checked is the bearing's OD against the seat's declared one.
       inner = hwDim(bearing.n, "od");
-      // Radial, so half the Ø band: FDM press d-0.1..d, slip d+0.05..d+0.25;
-      // machined press d-0.05..d, slip d..d+0.05 (gates.py MACHINED_FIT_BANDS).
-      const machined = ["cnc", "sheet_metal", "laser_cut"].includes(sourcingOf(seat.n).process ?? "");
-      const press = seat.port!.params.fit === "press";
-      [expected, tol] = machined ? (press ? [-0.0125, 0.0125] : [0.0125, 0.0125]) : press ? [-0.025, 0.025] : [0.075, 0.05];
+      // Radial, so half the Ø band: centred on its midpoint, half its width.
+      const bands = isMachined(sourcingOf(seat.n).process) ? MACHINED_FIT_BANDS_MM : FDM_FIT_BANDS_MM;
+      const [lo, hi] = bands[seat.port!.params.fit === "press" ? "press" : "slip"];
+      [expected, tol] = [Math.round(((lo + hi) / 4) * 1e4) / 1e4, Math.round(((hi - lo) / 4) * 1e4) / 1e4];
       outer = diameterOf(graph, seat.n, seat.port!) ?? { d: num(graph, seat.port!.params.od) + 2 * expected, measured: false };
       if (!Number.isFinite(inner) || !Number.isFinite(outer.d)) continue;
       what = `bearing ${bearing.n.id} OD${inner} in ${seat.n.id}.${seat.port!.name}`;
@@ -258,8 +290,8 @@ export function fitFindings(graph: GraphDoc): CheckFinding[] {
       expected = FDM_SLIP_FIT_MM / 2;
       what = `${shaft.n.id}.${shaft.port!.name} Ø${inner.toFixed(2)} in ${bore.n.id}.${bore.port!.name}`;
     } else if (screw && hole && screw !== hole) {
-      const thread = param(screw.n, "thread");
-      if (typeof thread !== "string" || !METRIC[thread]) continue;
+      const thread = threadOf(screw.n);
+      if (!thread) continue;
       outer = diameterOf(graph, hole.n, hole.port!);
       if (!outer) continue;
       inner = majorDiameter(thread);

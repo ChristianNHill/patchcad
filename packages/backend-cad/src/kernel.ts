@@ -334,8 +334,12 @@ export class KernelClient {
   async start(timeoutMs = 180_000): Promise<void> {
     if ((await this.health()).ok) return; // reuse an externally started kernel
 
+    // Set when the child dies before it is healthy, so the wait below fails
+    // now instead of polling to the deadline. A missing `uv` is an 'error'
+    // event, which unhandled would crash the server.
+    let failed: Error | null = null;
     if (!this.external) {
-      this.child = spawn("uv", ["run", "patchcad-kernel"], {
+      const child = spawn("uv", ["run", "patchcad-kernel"], {
         cwd: KERNEL_DIR,
         stdio: ["ignore", "inherit", "inherit"],
         env: { ...process.env, PATCHCAD_KERNEL_PORT: String(this.port) },
@@ -344,15 +348,22 @@ export class KernelClient {
         // holding the port.
         detached: true,
       });
-      this.child.on("exit", (code) => {
+      this.child = child;
+      child.once("error", (err) => {
+        failed ??= new Error(`could not start the cad kernel: ${err.message} (is uv installed?)`);
+        if (this.child === child) this.child = null;
+      });
+      child.on("exit", (code) => {
         if (code !== 0 && code !== null) console.warn(`[patchcad] cad kernel exited with code ${code}`);
-        this.child = null;
+        failed ??= new Error(`cad kernel exited with code ${code} before it became healthy`);
+        if (this.child === child) this.child = null;
       });
     }
 
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       if ((await this.health()).ok) return;
+      if (failed) throw failed;
       await new Promise((r) => setTimeout(r, 1000));
     }
     throw new Error(`cad kernel did not become healthy within ${timeoutMs / 1000}s (is uv installed?)`);
@@ -449,7 +460,10 @@ export class KernelClient {
       allow?: { a: string; b: string; volume_mm3: number }[];
       contacts?: { edge: string; a: string; b: string; at: number[]; radius: number }[];
       /** Kinematic joints: their moving nodes are swept through `limits`. */
-      sweeps?: { joint: string; type: "revolute" | "prismatic"; origin: number[]; direction: number[]; limits: [number, number]; moving: string[] }[];
+      sweeps?: {
+        joint: string; type: "revolute" | "prismatic"; origin: number[]; direction: number[]; limits: [number, number]; moving: string[];
+        coupled?: { origin: number[]; direction: number[]; ratio: number; moving: string[] }[];
+      }[];
     } = {},
   ): Promise<ClashResult> {
     await this.ready();

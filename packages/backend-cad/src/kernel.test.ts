@@ -48,6 +48,22 @@ describe("KernelClient start memoization", () => {
     await expect(ready(k)).resolves.toBeUndefined();
     expect(attempts).toBe(2);
   });
+
+  it("rejects the start, rather than crashing, when uv cannot be spawned", async () => {
+    // No `uv` on PATH and nothing listening: the spawn's 'error' event had no
+    // listener and took the whole server down.
+    const path = process.env.PATH;
+    const url = process.env.PATCHCAD_KERNEL_URL;
+    process.env.PATH = "/nonexistent";
+    delete process.env.PATCHCAD_KERNEL_URL;
+    try {
+      const k = new KernelClient(1);
+      await expect(k.start(10_000)).rejects.toThrow(/could not start the cad kernel.*uv/);
+    } finally {
+      process.env.PATH = path;
+      if (url !== undefined) process.env.PATCHCAD_KERNEL_URL = url;
+    }
+  });
 });
 
 /** A stub kernel: counts builds and answers with a canned result. */
@@ -163,6 +179,25 @@ describe("CadBackend execute + verify", () => {
     const backend = new CadBackend({ kernel: pass.kernel });
     await backend.execute(node, ws, graph);
     expect((await backend.verify(node, graph, ws)).score).toBe(5);
+  });
+
+  it("passes a G4c DFM failure through execute to verify, with its port measurements", async () => {
+    // Not a contract stage, it came back from execute as a G0-G2 failure and
+    // the port probes measured in the same build were dropped.
+    const dfm: KernelResult = {
+      ok: false,
+      stage: "G4c",
+      error: 'process cnc "internal_corner": tightest radius 0.00 mm',
+      hint: "",
+      failures: [{ stage: "G4c", error: 'process cnc "internal_corner": tightest radius 0.00 mm', hint: "" }],
+      measurements: { volume_mm3: 1, area_mm2: 1, solids: 1, bbox: { min: [], max: [], size: [] }, ports: [{ key: "a", measured_diameter: 4 }] },
+    } as unknown as KernelResult;
+    const { kernel, calls } = stubKernel(dfm);
+    const backend = new CadBackend({ kernel });
+    expect((await backend.execute(node, ws, graph)).ok).toBe(true);
+    const verify = await backend.verify(node, graph, ws);
+    expect(calls).toHaveLength(1);
+    expect(verify).toMatchObject({ ok: false, stage: "G4c" });
   });
 
   it("sends the contract with execute, envelope included for a generated part", async () => {

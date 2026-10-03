@@ -25,7 +25,11 @@ VIEW_ALIASES = {"front": "front", "side": "right", "right": "right", "back": "ba
 
 
 def _view(label: str) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
-    name = VIEW_ALIASES.get(label, "front")
+    # Unknown labels are refused: falling back to "front" scored a "left"
+    # reference against the front projection and blamed parts for the mismatch.
+    if label not in VIEW_ALIASES:
+        raise ValueError(f"unknown reference view {label!r}; one of {', '.join(VIEW_ALIASES)}")
+    name = VIEW_ALIASES[label]
     for n, eye, up in VIEWS:
         if n == name:
             return eye, up

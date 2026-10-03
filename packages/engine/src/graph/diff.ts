@@ -23,13 +23,19 @@ export interface ContractDiff {
   notes: string[];
 }
 
-/** The shape signature of a contract: what neighbors structurally depend on. */
-function shapeOf(c: Contract) {
+/** The shape signature of a contract: what neighbors structurally depend on.
+ *  `advisoryKeys` are payload keys no neighbor's code reads
+ *  (`DomainBackend.planning.advisoryPayloadKeys`). */
+function shapeOf(c: Contract, advisoryKeys: string[]) {
+  let payload = c.payload;
+  if (advisoryKeys.length > 0 && payload && typeof payload === "object" && !Array.isArray(payload)) {
+    payload = Object.fromEntries(Object.entries(payload).filter(([k]) => !advisoryKeys.includes(k)));
+  }
   return {
     provides: [...c.provides].sort((a, b) => a.key.localeCompare(b.key)).map((p) => ({ key: p.key, type: p.type })),
     requires: [...c.requires].sort((a, b) => a.key.localeCompare(b.key)).map((p) => ({ key: p.key, type: p.type })),
     params: [...c.params].sort((a, b) => a.name.localeCompare(b.name)).map((p) => ({ name: p.name, type: p.type })),
-    payload: c.payload,
+    payload,
   };
 }
 
@@ -60,10 +66,10 @@ function splitPorts(payload: unknown): { ports: Map<string, unknown>; rest: unkn
   return { ports, rest };
 }
 
-export function diffContract(before: Contract, after: Contract): ContractDiff {
+export function diffContract(before: Contract, after: Contract, advisoryKeys: string[] = []): ContractDiff {
   const notes: string[] = [];
-  const beforeShape = shapeOf(before);
-  const afterShape = shapeOf(after);
+  const beforeShape = shapeOf(before, advisoryKeys);
+  const afterShape = shapeOf(after, advisoryKeys);
 
   const shapeChanged = hashValue(beforeShape) !== hashValue(afterShape);
   const valueChanged = contractHash(before) !== contractHash(after);

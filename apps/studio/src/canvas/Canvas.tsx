@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   Controls,
@@ -18,10 +18,15 @@ export function Canvas({ graph }: { graph: GraphDoc }) {
   const selectNode = useStudio((s) => s.selectNode);
   const selectedNodeId = useStudio((s) => s.selectedNodeId);
   const [nodes, setNodes] = useState<PatchNodeType[]>([]);
+  /** What the canvas itself last selected, and the last selection that came
+   *  from elsewhere (a viewport pick) and has not been echoed back yet. */
+  const canvasPick = useRef<string | null>(null);
+  const outsidePick = useRef<string | null>(null);
 
   // Selection can start in the viewport (click a part), so the canvas follows
   // the store rather than only the other way round.
   useEffect(() => {
+    outsidePick.current = selectedNodeId !== canvasPick.current ? selectedNodeId : null;
     setNodes((prev) =>
       prev.some((n) => !!n.selected !== (n.id === selectedNodeId))
         ? prev.map((n) => ({ ...n, selected: n.id === selectedNodeId }))
@@ -105,11 +110,18 @@ export function Canvas({ graph }: { graph: GraphDoc }) {
       // NOT onNodeClick: React Flow's keyboard handler selects on Enter/Space
       // but never calls onClick, so the whole inspector was mouse-only.
       onSelectionChange={({ nodes: sel }) => {
-        // Only a selection, never an empty one: React Flow reports an empty
-        // selection while it catches up to one the viewport just made, and
-        // acting on it cleared every 3D pick. Deselect is the pane click below.
-        const id = sel[0]?.id;
-        if (id && id !== useStudio.getState().selectedNodeId) void selectNode(id);
+        const id = sel[0]?.id ?? null;
+        const current = useStudio.getState().selectedNodeId;
+        // React Flow reports an empty selection while it catches up to one the
+        // viewport just made; acting on that echo cleared every 3D pick. Any
+        // other empty selection (Esc, a marquee over nothing) is a deselect.
+        if (!id && outsidePick.current !== null && outsidePick.current === current) {
+          outsidePick.current = null;
+          return;
+        }
+        if (id === current) return;
+        canvasPick.current = id;
+        void selectNode(id);
       }}
       onPaneClick={() => void selectNode(null)}
       // React Flow's own delete path is disabled — deletion is a server op with

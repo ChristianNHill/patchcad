@@ -1,4 +1,5 @@
 import type { GraphDoc, NodeCost } from "@patchcad/shared";
+import type { LlmRoute } from "./store";
 
 /** Everything this project has cost: every node's own spend plus the ledger
  *  (the plan, classifications, renegotiations, deleted nodes). The chip used to
@@ -25,8 +26,15 @@ export function projectSpend(graph: Pick<GraphDoc, "nodes"> & { ledger?: GraphDo
   return { calls, tokens, usd };
 }
 
-/** The subscription provider bills a flat plan; its dollar figures are what
- *  the same tokens would cost at API list price, not money spent. */
-export function isListPrice(providerId: string | undefined): boolean {
-  return !!providerId?.includes("subscription");
+/** How the dollar figure was billed. "list": a subscription (or local)
+ *  priced at API list rate for attribution, not money spent. "mixed": some
+ *  routes, typically vision, go to an API key. An older server sends no
+ *  `paid`, so its id is all there is to go on. */
+export type Billing = "api" | "list" | "mixed";
+export function billing(provider: { id: string; paid?: LlmRoute[] } | null | undefined): Billing {
+  if (!provider) return "api";
+  if (!provider.paid) return provider.id.includes("subscription") ? "list" : "api";
+  if (provider.paid.length === 0) return "list";
+  const roles: LlmRoute[] = ["architect", "generator", "repair", "classifier"];
+  return roles.every((r) => provider.paid!.includes(r)) ? "api" : "mixed";
 }

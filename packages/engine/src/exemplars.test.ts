@@ -22,14 +22,19 @@ const contract = (over: Partial<Contract> = {}): Contract => ({
 
 const port = (key: string, type: string) => ({ key, type, description: "" });
 
-function graphOf(nodes: { id: string; hash: string }[]): GraphDoc {
+function graphOf(nodes: { id: string; hash: string; past?: string[] }[]): GraphDoc {
   return {
-    nodes: Object.fromEntries(nodes.map((n) => [n.id, { id: n.id, contract: contract({ hash: n.hash }) }])),
+    nodes: Object.fromEntries(
+      nodes.map((n) => [
+        n.id,
+        { id: n.id, contract: contract({ hash: n.hash }), history: (n.past ?? []).map((contractHash) => ({ contractHash })) },
+      ]),
+    ),
   } as unknown as GraphDoc;
 }
 
-const node = (hash: string, kind = "part", c: Partial<Contract> = {}): NodeRecord =>
-  ({ id: "target", kind, contract: contract({ hash, ...c }) }) as NodeRecord;
+const node = (hash: string, kind = "part", c: Partial<Contract> = {}, past: string[] = []): NodeRecord =>
+  ({ id: "target", kind, contract: contract({ hash, ...c }), history: past.map((contractHash) => ({ contractHash })) }) as unknown as NodeRecord;
 
 class StubLibrary implements NodeLibrary {
   listCalls: { backendId: string; kind?: string }[] = [];
@@ -71,6 +76,26 @@ describe("selectExemplars — hermeticity", () => {
       graph: graphOf([
         { id: "target", hash: "target-hash" },
         { id: "bracket", hash: "neighbor" },
+      ]),
+    });
+    expect(got.map((e) => e.title)).toEqual(["Other Project Plate"]);
+  });
+
+  it("never returns a neighbor's code captured under a contract it has since left", async () => {
+    // The bracket cooked as "bracket-v1", was captured, then its contract was
+    // edited. Its current hash no longer matches, but the code is still its.
+    const library = new StubLibrary([
+      entry({ contractHash: "bracket-v1", title: "Old Bracket" }),
+      entry({ contractHash: "self-v1", title: "Old Self" }),
+      entry({ contractHash: "elsewhere", title: "Other Project Plate" }),
+    ]);
+    const got = await selectExemplars({
+      library,
+      backendId: "cad",
+      node: node("target-hash", "part", {}, ["self-v1"]),
+      graph: graphOf([
+        { id: "target", hash: "target-hash" },
+        { id: "bracket", hash: "bracket-v2", past: ["bracket-v1"] },
       ]),
     });
     expect(got.map((e) => e.title)).toEqual(["Other Project Plate"]);

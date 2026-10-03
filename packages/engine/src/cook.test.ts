@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { GraphDoc, hashValue } from "@patchcad/shared";
-import { cookNodes, cookOne, type CookDeps } from "./cook.js";
+import { ASSEMBLY_STAGE, applyCheck, checkStatus, cookNodes, cookOne, type CookDeps } from "./cook.js";
 import { EventBus } from "./events.js";
 import { GraphStore } from "./graph/store.js";
 import type { DomainBackend, GenerateCtx, RepairCtx } from "./backend.js";
@@ -582,6 +582,29 @@ describe("cookOne regate (dirty wave)", () => {
     expect(deps.store.node("widget").history.map((h) => h.cause)).toEqual(["generate", "generate"]);
   });
 
+  it("regenerates when a person edited this node's own contract", async () => {
+    const deps = await cookedThenDirty();
+    deps.store.applyOp((g) => {
+      g.nodes.widget!.contract = { ...g.nodes.widget!.contract, summary: "a bigger widget" };
+    });
+    deps.store.recomputeAllContractHashes();
+    await cookOne(deps, "widget");
+    expect(deps.store.node("widget").history.map((h) => h.cause)).toEqual(["generate", "generate"]);
+  });
+
+  it("still regates a contract that plan expansion rewrote, with no LLM call", async () => {
+    const deps = await cookedThenDirty();
+    deps.store.applyOp((g) => {
+      g.nodes.widget!.contract = { ...g.nodes.widget!.contract, summary: "re-expanded" };
+    });
+    deps.store.recomputeAllContractHashes();
+    deps.store.applyOp((g) => {
+      g.nodes.widget!.expandedContractHash = g.nodes.widget!.contract.hash;
+    });
+    await cookOne({ ...deps, provider: trapProvider }, "widget");
+    expect(deps.store.node("widget").history.map((h) => h.cause)).toEqual(["generate", "regate"]);
+  });
+
   it("does not regate a failed draft that was never committed", async () => {
     const deps = makeDeps(makeGraph(), stubProvider, new MemoryLibrary());
     deps.store.applyOp((g) => {
@@ -595,11 +618,11 @@ describe("cookOne regate (dirty wave)", () => {
 describe("cookOne library outcome stats", () => {
   class StatsLibrary extends MemoryLibrary {
     reuses: string[] = [];
-    fixes: { stage: string; report: string; diff: string }[] = [];
+    fixes: { stage: string; report: string }[] = [];
     async recordReuse(_b: string, hash: string) {
       this.reuses.push(hash);
     }
-    async recordFix(_b: string, fix: { stage: string; report: string; diff: string }) {
+    async recordFix(_b: string, fix: { stage: string; report: string }) {
       this.fixes.push(fix);
     }
   }
@@ -622,7 +645,7 @@ describe("cookOne library outcome stats", () => {
     expect([...library.entries.values()][0]?.attemptsToPass).toBe(2);
   });
 
-  it("records the failure a repair cleared and what it changed", async () => {
+  it("records the failure a repair cleared, and no code", async () => {
     let n = 0;
     const provider: LlmProvider = {
       id: "stub",
@@ -632,7 +655,7 @@ describe("cookOne library outcome stats", () => {
     const h = makeRepairBackend({ failTimes: 1 });
     const library = new StatsLibrary();
     await cookOne(makeDeps(makeGraph(), provider, library, h.backend), "widget");
-    expect(library.fixes).toEqual([{ stage: "G2", report: "boom 1", diff: "- line 1\n+ line 2" }]);
+    expect(library.fixes).toEqual([{ stage: "G2", report: "boom 1" }]);
   });
 });
 
@@ -644,6 +667,7 @@ describe("cookOne render-assisted repair", () => {
     const backend: DomainBackend<unknown> = {
       ...mockBackend,
       maxAttempts: 3,
+      renderStages: ["G3", "G4"],
       renderArtifact: async () => {
         if (opts.throws) throw new Error("kernel down");
         return opts.render ?? null;
@@ -785,6 +809,34 @@ describe("cookOne inspect step (write → render → inspect → rewrite)", () =
     await cookOne(deps, "widget");
     expect(h.generations()).toBe(1);
     expect(deps.store.node("widget").history[0]?.cause).toBe("generate");
+  });
+
+  it("looks at the next passing candidate before spending a round", async () => {
+    const h = inspecting([no, yes]);
+    const backend = { ...h.backend, generation: { firstRoundCandidates: 2 } };
+    const deps = { ...makeDeps(checked(), h.provider, new MemoryLibrary(), backend), inspect: true };
+    await cookOne(deps, "widget");
+    const node = deps.store.node("widget");
+    expect(h.generations()).toBe(2); // the two round-1 candidates, no rewrite
+    expect(node.history.map((x) => x.cause)).toEqual(["generate"]);
+    expect(node.artifact?.code).toBe("code-2");
+  });
+
+  it("bills a judge call that failed but still spent tokens", async () => {
+    const h = inspecting([]);
+    const provider: LlmProvider = {
+      id: "stub",
+      complete: async (req) => {
+        if (req.label.startsWith("inspect:")) throw new LlmCallError("refused", { inputTokens: 7, outputTokens: 3, usd: 0.5 });
+        return h.provider.complete(req);
+      },
+    };
+    const deps = { ...makeDeps(checked(), provider, new MemoryLibrary(), h.backend), inspect: true };
+    await cookOne(deps, "widget");
+    const node = deps.store.node("widget");
+    expect(node.status).toBe("ready");
+    expect(node.cost.usd).toBeCloseTo(0.5);
+    expect(node.cost.calls).toBe(2);
   });
 
   it("does nothing at all unless asked", async () => {
@@ -946,6 +998,7 @@ describe("cookOne repair convergence", () => {
           ? { ok: false, stage: f.stage, report: `${node.artifact!.code} failed ${f.stage}`, score: f.score }
           : { ok: true, stage: "execute", report: "" };
       },
+      renderStages: ["G3", "G4"],
       renderArtifact: async (node) => {
         renders.push(node.artifact!.code);
         return null;
@@ -1124,5 +1177,236 @@ describe("cookOne repair convergence", () => {
     expect(h.repairs[0]!.failedCode).toBe("code-1");
     expect(h.repairs[0]!.failure.stage).toBe("LOOKS");
     expect(h.repairs[0]!.failure.report).toContain("Does it have a leg? — iso: flat");
+  });
+});
+
+describe("cookOne concurrency (one node, two cooks)", () => {
+  it("lets the newer cook win and discards the older one's work", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let calls = 0;
+    const provider: LlmProvider = {
+      id: "stub",
+      complete: async () => {
+        const mine = ++calls;
+        if (mine === 1) await held; // the older cook is mid-generation
+        return { data: { code: `cook-${mine}` }, usage: { inputTokens: 1, outputTokens: 1, usd: 0 }, model: "stub" } as never;
+      },
+    };
+    const deps = { ...makeDeps(makeGraph(), provider, new MemoryLibrary()), library: undefined };
+    const older = cookOne(deps, "widget");
+    await Promise.resolve();
+    const newer = cookOne(deps, "widget");
+    await newer;
+    release();
+    await expect(older).rejects.toThrow(/superseded/);
+
+    const node = deps.store.node("widget");
+    expect(node.status).toBe("ready");
+    expect(node.version).toBe(1);
+    expect(node.artifact?.code).toBe("cook-2");
+    // Both calls happened, so both are billed.
+    expect(node.cost.calls).toBe(2);
+  });
+
+  it("a superseded cook mid-gate never strands the node", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let executes = 0;
+    const backend: DomainBackend<unknown> = {
+      ...mockBackend,
+      execute: async () => {
+        if (++executes === 1) await held;
+        return { ok: true, stage: "execute", report: "" };
+      },
+    };
+    const deps = { ...makeDeps(makeGraph(), stubProvider, new MemoryLibrary(), backend), library: undefined };
+    const older = cookOne(deps, "widget");
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    await cookOne(deps, "widget");
+    release();
+    await expect(older).rejects.toThrow(/superseded/);
+    expect(deps.store.node("widget").status).toBe("ready");
+    expect(deps.store.node("widget").version).toBe(1);
+  });
+});
+
+describe("cookOne backend throws (kernel unreachable)", () => {
+  const down = new Error("ECONNREFUSED 127.0.0.1:8621");
+
+  it("treats an execute throw as an execute failure, not a stuck node", async () => {
+    const backend: DomainBackend<unknown> = { ...mockBackend, maxAttempts: 1, execute: async () => { throw down; } };
+    const deps = { ...makeDeps(makeGraph(), stubProvider, new MemoryLibrary(), backend), library: undefined };
+    await expect(cookOne(deps, "widget")).rejects.toThrow();
+    const node = deps.store.node("widget");
+    expect(node.status).toBe("error_code");
+    expect(node.statusDetail?.stage).toBe("execute");
+    expect(node.statusDetail?.message).toMatch(/ECONNREFUSED/);
+  });
+
+  it("treats a verify throw the same way", async () => {
+    const backend: DomainBackend<unknown> = { ...mockBackend, maxAttempts: 1, verify: async () => { throw down; } };
+    const deps = { ...makeDeps(makeGraph(), stubProvider, new MemoryLibrary(), backend), library: undefined };
+    await expect(cookOne(deps, "widget")).rejects.toThrow();
+    expect(deps.store.node("widget").status).toBe("error_code");
+    expect(deps.store.node("widget").statusDetail?.stage).toBe("execute");
+  });
+
+  it("fails the node when deterministicArtifact throws", async () => {
+    const backend: DomainBackend<unknown> = {
+      ...mockBackend,
+      deterministicArtifact: () => {
+        throw new Error("no such SKU");
+      },
+    };
+    const deps = makeDeps(makeGraph(), trapProvider, new MemoryLibrary(), backend);
+    await expect(cookOne(deps, "widget")).rejects.toThrow(/no such SKU/);
+    expect(deps.store.node("widget").status).toBe("error_code");
+    expect(deps.store.node("widget").statusDetail?.stage).toBe("registry");
+  });
+
+  it("settles a registry part whose kernel is down instead of leaving it building", async () => {
+    const backend: DomainBackend<unknown> = {
+      ...mockBackend,
+      deterministicArtifact: () => ({ code: "screw" }),
+      execute: async () => {
+        throw down;
+      },
+    };
+    const deps = makeDeps(makeGraph(), trapProvider, new MemoryLibrary(), backend);
+    await expect(cookOne(deps, "widget")).rejects.toThrow(/ECONNREFUSED/);
+    expect(deps.store.node("widget").status).toBe("error_code");
+  });
+
+  it("settles a node whose prepareArtifact throws synchronously", async () => {
+    const backend: DomainBackend<unknown> = {
+      ...mockBackend,
+      prepareArtifact: () => {
+        throw new Error("mesh source offline");
+      },
+    };
+    const deps = makeDeps(makeGraph(), trapProvider, new MemoryLibrary(), backend);
+    await expect(cookOne(deps, "widget")).rejects.toThrow(/mesh source offline/);
+    expect(deps.store.node("widget").status).toBe("error_code");
+    expect(deps.store.node("widget").statusDetail?.stage).toBe("prepare");
+  });
+
+  it("bills a prepare spend without counting a model call", async () => {
+    const backend: DomainBackend<unknown> = {
+      ...mockBackend,
+      prepareArtifact: async () => ({ usd: 0.25 }),
+      deterministicArtifact: () => ({ code: "mesh" }),
+    };
+    const deps = makeDeps(makeGraph(), trapProvider, new MemoryLibrary(), backend);
+    await cookOne(deps, "widget");
+    expect(deps.store.node("widget").cost).toMatchObject({ calls: 0, usd: 0.25 });
+  });
+});
+
+describe("cookOne cancellation", () => {
+  it("refuses the commit when the cook is aborted mid-gate", async () => {
+    const controller = new AbortController();
+    const backend: DomainBackend<unknown> = {
+      ...mockBackend,
+      execute: async () => {
+        controller.abort();
+        return { ok: true, stage: "execute", report: "" };
+      },
+    };
+    const deps = { ...makeDeps(makeGraph(), stubProvider, new MemoryLibrary(), backend), signal: controller.signal };
+    await expect(cookOne(deps, "widget")).rejects.toThrow(/cancelled/);
+    const node = deps.store.node("widget");
+    expect(node.status).toBe("cancelled");
+    expect(node.version).toBe(0);
+    expect(node.history).toEqual([]);
+  });
+
+  it("refuses a registry commit aborted mid-execute", async () => {
+    const controller = new AbortController();
+    const backend: DomainBackend<unknown> = {
+      ...mockBackend,
+      deterministicArtifact: () => ({ code: "screw" }),
+      execute: async () => {
+        controller.abort();
+        return { ok: true, stage: "execute", report: "" };
+      },
+    };
+    const deps = { ...makeDeps(makeGraph(), trapProvider, new MemoryLibrary(), backend), signal: controller.signal };
+    await expect(cookOne(deps, "widget")).rejects.toThrow(/cancelled/);
+    expect(deps.store.node("widget").status).toBe("cancelled");
+    expect(deps.store.node("widget").version).toBe(0);
+  });
+
+  it("cookNodes stops after an abort: unstarted nodes cancelled, no assembly check", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    let checks = 0;
+    const backend: DomainBackend<unknown> = {
+      ...mockBackend,
+      globalCheck: async () => {
+        checks += 1;
+        return { ok: true, problems: [] };
+      },
+    };
+    const deps = { ...makeDeps(makeGraph(), trapProvider, new MemoryLibrary(), backend), signal: controller.signal };
+    await cookNodes(deps, ["widget"]);
+    expect(deps.store.node("widget").status).toBe("cancelled");
+    expect(checks).toBe(0);
+  });
+});
+
+describe("cookOne fresh start keeps the user's code", () => {
+  it("restores the artifact a failed library candidate replaced", async () => {
+    const seen: (string | undefined)[] = [];
+    const backend: DomainBackend<unknown> = {
+      ...mockBackend,
+      buildGeneratePrompt: (ctx) => {
+        seen.push(ctx.node.currentCode);
+        return mockBackend.buildGeneratePrompt(ctx);
+      },
+      verify: async (node) =>
+        node.artifact?.code === "cached" ? { ok: false, stage: "G3", report: "stale" } : { ok: true, stage: "verify", report: "" },
+    };
+    const graph = makeGraph();
+    graph.nodes.widget!.artifact = { code: "mine", testCode: "", hash: hashValue("mine") };
+    const library = new MemoryLibrary();
+    const deps = makeDeps(graph, stubProvider, library, backend);
+    library.entries.set(`mock/${deps.store.node("widget").contract.hash}`, {
+      code: "cached",
+      testCode: "",
+      kind: "component",
+      title: "Widget",
+    });
+    await cookOne(deps, "widget");
+    expect(seen).toEqual(["mine"]);
+  });
+});
+
+describe("applyCheck", () => {
+  const blocked = () => {
+    const store = new GraphStore(makeGraph(), new EventBus(), async () => {});
+    for (const st of ["queued", "generating", "building", "verifying", "ready"] as const) store.setStatus("widget", st);
+    store.setStatus("widget", "error_contract", { stage: ASSEMBLY_STAGE, message: "clash", attribution: "contract-infeasible" });
+    return store;
+  };
+
+  it("releases a block the check no longer reports", () => {
+    const store = blocked();
+    applyCheck(store, { ok: true, problems: [], findings: [] });
+    expect(store.node("widget").status).toBe("ready");
+  });
+
+  it("keeps every block when the check did not fully run", () => {
+    const store = blocked();
+    applyCheck(store, { ok: false, problems: ["clash check did not run"], findings: [], incomplete: true });
+    expect(store.node("widget").status).toBe("error_contract");
+  });
+
+  it("reads clean only for a complete, passing check with nothing extra", () => {
+    expect(checkStatus({ ok: true, problems: [] })).toBe("clean");
+    expect(checkStatus({ ok: true, problems: ["advisory"], advisories: [] })).toBe("clean");
+    expect(checkStatus({ ok: true, problems: [], incomplete: true })).toBe("failing");
+    expect(checkStatus({ ok: true, problems: [] }, ["T0 broke a probe"])).toBe("failing");
+    expect(checkStatus({ ok: false, problems: ["clash"] })).toBe("failing");
   });
 });

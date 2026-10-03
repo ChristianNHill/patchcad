@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { GraphDoc } from "@patchcad/shared";
 import { CadBackend, cadPlanGeometryLint, fitFindings, hardwareAllowances, type ClashResult, type KernelClient } from "./index.js";
+import { threadAllowances } from "./g5.js";
+import { threadEngagementVolume } from "./grounding.js";
 
 /** G5 attribution and the plan-time geometry lint. The kernel is stubbed: what
  *  is tested here is what the backend SENDS (copies, allowances, contacts) and
@@ -167,6 +169,20 @@ describe("G5 globalCheck: instances, contacts, allowances, attribution", () => {
     expect(allow[0]!.volume_mm3).toBeCloseTo(12.8 * 1.5, 0);
   });
 
+  it("engages a short insert by its own length, and scopes joint hardware to its joint", () => {
+    const hw = (id: string, kind: string, sku: string): Spec => ({ id, kind, ports: [], params: [{ name: "sku", default: sku }] });
+    const g = graph(
+      [plate, hw("j1_screw", "fastener", "ISO4762-M4x12"), hw("j1_insert", "insert", "HEATSET-S-M4"), hw("j2_nut", "nut", "ISO4032-M4")],
+      [],
+    );
+    (g as { joints?: unknown }).joints = [{ id: "j1" }, { id: "j2" }];
+    // Only its own joint's insert: j2's nut is unrelated, so it stays clash-checked.
+    const allow = threadAllowances(g);
+    expect(allow.map((x) => [x.a, x.b])).toEqual([["j1_screw", "j1_insert"]]);
+    // heatset_short M4 is 4mm long, not the standard 8.1.
+    expect(allow[0]!.volume_mm3).toBeCloseTo(threadEngagementVolume("M4", 4) * 1.5, 6);
+  });
+
   it("says the gate did not run when the kernel refuses, rather than passing", async () => {
     const { kernel } = stubKernel(empty, false);
     const res = await new CadBackend({ kernel }).globalCheck(g, ws);
@@ -206,6 +222,17 @@ describe("G5 declared fits", () => {
     const [f] = fitFindings(g);
     expect(f).toMatchObject({ kind: "fit", measured: 0, expected: 0.25 });
     expect(f!.message).toContain("Too tight");
+  });
+
+  it("reads a joint-minted screw's thread from its sku", () => {
+    const g = graph(
+      [
+        { id: "plate", ports: [{ name: "hole", type: "CLEARANCE_HOLE", at: [0, 0, 2], params: { diameter: 4.0 } }] },
+        { id: "screw", kind: "fastener", ports: [{ name: "head_seat", type: "FLAT_FACE", at: [0, 0, 0], z: DOWN }], params: [{ name: "sku", default: "ISO7380-M4" }] },
+      ],
+      [["plate", "hole", "screw", "head_seat"]],
+    );
+    expect(fitFindings(g)).toEqual([expect.objectContaining({ kind: "fit", measured: 0, expected: 0.25 })]);
   });
 });
 

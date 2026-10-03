@@ -1,4 +1,4 @@
-import { assertGlb, type MeshGenConfig, type MeshGenProvider, type MeshGenRequest } from "./index.js";
+import { assertGlb, MeshGenError, type MeshGenConfig, type MeshGenProvider, type MeshGenRequest } from "./index.js";
 
 /**
  * Meshy image-to-3D (https://docs.meshy.ai/en/api/image-to-3d and
@@ -51,23 +51,37 @@ export class MeshyMeshGen implements MeshGenProvider {
 
     const deadline = Date.now() + TIMEOUT_MS;
     let task: MeshyTask;
-    for (;;) {
-      task = (await this.call(`${BASE}/${kind}/${created.result}`, { signal })) as MeshyTask;
-      if (task.status === "SUCCEEDED") break;
-      if (task.status === "FAILED" || task.status === "CANCELED") {
-        throw new Error(`meshy task ${created.result} ${task.status}: ${task.task_error?.message || "no reason given"}`);
+    try {
+      for (;;) {
+        task = (await this.call(`${BASE}/${kind}/${created.result}`, { signal })) as MeshyTask;
+        if (task.status === "SUCCEEDED") break;
+        if (task.status === "FAILED" || task.status === "CANCELED") {
+          throw new MeshGenError(
+            `meshy task ${created.result} ${task.status}: ${task.task_error?.message || "no reason given"}`,
+            this.usd(task),
+          );
+        }
+        if (Date.now() > deadline) throw new Error(`meshy task ${created.result} still ${task.status} after ${TIMEOUT_MS / 60_000} min`);
+        await sleep(this.pollMs, signal);
       }
-      if (Date.now() > deadline) throw new Error(`meshy task ${created.result} still ${task.status} after ${TIMEOUT_MS / 60_000} min`);
-      await sleep(this.pollMs, signal);
+    } catch (err) {
+      if (err instanceof MeshGenError) throw err;
+      // Stopped or timed out: the task runs on at Meshy and still bills, so
+      // read what it has consumed (one unsignalled poll) before giving up.
+      const last = (await this.call(`${BASE}/${kind}/${created.result}`, {}).catch(() => null)) as MeshyTask | null;
+      throw new MeshGenError((err as Error).message ?? String(err), last ? this.usd(last) : 0);
     }
     const url = task.model_urls?.glb;
-    if (!url) throw new Error(`meshy task ${created.result} succeeded with no GLB url`);
+    if (!url) throw new MeshGenError(`meshy task ${created.result} succeeded with no GLB url`, this.usd(task));
     // A signed URL: no auth header.
     const res = await this.fetchImpl(url, { signal });
-    if (!res.ok) throw new Error(`meshy GLB download ${res.status}`);
+    if (!res.ok) throw new MeshGenError(`meshy GLB download ${res.status}`, this.usd(task));
     const glb = assertGlb(Buffer.from(await res.arrayBuffer()), "meshy");
-    const credits = task.consumed_credits ?? 0;
-    return { glb, usage: { usd: credits * (this.config.usdPerCredit ?? 0) } };
+    return { glb, usage: { usd: this.usd(task) } };
+  }
+
+  private usd(task: MeshyTask): number {
+    return (task.consumed_credits ?? 0) * (this.config.usdPerCredit ?? 0);
   }
 
   private async call(url: string, init: { method?: string; body?: string; signal?: AbortSignal }): Promise<unknown> {

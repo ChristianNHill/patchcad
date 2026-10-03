@@ -83,8 +83,9 @@ import math
 def build(p):
 ${body}`;
 
-/** A cut-to-length part's length: the live `length` param, else the SKU's,
- *  else the shortest stocked one. */
+/** A cut-to-length part's default length, baked into its code: the SKU's,
+ *  else the shortest stocked one. The live `length` param overrides it at
+ *  build time (`p.get("length", …)`). */
 function lengthOf(family: string, key: string, sku?: Sku): number {
   return sku?.length ?? standardLengths(family, key)[0] ?? 0;
 }
@@ -189,23 +190,6 @@ export function threadedRodCode(thread: string, defaultLength = 50): string {
   return module(`    L = p.get("length", ${defaultLength})
     return Pos(0, 0, L / 2) * Cylinder(${pitchD / 2}, L)
 `);
-}
-
-/**
- * The same rod with a real ISO profile (bd_warehouse IsoThread), for a picture
- * rather than a gate: it is a coreless ridge of one solid per turn segment (30
- * for M4x20), and fusing a core costs ~3s per 20mm, which a long rod turns
- * into a build timeout. Never on the gate path. `IsoThread` is injected into
- * the kernel exec namespace rather than imported (worker.py
- * _registry_namespace), so G0 stays closed to generated code.
- */
-export function isoThreadedRodCode(thread: string, defaultLength = 50): string {
-  const pitch = threadSpec(thread)!.pitch;
-  return `from build123d import *
-
-def build(p):
-    return IsoThread(major_diameter=${major(thread)}, pitch=${pitch}, length=p.get("length", ${defaultLength}), external=True)
-`;
 }
 
 /**
@@ -336,20 +320,30 @@ export function carriageCode(size: string): string {
 `);
 }
 
+/** GT2 tip Ø: the pitch Ø (teeth × 2 / π) less twice the 0.254 pitch-line offset. */
+export const gt2TipD = (teeth: number) => (teeth * 2) / Math.PI - 0.508;
+
 /**
  * GT2 pulley, axis z, hub face on z = 0: hub, flange, toothed rim, flange,
  * bore through, one radial set screw in the hub. The teeth are the rim with a
  * belt-tooth groove cut per tooth at the pitch line — a toothed silhouette and
- * the right tip Ø, not a conjugate profile.
+ * the right tip Ø, not a conjugate profile. An idler (gt2_idler) has no hub:
+ * its first flange sits on z = 0.
  */
-export function pulleyCode(size: string): string {
-  const r = familyDims("gt2_pulley", size)!;
+export function pulleyCode(size: string, family = "gt2_pulley"): string {
+  const r = familyDims(family, size)!;
   const teeth = dim(r, "teeth");
-  const tip = (teeth * 2) / Math.PI - 0.508;
-  const [bore, tw, fd, fw, hd, hl] = ["bore", "toothWidth", "flangeD", "flangeW", "hubD", "hubL"].map((k) => dim(r, k)) as [
-    number, number, number, number, number, number,
-  ];
+  const tip = gt2TipD(teeth);
+  const [bore, tw, fd, fw] = ["bore", "toothWidth", "flangeD", "flangeW"].map((k) => dim(r, k)) as [number, number, number, number];
+  const hl = typeof r.hubL === "number" ? r.hubL : 0;
   const total = hl + 2 * fw + tw;
+  const hub = hl
+    ? `
+    body = body + disc(${dim(r, "hubD") / 2}, ${hl}, 0)
+    body = body - Pos(0, 0, ${total / 2}) * Cylinder(${bore / 2}, ${total * 2})
+    return body - Pos(${(dim(r, "hubD") + bore) / 4}, 0, ${hl / 2}) * Rot(0, 90, 0) * Cylinder(${tap(String(r.setScrew)) / 2}, ${(dim(r, "hubD") - bore) / 2 + 1})`
+    : `
+    return body - Pos(0, 0, ${total / 2}) * Cylinder(${bore / 2}, ${total * 2})`;
   return module(`    def disc(rad, h, z):
         return Pos(0, 0, z + h / 2) * Cylinder(rad, h)
     rim = disc(${tip / 2}, ${tw}, ${hl + fw})
@@ -357,20 +351,53 @@ export function pulleyCode(size: string): string {
         Pos(${tip / 2 - 0.195} * math.cos(i * 2 * math.pi / ${teeth}), ${tip / 2 - 0.195} * math.sin(i * 2 * math.pi / ${teeth}), ${hl + fw + tw / 2}) * Cylinder(0.555, ${tw})
         for i in range(${teeth})
     ]
-    body = disc(${hd / 2}, ${hl}, 0) + disc(${fd / 2}, ${fw}, ${hl}) + rim.cut(*grooves) + disc(${fd / 2}, ${fw}, ${hl + fw + tw})
-    body = body - Pos(0, 0, ${total / 2}) * Cylinder(${bore / 2}, ${total * 2})
-    screw = Pos(${(hd + bore) / 4}, 0, ${hl / 2}) * Rot(0, 90, 0) * Cylinder(${tap(String(r.setScrew)) / 2}, ${(hd - bore) / 2 + 1})
-    return body - screw
+    body = disc(${fd / 2}, ${fw}, ${hl}) + rim.cut(*grooves) + disc(${fd / 2}, ${fw}, ${hl + fw + tw})${hub}
 `);
 }
 
-/** Open GT2 belt, its envelope strip: along +x from the origin, back face on
- *  z = 0, teeth side +z. */
-export function beltCode(size: string, defaultLength: number): string {
-  const r = familyDims("gt2_belt", size)!;
-  const t = dim(r, "thickness");
+/**
+ * GT2 belt, its envelope with no teeth drawn. Open (no `center` param): a
+ * strip along +x from the origin, back face on z = 0, teeth side +z. Wrapped
+ * (`center` > 0): a closed band around two pulleys, the first on the origin
+ * and the second `center` along +x, inner Ø `d1` / `d2` (the pulleys' tip Ø),
+ * bottom edge on z = 0 and the width up +z.
+ */
+export function beltCode(size: string, defaultLength: number, family = "gt2_belt"): string {
+  const r = familyDims(family, size)!;
+  const [t, w] = [dim(r, "thickness"), dim(r, "width")];
   return module(`    L = p.get("length", ${defaultLength})
-    return Pos(L / 2, 0, ${t / 2}) * Box(L, ${dim(r, "width")}, ${t})
+    c = p.get("center", 0)
+    if c > 0:
+        def hull(r1, r2):
+            return Face(Wire.make_convex_hull([Edge.make_circle(r1), Pos(c, 0, 0) * Edge.make_circle(r2)]))
+        r1, r2 = p.get("d1", 10) / 2, p.get("d2", 10) / 2
+        return extrude(hull(r1 + ${t}, r2 + ${t}) - hull(r1, r2), ${w}, dir=(0, 0, 1))
+    return Pos(L / 2, 0, ${t / 2}) * Box(L, ${w}, ${t})
+`);
+}
+
+/** Flexible coupler, axis z, bore A from z = 0 to the middle, bore B above. */
+export function couplerCode(size: string): string {
+  const r = familyDims("coupler", size)!;
+  const [a, b, od, L] = [dim(r, "boreA"), dim(r, "boreB"), dim(r, "od"), dim(r, "length")];
+  return module(`    body = Pos(0, 0, ${L / 2}) * Cylinder(${od / 2}, ${L})
+    body = body - Pos(0, 0, ${L / 4}) * Cylinder(${a / 2}, ${L / 2 + 0.02})
+    return body - Pos(0, 0, ${(3 * L) / 4}) * Cylinder(${b / 2}, ${L / 2 + 0.02})
+`);
+}
+
+/** Flanged lead-screw nut, framed like a screw head: the flange's bearing
+ *  face on z = 0 with the flange +z, the body -z into the host, bored through,
+ *  the flange's screw holes on their pcd. */
+export function leadNutCode(size: string): string {
+  const r = familyDims("lead_nut", size)!;
+  const [ft, L] = [dim(r, "flangeT"), dim(r, "length")];
+  return module(`    nut = Pos(0, 0, ${ft / 2}) * Cylinder(${dim(r, "flangeD") / 2}, ${ft}) + Pos(0, 0, ${-(L - ft) / 2 + 0.01}) * Cylinder(${dim(r, "bodyD") / 2}, ${L - ft + 0.02})
+    nut = nut - Pos(0, 0, ${ft - L / 2}) * Cylinder(${dim(r, "bore") / 2}, ${L * 2})
+    for i in range(${dim(r, "holeCount")}):
+        a = i * 2 * math.pi / ${dim(r, "holeCount")}
+        nut = nut - Pos(${dim(r, "pcd") / 2} * math.cos(a), ${dim(r, "pcd") / 2} * math.sin(a), ${ft / 2}) * Cylinder(${dim(r, "holeD") / 2}, ${ft * 2})
+    return nut
 `);
 }
 
@@ -469,7 +496,10 @@ export function standoffCode(thread: string, defaultLength: number): string {
  *
  * Unlike the thread-driven hardware this is param-driven, so the code text is
  * constant and a param change needs no re-codegen — it just re-executes.
- * SpurGear centers on the origin, matching the part-local frame convention.
+ * SpurGear centers on the origin, matching the part-local frame convention,
+ * with a tooth on +x. `phase` turns the teeth (not the bore) by that many
+ * degrees, so a meshing pair can put a gap opposite a tooth; `flat` makes the
+ * bore a D, the flat that far from the axis along +x, like a D-shaft's.
  */
 export function gearCode(): string {
   return `from build123d import *
@@ -480,9 +510,13 @@ def build(p):
         tooth_count=int(p.teeth),
         pressure_angle=p.pressure_angle,
         thickness=p.thickness,
+        rotation=(0, 0, p.get("phase", 0)),
     )
     if p.bore > 0:
-        gear = gear - Cylinder(p.bore / 2, p.thickness * 2)
+        hole = Cylinder(p.bore / 2, p.thickness * 2)
+        if p.get("flat", 0) > 0:
+            hole = hole - Pos(p.flat + p.bore / 2, 0, 0) * Box(p.bore, p.bore * 2, p.thickness * 4)
+        gear = gear - hole
     return gear
 `;
 }
@@ -525,8 +559,13 @@ const CODEGEN: Record<string, (key: string, sku: Sku) => string> = {
   mgn_rail: (k, s) => railCode(k, lengthOf("mgn_rail", k, s)),
   mgn_carriage: (k) => carriageCode(k),
   gt2_pulley: (k) => pulleyCode(k),
+  gt2_idler: (k) => pulleyCode(k, "gt2_idler"),
   gt2_belt: (k, s) => beltCode(k, lengthOf("gt2_belt", k, s)),
+  gt2_loop: (k, s) => beltCode(k, lengthOf("gt2_loop", k, s), "gt2_loop"),
   spur_gear: () => gearCode(),
+  coupler: (k) => couplerCode(k),
+  lead_screw: (k, s) => shaftCode("lead_screw", k, lengthOf("lead_screw", k, s)),
+  lead_nut: (k) => leadNutCode(k),
   nema17: (k, s) => motorCode("nema17", k, lengthOf("nema17", k, s)),
   brushless: (k) => motorCode("brushless", k),
   n20: (k) => motorCode("n20", k),
@@ -563,7 +602,9 @@ export function skuOf(node: NodeRecord): Sku | null {
  * Catalog-driven factory. These re-codegen when the SKU changes: an M5 nut is
  * different code, not an M4 with new params. A SKU carrying a vendor STEP
  * loads it (through the project's imports, like an imported mesh) and falls
- * back to the parametric model when the file is not there.
+ * back to the parametric model only when the file is not there: a STEP that
+ * is present but will not load fails the build rather than hiding behind the
+ * fallback.
  */
 function bySku(node: NodeRecord): string | null {
   const sku = skuOf(node);
@@ -572,7 +613,7 @@ function bySku(node: NodeRecord): string | null {
   if (!sku.stepFile) return code;
   return code.replace(
     "def build(p):\n",
-    `def build(p):\n    try:\n        return load_import(${JSON.stringify(sku.stepFile)})\n    except Exception:\n        pass\n`,
+    `def build(p):\n    try:\n        return load_import(${JSON.stringify(sku.stepFile)})\n    except FileNotFoundError:\n        pass\n`,
   );
 }
 
@@ -608,11 +649,30 @@ export const REGISTRY_SOLIDS: Record<string, number | null> = {};
 export const FASTENING_HARDWARE = new Set(["fastener", "nut", "insert", "threaded_rod", "washer", "dowel", "standoff"]);
 
 /**
+ * Why a registry node names no catalog part, or null when it resolves (or is
+ * not registry hardware). cadHardwareResolvesLint runs it at plan time.
+ */
+export function unresolvedHardware(node: NodeRecord): string | null {
+  const build = REGISTRY[node.kind];
+  if (!build || build(node) !== null) return null;
+  const family = familiesOfKind(node.kind)[0];
+  const sku = paramOf(node, "sku");
+  const keyedBy = family ? CATALOG.families[family]!.keyedBy : "size";
+  const named = sku ? `sku "${sku}"` : `${keyedBy} "${paramOf(node, keyedBy)}"`;
+  const known = family ? Object.keys(CATALOG.families[family]!.dims).join(", ") : "";
+  return `${node.id}: ${node.kind} ${named} names no ${node.kind} in the hardware catalog${known ? ` (${family} has ${known})` : ""}. Hardware is built only from the catalog, never generated, so name a listed size.`;
+}
+
+/**
  * The cook-time hook: registry nodes resolve here, deterministically, before
- * any library or LLM step.
+ * any library or LLM step. A registry kind that names no catalog part still
+ * resolves, to code that fails G1 with the reason, so the cook lands in
+ * error_code: returning null would hand a screw to the LLM generator.
  */
 export function resolveHardware(node: NodeRecord): string | null {
-  return REGISTRY[node.kind]?.(node) ?? null;
+  const build = REGISTRY[node.kind];
+  if (!build) return null;
+  return build(node) ?? module(`    raise ValueError(${JSON.stringify(unresolvedHardware(node))})\n`);
 }
 
 /** Imported pieces (STL/STEP/3MF segments) load their mesh deterministically,

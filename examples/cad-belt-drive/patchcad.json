@@ -1,0 +1,1899 @@
+{
+  "schemaVersion": 1,
+  "id": "cad-belt-drive",
+  "backend": "cad",
+  "brief": {
+    "goal": "a turntable driven 2:1 by a NEMA 17 through a GT2 belt",
+    "design": "Chunky printed parts, flat faces, edges left sharp.",
+    "refs": []
+  },
+  "nodes": {
+    "base": {
+      "id": "base",
+      "kind": "part",
+      "title": "Base",
+      "spec": "A motor plate with a bearing tower at one end: the driven shaft runs in the tower, the NEMA 17 hangs under the plate beside it.",
+      "contract": {
+        "name": "Base",
+        "summary": "6mm plate, Ø24 bearing tower 14 tall, NEMA 17 under the plate.",
+        "params": [
+          {
+            "type": "number",
+            "name": "housing_height",
+            "description": "bearing tower height, the plate's top",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 14,
+            "min": 12,
+            "max": 30
+          },
+          {
+            "type": "number",
+            "name": "plate_thickness",
+            "description": "plate thickness under the motor",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 6,
+            "min": 4,
+            "max": 10
+          },
+          {
+            "type": "number",
+            "name": "tower_diameter",
+            "description": "tower width round the bearings",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 24,
+            "min": 22,
+            "max": 40
+          },
+          {
+            "type": "number",
+            "name": "plate_width",
+            "description": "plate width across the drive",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 56,
+            "min": 46,
+            "max": 80
+          },
+          {
+            "type": "number",
+            "name": "j1_seat_od",
+            "description": "bearing OD for j1",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 16
+          },
+          {
+            "type": "number",
+            "name": "j1_seat_w",
+            "description": "seat depth for j1",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 5
+          },
+          {
+            "type": "number",
+            "name": "j1_pilot",
+            "description": "motor pilot Ø for j1",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 22
+          }
+        ],
+        "provides": [
+          {
+            "key": "top",
+            "type": "FLAT_FACE",
+            "description": "top of the tower, where the driven shaft comes out"
+          },
+          {
+            "key": "j1_seat_a",
+            "type": "BEARING_SEAT",
+            "description": ""
+          },
+          {
+            "key": "j1_seat_b",
+            "type": "BEARING_SEAT",
+            "description": ""
+          },
+          {
+            "key": "j1_motor_mount",
+            "type": "MOTOR_MOUNT",
+            "description": "the motor's face, under a: pocket a's underside around the 42.3 square body up to here"
+          }
+        ],
+        "requires": [],
+        "payload": {
+          "units": "mm",
+          "process": {
+            "kind": "FDM",
+            "minWall": 1.2,
+            "nozzle": 0.4
+          },
+          "ports": [
+            {
+              "name": "top",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  "param(base.housing_height)"
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "size": 24,
+                "ring_diameter": "(param(base.j1_seat_od)) + 2.4"
+              }
+            },
+            {
+              "name": "j1_seat_a",
+              "type": "BEARING_SEAT",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  "(param(base.housing_height))"
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "od": "param(base.j1_seat_od)",
+                "width": "param(base.j1_seat_w)",
+                "fit": "press"
+              }
+            },
+            {
+              "name": "j1_seat_b",
+              "type": "BEARING_SEAT",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  "(param(base.housing_height)) + (-(param(base.housing_height)))"
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  -1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "od": "param(base.j1_seat_od)",
+                "width": "param(base.j1_seat_w)",
+                "fit": "press"
+              }
+            },
+            {
+              "name": "j1_motor_mount",
+              "type": "MOTOR_MOUNT",
+              "pose": {
+                "origin": [
+                  48.58,
+                  0,
+                  "(param(base.housing_height)) + (-(param(base.plate_thickness)))"
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  -1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "pilot_diameter": "param(base.j1_pilot)",
+                "hole_diameter": 3.4,
+                "pitch_x": 31,
+                "pitch_y": 31
+              }
+            }
+          ],
+          "envelope": {
+            "volumes": [
+              {
+                "kind": "cylinder",
+                "pose": {
+                  "origin": [
+                    0,
+                    0,
+                    "param(base.housing_height) / 2"
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "d": "param(base.tower_diameter) + 1",
+                "h": "param(base.housing_height) + 1"
+              },
+              {
+                "kind": "box",
+                "pose": {
+                  "origin": [
+                    30,
+                    0,
+                    "param(base.housing_height) - param(base.plate_thickness) / 2"
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "dims": [
+                  112,
+                  "param(base.plate_width) + 1",
+                  "param(base.plate_thickness) + 1"
+                ]
+              }
+            ],
+            "clearance": 0.4
+          },
+          "paramBindings": {
+            "j1_seat_od": "hw:bearingSeatD:param:j1_bearing_a.sku",
+            "j1_seat_w": "hw:bearingWidth:param:j1_bearing_a.sku",
+            "j1_pilot": "hw:motorPilot:param:j1_motor.sku"
+          }
+        },
+        "hash": "cc6313d635c50942"
+      },
+      "params": {},
+      "hidden": false,
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "e47b05a2320863e5"
+      },
+      "thread": [],
+      "status": "ready",
+      "measurements": null,
+      "version": 0,
+      "history": [
+        {
+          "version": 1,
+          "contractHash": "cc6313d635c50942",
+          "artifactHash": "e47b05a2320863e5",
+          "cause": "handwritten",
+          "at": 1759363200000
+        }
+      ],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "turntable": {
+      "id": "turntable",
+      "kind": "part",
+      "title": "Turntable",
+      "spec": "A flat disc on the driven shaft, fixed through a D-bore in its hub.",
+      "contract": {
+        "name": "Turntable",
+        "summary": "Ø60 disc, 8 thick.",
+        "params": [
+          {
+            "type": "number",
+            "name": "hub_height",
+            "description": "disc thickness, the shaft's grip on it",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 8,
+            "min": 6,
+            "max": 20
+          },
+          {
+            "type": "number",
+            "name": "disc_diameter",
+            "description": "disc width",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 60,
+            "min": 30,
+            "max": 120
+          },
+          {
+            "type": "number",
+            "name": "j1_shaft_d",
+            "description": "shaft Ø for j1",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 5
+          },
+          {
+            "type": "number",
+            "name": "j1_flat",
+            "description": "D-flat distance from the axis for j1",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 2
+          }
+        ],
+        "provides": [
+          {
+            "key": "bottom",
+            "type": "FLAT_FACE",
+            "description": "underside, toward the base"
+          }
+        ],
+        "requires": [
+          {
+            "key": "j1_hub",
+            "type": "HUB_BORE",
+            "description": ""
+          }
+        ],
+        "payload": {
+          "units": "mm",
+          "process": {
+            "kind": "FDM",
+            "minWall": 1.2,
+            "nozzle": 0.4
+          },
+          "ports": [
+            {
+              "name": "bottom",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  0
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  -1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "size": 20,
+                "ring_diameter": "(param(turntable.j1_shaft_d)) + 2.4"
+              }
+            },
+            {
+              "name": "j1_hub",
+              "type": "HUB_BORE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  0
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  -1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "diameter": "param(turntable.j1_shaft_d)",
+                "flat": "param(turntable.j1_flat)"
+              }
+            }
+          ],
+          "envelope": {
+            "volumes": [
+              {
+                "kind": "cylinder",
+                "pose": {
+                  "origin": [
+                    0,
+                    0,
+                    "param(turntable.hub_height) / 2"
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "d": "param(turntable.disc_diameter) + 1",
+                "h": "param(turntable.hub_height) + 1"
+              }
+            ],
+            "clearance": 0.4
+          },
+          "paramBindings": {
+            "j1_shaft_d": "hw:shaftD:param:j1_shaft.sku",
+            "j1_flat": "hw:hubFlat:param:j1_shaft.sku"
+          }
+        },
+        "hash": "bb8d06dd045072dd"
+      },
+      "params": {},
+      "hidden": false,
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "e434d83fadb2379d"
+      },
+      "thread": [],
+      "status": "ready",
+      "measurements": null,
+      "version": 0,
+      "history": [
+        {
+          "version": 1,
+          "contractHash": "bb8d06dd045072dd",
+          "artifactHash": "e434d83fadb2379d",
+          "cause": "handwritten",
+          "at": 1759363200000
+        }
+      ],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "j1_bearing_a": {
+      "id": "j1_bearing_a",
+      "kind": "bearing",
+      "title": "j1 bearing a",
+      "spec": "NEMA 17, 20T → 40T GT2 on a 158mm loop at 48.6, Ø5 shaft on 2×625. Catalog ISO 15 boundary dimensions (deep groove 6xx, 68xx, 69xx) 625, built by the registry, never generated.",
+      "contract": {
+        "name": "j1_bearing_a",
+        "summary": "BRG-625",
+        "params": [
+          {
+            "type": "string",
+            "name": "sku",
+            "description": "catalog part",
+            "default": "BRG-625"
+          }
+        ],
+        "provides": [
+          {
+            "key": "bore",
+            "type": "FLAT_FACE",
+            "description": ""
+          }
+        ],
+        "requires": [
+          {
+            "key": "seat",
+            "type": "BEARING_SEAT",
+            "description": ""
+          }
+        ],
+        "payload": {
+          "units": "mm",
+          "process": {
+            "kind": "FDM",
+            "minWall": 1.2,
+            "nozzle": 0.4
+          },
+          "ports": [
+            {
+              "name": "seat",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  0
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "ring_diameter": 15
+              }
+            },
+            {
+              "name": "bore",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  0
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  -1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "ring_diameter": 6
+              }
+            }
+          ],
+          "envelope": {
+            "volumes": [
+              {
+                "kind": "cylinder",
+                "pose": {
+                  "origin": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "d": 19.2,
+                "h": 10
+              }
+            ],
+            "clearance": 0.4
+          },
+          "paramBindings": {}
+        },
+        "hash": "f4c631c063484266"
+      },
+      "params": {},
+      "hidden": false,
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "71b1630b089af9cd"
+      },
+      "thread": [],
+      "status": "ready",
+      "measurements": null,
+      "version": 0,
+      "history": [
+        {
+          "version": 1,
+          "contractHash": "f4c631c063484266",
+          "artifactHash": "71b1630b089af9cd",
+          "cause": "registry",
+          "at": 1759363200000
+        }
+      ],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "j1_bearing_b": {
+      "id": "j1_bearing_b",
+      "kind": "bearing",
+      "title": "j1 bearing b",
+      "spec": "NEMA 17, 20T → 40T GT2 on a 158mm loop at 48.6, Ø5 shaft on 2×625. Catalog ISO 15 boundary dimensions (deep groove 6xx, 68xx, 69xx) 625, built by the registry, never generated.",
+      "contract": {
+        "name": "j1_bearing_b",
+        "summary": "BRG-625",
+        "params": [
+          {
+            "type": "string",
+            "name": "sku",
+            "description": "catalog part",
+            "default": "BRG-625"
+          }
+        ],
+        "provides": [
+          {
+            "key": "bore",
+            "type": "FLAT_FACE",
+            "description": ""
+          }
+        ],
+        "requires": [
+          {
+            "key": "seat",
+            "type": "BEARING_SEAT",
+            "description": ""
+          }
+        ],
+        "payload": {
+          "units": "mm",
+          "process": {
+            "kind": "FDM",
+            "minWall": 1.2,
+            "nozzle": 0.4
+          },
+          "ports": [
+            {
+              "name": "seat",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  0
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "ring_diameter": 15
+              }
+            },
+            {
+              "name": "bore",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  0
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  -1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "ring_diameter": 6
+              }
+            }
+          ],
+          "envelope": {
+            "volumes": [
+              {
+                "kind": "cylinder",
+                "pose": {
+                  "origin": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "d": 19.2,
+                "h": 10
+              }
+            ],
+            "clearance": 0.4
+          },
+          "paramBindings": {}
+        },
+        "hash": "6eed0fde0be64b3d"
+      },
+      "params": {},
+      "hidden": false,
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "71b1630b089af9cd"
+      },
+      "thread": [],
+      "status": "ready",
+      "measurements": null,
+      "version": 0,
+      "history": [
+        {
+          "version": 1,
+          "contractHash": "6eed0fde0be64b3d",
+          "artifactHash": "71b1630b089af9cd",
+          "cause": "registry",
+          "at": 1759363200000
+        }
+      ],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "j1_collar": {
+      "id": "j1_collar",
+      "kind": "collar",
+      "title": "j1 collar",
+      "spec": "NEMA 17, 20T → 40T GT2 on a 158mm loop at 48.6, Ø5 shaft on 2×625. Catalog part 5, built by the registry, never generated.",
+      "contract": {
+        "name": "j1_collar",
+        "summary": "COLLAR-5",
+        "params": [
+          {
+            "type": "string",
+            "name": "sku",
+            "description": "catalog part",
+            "default": "COLLAR-5"
+          }
+        ],
+        "provides": [],
+        "requires": [
+          {
+            "key": "seat",
+            "type": "FLAT_FACE",
+            "description": ""
+          }
+        ],
+        "payload": {
+          "units": "mm",
+          "process": {
+            "kind": "FDM",
+            "minWall": 1.2,
+            "nozzle": 0.4
+          },
+          "ports": [
+            {
+              "name": "seat",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  0
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  -1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "ring_diameter": 6
+              }
+            }
+          ],
+          "envelope": {
+            "volumes": [
+              {
+                "kind": "cylinder",
+                "pose": {
+                  "origin": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "d": 12,
+                "h": 12
+              }
+            ],
+            "clearance": 0.4
+          },
+          "paramBindings": {}
+        },
+        "hash": "3ca7fac096a660fa"
+      },
+      "params": {},
+      "hidden": false,
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "02347a1900080e84"
+      },
+      "thread": [],
+      "status": "ready",
+      "measurements": null,
+      "version": 0,
+      "history": [
+        {
+          "version": 1,
+          "contractHash": "3ca7fac096a660fa",
+          "artifactHash": "02347a1900080e84",
+          "cause": "registry",
+          "at": 1759363200000
+        }
+      ],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "j1_spacer": {
+      "id": "j1_spacer",
+      "kind": "washer",
+      "title": "j1 spacer",
+      "spec": "NEMA 17, 20T → 40T GT2 on a 158mm loop at 48.6, Ø5 shaft on 2×625. Catalog ISO 7089 (id is d1 min, od is d2 max) M5, built by the registry, never generated.",
+      "contract": {
+        "name": "j1_spacer",
+        "summary": "ISO7089-M5",
+        "params": [
+          {
+            "type": "string",
+            "name": "sku",
+            "description": "catalog part",
+            "default": "ISO7089-M5"
+          }
+        ],
+        "provides": [],
+        "requires": [
+          {
+            "key": "seat",
+            "type": "FLAT_FACE",
+            "description": ""
+          }
+        ],
+        "payload": {
+          "units": "mm",
+          "process": {
+            "kind": "FDM",
+            "minWall": 1.2,
+            "nozzle": 0.4
+          },
+          "ports": [
+            {
+              "name": "seat",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  0
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  -1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "ring_diameter": 6
+              }
+            }
+          ],
+          "envelope": {
+            "volumes": [
+              {
+                "kind": "cylinder",
+                "pose": {
+                  "origin": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "d": 12,
+                "h": 2
+              }
+            ],
+            "clearance": 0.4
+          },
+          "paramBindings": {}
+        },
+        "hash": "2e65ce274a501a8e"
+      },
+      "params": {},
+      "hidden": false,
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "d72c887728915716"
+      },
+      "thread": [],
+      "status": "ready",
+      "measurements": null,
+      "version": 0,
+      "history": [
+        {
+          "version": 1,
+          "contractHash": "2e65ce274a501a8e",
+          "artifactHash": "d72c887728915716",
+          "cause": "registry",
+          "at": 1759363200000
+        }
+      ],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "j1_shaft": {
+      "id": "j1_shaft",
+      "kind": "shaft",
+      "title": "j1 shaft",
+      "spec": "NEMA 17, 20T → 40T GT2 on a 158mm loop at 48.6, Ø5 shaft on 2×625. Catalog part 5, built by the registry, never generated.",
+      "contract": {
+        "name": "j1_shaft",
+        "summary": "DSHAFT-5",
+        "params": [
+          {
+            "type": "string",
+            "name": "sku",
+            "description": "catalog part",
+            "default": "DSHAFT-5"
+          },
+          {
+            "type": "number",
+            "name": "length",
+            "description": "length, mm",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 46
+          }
+        ],
+        "provides": [
+          {
+            "key": "hub",
+            "type": "HUB_BORE",
+            "description": ""
+          },
+          {
+            "key": "drive",
+            "type": "HUB_BORE",
+            "description": ""
+          }
+        ],
+        "requires": [
+          {
+            "key": "end",
+            "type": "FLAT_FACE",
+            "description": ""
+          }
+        ],
+        "payload": {
+          "units": "mm",
+          "process": {
+            "kind": "FDM",
+            "minWall": 1.2,
+            "nozzle": 0.4
+          },
+          "ports": [
+            {
+              "name": "end",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  6
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "ring_diameter": 2.5
+              }
+            },
+            {
+              "name": "hub",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  "(param(base.housing_height)) + 24"
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "ring_diameter": 2.5
+              }
+            },
+            {
+              "name": "drive",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  "(param(base.housing_height)) + 7"
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "ring_diameter": 2.5
+              }
+            }
+          ],
+          "envelope": {
+            "volumes": [
+              {
+                "kind": "cylinder",
+                "pose": {
+                  "origin": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "d": 6,
+                "h": 2
+              }
+            ],
+            "clearance": 0.4
+          },
+          "paramBindings": {
+            "length": "expr: ((param(base.housing_height)) + 24) + (param(turntable.hub_height))"
+          }
+        },
+        "hash": "13903af5ae014e15"
+      },
+      "params": {},
+      "hidden": false,
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "4886b93f4fb32dd9"
+      },
+      "thread": [],
+      "status": "ready",
+      "measurements": null,
+      "version": 0,
+      "history": [
+        {
+          "version": 1,
+          "contractHash": "13903af5ae014e15",
+          "artifactHash": "4886b93f4fb32dd9",
+          "cause": "registry",
+          "at": 1759363200000
+        }
+      ],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "j1_motor": {
+      "id": "j1_motor",
+      "kind": "motor",
+      "title": "j1 motor",
+      "spec": "NEMA 17, 20T → 40T GT2 on a 158mm loop at 48.6, Ø5 shaft on 2×625. Catalog NEMA ICS 16 faceplate (42.3 square, 31 hole pitch, M3, Ø22 pilot, Ø5 shaft); shaft length and flat are typical; length is the body length NEMA17, built by the registry, never generated.",
+      "contract": {
+        "name": "j1_motor",
+        "summary": "NEMA-NEMA17",
+        "params": [
+          {
+            "type": "string",
+            "name": "sku",
+            "description": "catalog part",
+            "default": "NEMA-NEMA17"
+          }
+        ],
+        "provides": [
+          {
+            "key": "shaft",
+            "type": "HUB_BORE",
+            "description": ""
+          }
+        ],
+        "requires": [
+          {
+            "key": "mount",
+            "type": "MOTOR_MOUNT",
+            "description": ""
+          }
+        ],
+        "payload": {
+          "units": "mm",
+          "process": {
+            "kind": "FDM",
+            "minWall": 1.2,
+            "nozzle": 0.4
+          },
+          "ports": [
+            {
+              "name": "mount",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  0
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  -1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "ring_diameter": 7
+              }
+            },
+            {
+              "name": "shaft",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  "-((param(base.plate_thickness)) + 1)"
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  -1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "ring_diameter": 2.5
+              }
+            }
+          ],
+          "envelope": {
+            "volumes": [
+              {
+                "kind": "cylinder",
+                "pose": {
+                  "origin": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "d": 50.76,
+                "h": 2
+              }
+            ],
+            "clearance": 0.4
+          },
+          "paramBindings": {}
+        },
+        "hash": "9b77a5238c747a48"
+      },
+      "params": {},
+      "hidden": false,
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "4fdd4b880c6b90a1"
+      },
+      "thread": [],
+      "status": "ready",
+      "measurements": null,
+      "version": 0,
+      "history": [
+        {
+          "version": 1,
+          "contractHash": "9b77a5238c747a48",
+          "artifactHash": "4fdd4b880c6b90a1",
+          "cause": "registry",
+          "at": 1759363200000
+        }
+      ],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "j1_motor_pulley": {
+      "id": "j1_motor_pulley",
+      "kind": "pulley",
+      "title": "j1 motor pulley",
+      "spec": "NEMA 17, 20T → 40T GT2 on a 158mm loop at 48.6, Ø5 shaft on 2×625. Catalog part 20T-5, built by the registry, never generated.",
+      "contract": {
+        "name": "j1_motor_pulley",
+        "summary": "GT2P-20T-5",
+        "params": [
+          {
+            "type": "string",
+            "name": "sku",
+            "description": "catalog part",
+            "default": "GT2P-20T-5"
+          }
+        ],
+        "provides": [
+          {
+            "key": "belt",
+            "type": "FLAT_FACE",
+            "description": ""
+          }
+        ],
+        "requires": [
+          {
+            "key": "bore",
+            "type": "HUB_BORE",
+            "description": ""
+          }
+        ],
+        "payload": {
+          "units": "mm",
+          "process": {
+            "kind": "FDM",
+            "minWall": 1.2,
+            "nozzle": 0.4
+          },
+          "ports": [
+            {
+              "name": "bore",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  0
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  -1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "ring_diameter": 6
+              }
+            },
+            {
+              "name": "belt",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  8.5
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "standoff": 0
+              }
+            }
+          ],
+          "envelope": {
+            "volumes": [
+              {
+                "kind": "cylinder",
+                "pose": {
+                  "origin": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "d": 19.2,
+                "h": 2
+              }
+            ],
+            "clearance": 0.4
+          },
+          "paramBindings": {}
+        },
+        "hash": "74b0026417f50628"
+      },
+      "params": {},
+      "hidden": false,
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "23df04c5c5798ef4"
+      },
+      "thread": [],
+      "status": "ready",
+      "measurements": null,
+      "version": 0,
+      "history": [
+        {
+          "version": 1,
+          "contractHash": "74b0026417f50628",
+          "artifactHash": "23df04c5c5798ef4",
+          "cause": "registry",
+          "at": 1759363200000
+        }
+      ],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "j1_driven_pulley": {
+      "id": "j1_driven_pulley",
+      "kind": "pulley",
+      "title": "j1 driven pulley",
+      "spec": "NEMA 17, 20T → 40T GT2 on a 158mm loop at 48.6, Ø5 shaft on 2×625. Catalog part 40T-5, built by the registry, never generated.",
+      "contract": {
+        "name": "j1_driven_pulley",
+        "summary": "GT2P-40T-5",
+        "params": [
+          {
+            "type": "string",
+            "name": "sku",
+            "description": "catalog part",
+            "default": "GT2P-40T-5"
+          }
+        ],
+        "provides": [],
+        "requires": [
+          {
+            "key": "bore",
+            "type": "HUB_BORE",
+            "description": ""
+          }
+        ],
+        "payload": {
+          "units": "mm",
+          "process": {
+            "kind": "FDM",
+            "minWall": 1.2,
+            "nozzle": 0.4
+          },
+          "ports": [
+            {
+              "name": "bore",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  0
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  -1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "ring_diameter": 6
+              }
+            }
+          ],
+          "envelope": {
+            "volumes": [
+              {
+                "kind": "cylinder",
+                "pose": {
+                  "origin": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "d": 34.8,
+                "h": 2
+              }
+            ],
+            "clearance": 0.4
+          },
+          "paramBindings": {}
+        },
+        "hash": "44d22b6a7b78fefd"
+      },
+      "params": {},
+      "hidden": false,
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "a92cb290ff5f3dd8"
+      },
+      "thread": [],
+      "status": "ready",
+      "measurements": null,
+      "version": 0,
+      "history": [
+        {
+          "version": 1,
+          "contractHash": "44d22b6a7b78fefd",
+          "artifactHash": "a92cb290ff5f3dd8",
+          "cause": "registry",
+          "at": 1759363200000
+        }
+      ],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "j1_belt": {
+      "id": "j1_belt",
+      "kind": "belt",
+      "title": "j1 belt",
+      "spec": "NEMA 17, 20T → 40T GT2 on a 158mm loop at 48.6, Ø5 shaft on 2×625. Catalog part 6, built by the registry, never generated.",
+      "contract": {
+        "name": "j1_belt",
+        "summary": "GT2L-6 × 158",
+        "params": [
+          {
+            "type": "string",
+            "name": "sku",
+            "description": "catalog part",
+            "default": "GT2L-6"
+          },
+          {
+            "type": "number",
+            "name": "length",
+            "description": "length, mm",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 158
+          },
+          {
+            "type": "number",
+            "name": "center",
+            "description": "",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 48.58
+          },
+          {
+            "type": "number",
+            "name": "d1",
+            "description": "",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 12.4244
+          },
+          {
+            "type": "number",
+            "name": "d2",
+            "description": "",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 25.1568
+          }
+        ],
+        "provides": [],
+        "requires": [
+          {
+            "key": "seat",
+            "type": "FLAT_FACE",
+            "description": ""
+          }
+        ],
+        "payload": {
+          "units": "mm",
+          "process": {
+            "kind": "FDM",
+            "minWall": 1.2,
+            "nozzle": 0.4
+          },
+          "ports": [
+            {
+              "name": "seat",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  0
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  -1
+                ],
+                "xAxis": [
+                  -1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "standoff": 0
+              }
+            }
+          ],
+          "envelope": {
+            "volumes": [
+              {
+                "kind": "cylinder",
+                "pose": {
+                  "origin": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "d": 7.2,
+                "h": 316
+              }
+            ],
+            "clearance": 0.4
+          },
+          "paramBindings": {}
+        },
+        "hash": "e07da62081b70d52"
+      },
+      "params": {},
+      "hidden": false,
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "280c151fc9197529"
+      },
+      "thread": [],
+      "status": "ready",
+      "measurements": null,
+      "version": 0,
+      "history": [
+        {
+          "version": 1,
+          "contractHash": "e07da62081b70d52",
+          "artifactHash": "280c151fc9197529",
+          "cause": "registry",
+          "at": 1759363200000
+        }
+      ],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    }
+  },
+  "edges": [
+    {
+      "id": "e0-base-j1_bearing_a",
+      "from": "base",
+      "fromPort": "j1_seat_a",
+      "to": "j1_bearing_a",
+      "toPort": "seat"
+    },
+    {
+      "id": "e1-base-j1_bearing_b",
+      "from": "base",
+      "fromPort": "j1_seat_b",
+      "to": "j1_bearing_b",
+      "toPort": "seat"
+    },
+    {
+      "id": "e2-j1_bearing_b-j1_collar",
+      "from": "j1_bearing_b",
+      "fromPort": "bore",
+      "to": "j1_collar",
+      "toPort": "seat"
+    },
+    {
+      "id": "e3-j1_bearing_a-j1_spacer",
+      "from": "j1_bearing_a",
+      "fromPort": "bore",
+      "to": "j1_spacer",
+      "toPort": "seat"
+    },
+    {
+      "id": "e4-j1_bearing_b-j1_shaft",
+      "from": "j1_bearing_b",
+      "fromPort": "bore",
+      "to": "j1_shaft",
+      "toPort": "end"
+    },
+    {
+      "id": "e5-j1_shaft-turntable",
+      "from": "j1_shaft",
+      "fromPort": "hub",
+      "to": "turntable",
+      "toPort": "j1_hub"
+    },
+    {
+      "id": "e6-base-j1_motor",
+      "from": "base",
+      "fromPort": "j1_motor_mount",
+      "to": "j1_motor",
+      "toPort": "mount"
+    },
+    {
+      "id": "e7-j1_motor-j1_motor_pulley",
+      "from": "j1_motor",
+      "fromPort": "shaft",
+      "to": "j1_motor_pulley",
+      "toPort": "bore"
+    },
+    {
+      "id": "e8-j1_shaft-j1_driven_pulley",
+      "from": "j1_shaft",
+      "fromPort": "drive",
+      "to": "j1_driven_pulley",
+      "toPort": "bore"
+    },
+    {
+      "id": "e9-j1_motor_pulley-j1_belt",
+      "from": "j1_motor_pulley",
+      "fromPort": "belt",
+      "to": "j1_belt",
+      "toPort": "seat"
+    }
+  ],
+  "assembly": {
+    "entryNodeId": "base"
+  },
+  "joints": [
+    {
+      "id": "j1",
+      "a": {
+        "node": "base",
+        "port": "top"
+      },
+      "b": {
+        "node": "turntable",
+        "port": "bottom"
+      },
+      "intent": "permanent",
+      "motion": "revolute",
+      "duty": "continuous",
+      "driven": true,
+      "load": "light",
+      "access": "both_sides",
+      "count": 1,
+      "wallA": "param(base.housing_height)",
+      "wallB": "param(turntable.hub_height)",
+      "ratio": 2,
+      "wallMotor": "param(base.plate_thickness)",
+      "expanded": "DB|bearing_a=bearing:625|bearing_b=bearing:625|shaft=d_shaft:5|collar=collar:5|spacer=washer:M5|motor=nema17:NEMA17|motor_pulley=gt2_pulley:20T-5|driven_pulley=gt2_pulley:40T-5|belt=gt2_loop:6",
+      "minted": [
+        "j1_seat_od",
+        "j1_seat_w",
+        "j1_seat_a",
+        "j1_seat_b",
+        "j1_shaft_d",
+        "j1_flat",
+        "j1_hub",
+        "j1_pilot",
+        "j1_motor_mount"
+      ]
+    }
+  ],
+  "rev": 0,
+  "ledger": {
+    "planning": {
+      "calls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "usd": 0
+    },
+    "classifier": {
+      "calls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "usd": 0
+    },
+    "renegotiate": {
+      "calls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "usd": 0
+    },
+    "nodes": {
+      "calls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "usd": 0
+    }
+  }
+}

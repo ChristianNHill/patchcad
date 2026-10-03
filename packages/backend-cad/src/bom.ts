@@ -2,7 +2,7 @@ import type { GraphDoc, NodeRecord } from "@patchcad/shared";
 import type { CadContractPayload } from "./index.js";
 import { solveAssembly, type AssemblyNode } from "./assembly.js";
 import { resolvePose } from "./bindings.js";
-import { CATALOG } from "./catalog.js";
+import { CATALOG, skuFor, type Sku } from "./catalog.js";
 import { skuOf } from "./registry.js";
 import { sourcingOf } from "./sourcing.js";
 
@@ -107,8 +107,22 @@ function volumeOf(node: NodeRecord): number | null {
 
 const round = (v: number, dp: number) => Math.round(v * 10 ** dp) / 10 ** dp;
 
-function buyRow(node: NodeRecord): Omit<BuyRow, "qty" | "nodes"> {
+/**
+ * The node's SKU at its actual length. Joint-minted hardware names the size
+ * (`ISO7380-M3`) and carries the length as its own param, so without this
+ * every M3 screw merged into one lengthless row and no vendor `…x12` matched.
+ * A length the family does not stock keeps its own id rather than vanishing.
+ */
+function skuAtLength(node: NodeRecord): Sku | null {
   const sku = skuOf(node);
+  if (!sku || sku.length !== undefined || !CATALOG.families[sku.family]!.lengths) return sku;
+  const len = Number(node.params.length ?? node.contract.params.find((p) => p.name === "length")?.default);
+  if (!Number.isFinite(len) || len <= 0) return sku;
+  return skuFor(sku.family, sku.key, len) ?? { ...sku, id: `${sku.id}x${len}`, length: len };
+}
+
+function buyRow(node: NodeRecord): Omit<BuyRow, "qty" | "nodes"> {
+  const sku = skuAtLength(node);
   if (!sku) return { sku: node.kind, description: node.title, standard: "—", vendors: UNVERIFIED_PN };
   const family = CATALOG.families[sku.family]!;
   const vendors = Object.entries(sku.vendors ?? {}).map(([vendor, v]) => ({ vendor, pn: v.pn, url: v.url }));

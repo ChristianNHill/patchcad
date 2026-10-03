@@ -21,7 +21,7 @@ import io
 from typing import Any
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 #: Side of the square silhouette both masks are compared at.
 MASK_SIZE = 256
@@ -116,7 +116,9 @@ def decode_mask(b64: str) -> np.ndarray:
 def prep_image(data_b64: str, method: str = "auto") -> dict[str, Any]:
     """Background removed, cropped to the subject, padded square, on white.
     `aspect` is the subject bbox width / height in the source image."""
-    img = Image.open(io.BytesIO(base64.b64decode(data_b64)))
+    # Upright as the camera meant it: a phone photo stores its rotation in EXIF
+    # and the pixels sideways, so the mask came out turned 90°.
+    img = ImageOps.exif_transpose(Image.open(io.BytesIO(base64.b64decode(data_b64))))
     img.load()
     rgb = img.convert("RGB")
     used = method
@@ -127,7 +129,7 @@ def prep_image(data_b64: str, method: str = "auto") -> dict[str, Any]:
         try:
             mask = _rembg_mask(rgb)
             used = "rembg"
-        except Exception:  # noqa: BLE001 — model missing or onnx failing: say so via `method`
+        except Exception:
             if method == "rembg":
                 raise
             mask = threshold_mask(rgb)
@@ -146,7 +148,7 @@ def prep_image(data_b64: str, method: str = "auto") -> dict[str, Any]:
     # past the source frame whenever the subject is near an edge.
     s = int(np.ceil(side))
     canvas = Image.new("RGB", (s, s), (255, 255, 255))
-    canvas.paste(subject, (int(round(s / 2 - cx)), int(round(s / 2 - cy))))
+    canvas.paste(subject, (round(s / 2 - cx), round(s / 2 - cy)))
     out = min(PREP_SIZE, s)
     prepped = canvas.resize((out, out), Image.Resampling.LANCZOS)
     norm = normalize_mask(mask)

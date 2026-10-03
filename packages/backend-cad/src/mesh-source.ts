@@ -4,6 +4,7 @@ import path from "node:path";
 import type { GraphDoc, NodeRecord } from "@patchcad/shared";
 import { envelopeAabb, type CadContractPayload } from "./index.js";
 import { resolveDim, resolvePose } from "./bindings.js";
+import { mintedNames } from "./expand.js";
 import type { KernelClient } from "./kernel.js";
 
 /** Ports a generated mesh can honestly carry: the faces it mates on and the
@@ -31,8 +32,11 @@ export function meshSourceLint(meshGenConfigured: boolean) {
             `${n.id}: geometrySource "mesh" but the goal came with no reference image, and mesh generation works from images. Plan it "parametric" and model organic surfaces with loft, sweep and revolve.`,
           );
         }
+        // A joint's host features are the rules', cut into the mesh like
+        // segmentation's, never the architect's to move.
+        const minted = (graph.joints ?? []).filter((j) => j.a.node === n.id || j.b.node === n.id).map(mintedNames);
         for (const p of payload.ports ?? []) {
-          if (!MESH_PORT_TYPES.has(p.type)) {
+          if (!MESH_PORT_TYPES.has(p.type) && !minted.some((m) => m(p.name))) {
             problems.push(
               `${n.id}: a mesh node may only carry FLAT_FACE or joint ports (${[...MESH_PORT_TYPES].join(", ")}); port "${p.name}" is ${p.type}. Move that feature onto a parametric neighbour and mate the mesh to it.`,
             );

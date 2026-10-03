@@ -4,7 +4,7 @@ import type { ImportInterface } from "./kernel.js";
 import { CATALOG } from "./catalog.js";
 import { FDM_FIT_CUT_MM, MACHINED_FIT_CUT_MM, majorDiameter } from "./grounding.js";
 import { FDM_MIN_WALL_MM, selectJoint, type CadJoint, type JointInput, type JointProcess } from "./joints.js";
-import { sourcingOf } from "./sourcing.js";
+import { isMachined, sourcingOf } from "./sourcing.js";
 
 /**
  * Segmentation that joins its pieces with real hardware (Phase 4.6). The
@@ -167,7 +167,7 @@ const seated = (port: CadPort) => /_(head|back)(_\d+)?$/.test(port.name);
 export function jointCuts(node: NodeRecord): string[] {
   const payload = node.contract.payload as CadContractPayload | undefined;
   const s = sourcingOf(node);
-  const fit = s.process === "cnc" || s.process === "sheet_metal" || s.process === "laser_cut" ? MACHINED_FIT_CUT_MM : FDM_FIT_CUT_MM;
+  const fit = isMachined(s.process) ? MACHINED_FIT_CUT_MM : FDM_FIT_CUT_MM;
   const cuts: string[] = [];
   for (const port of payload?.ports ?? []) {
     if (preCut(port)) continue;

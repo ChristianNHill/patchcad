@@ -21,6 +21,10 @@ services:
     volumes:
       - projects:/app/projects
       - patchcad-home:/root/.patchcad
+      # The kernel answers import, segment and mesh-fit with paths into its
+      # cache; the server copies from them, so it mounts the cache at the
+      # kernel's own path (nested inside patchcad-home).
+      - kernel-cache:/root/.patchcad/kernel-cache
     depends_on:
       kernel: { condition: service_healthy }
 

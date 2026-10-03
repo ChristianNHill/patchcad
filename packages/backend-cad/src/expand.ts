@@ -2,11 +2,16 @@ import type { ArchitectOutput } from "@patchcad/engine";
 import type { GraphDoc, JointDecl, NodeRecord, ParamValue } from "@patchcad/shared";
 import type { CadContractPayload, Pose } from "./index.js";
 import { CATALOG, dim, familyDims, skuFor } from "./catalog.js";
-import { CadJoint, FDM_MIN_WALL_MM, selectJoint, type HardwarePick, type JointDecision, type JointInput, type Lin, type JointProcess } from "./joints.js";
+import {
+  CadJoint, FDM_MIN_WALL_MM, gt2PitchD, idlerScrews, pulleyHeight, railHoles, railScrews, rimMid, selectJoint,
+  type HardwarePick, type JointDecision, type JointInput, type Lin, type JointProcess,
+} from "./joints.js";
+import { gt2TipD } from "./registry.js";
 import { resolveBinding, resolveDim, resolvePose, type NumericPose } from "./bindings.js";
 import type { JointAxisDef } from "./assembly.js";
 import { SEAT_POSE } from "./grounding.js";
-import { sourcingOf } from "./sourcing.js";
+import { isMachined, sourcingOf } from "./sourcing.js";
+import { HARDWARE_PORT_TYPES } from "./index.js";
 
 /**
  * Plan-time joint expansion (the engine's `planning.expandPlan`). Each
@@ -39,8 +44,9 @@ type CadPortT = CadContractPayload["ports"][number];
 
 export const INSET_POSE = { origin: [0, 0, 0], zAxis: [0, 0, 1], xAxis: [1, 0, 0] } as const;
 
-/** Roles that turn with b; everything else a joint mints holds still with a. */
-export const MOVING_ROLES = new Set(["shaft", "collar", "eclip", "linear_bearing", "carriage"]);
+/** Roles that turn with b; everything else a joint mints holds still with a,
+ *  or turns with a drive's motor (jointAxes `coupled`). */
+export const MOVING_ROLES = new Set(["shaft", "collar", "eclip", "linear_bearing", "carriage", "spacer", "driven_pulley", "driven_gear", "lead_nut"]);
 
 const round = (n: number) => Math.round(n * 1e4) / 1e4;
 const strip = (d: string) => (d.startsWith("expr:") ? d.slice(5).trim() : d);
@@ -123,8 +129,7 @@ export function jointOwner(graph: Pick<GraphDoc, "joints">, nodeId: string): str
 
 function processOf(node: Pick<NodeRecord, "kind" | "contract">): { process: JointProcess; material?: string } {
   const s = sourcingOf(node);
-  const metal = s.process === "cnc" || s.process === "sheet_metal" || s.process === "laser_cut";
-  return { process: metal ? "CNC" : "FDM", material: s.material };
+  return { process: isMachined(s.process) ? "CNC" : "FDM", material: s.material };
 }
 
 type Live = Record<string, Record<string, ParamValue>>;
@@ -142,11 +147,12 @@ export function jointInput(graph: GraphDoc, j: CadJoint): JointInput | { error: 
   const a = graph.nodes[j.a.node];
   const b = graph.nodes[j.b.node];
   if (!a || !b) return { error: `${j.id}: joins ${!a ? j.a.node : j.b.node}, which is not a node` };
-  let wallA: number, wallB: number, lateral: number | undefined;
+  let wallA: number, wallB: number, lateral: number | undefined, wallMotor: number | undefined;
   try {
     wallA = resolveDim(graph, j.wallA);
     wallB = resolveDim(graph, j.wallB);
     lateral = j.lateral === undefined ? undefined : resolveDim(graph, j.lateral);
+    wallMotor = j.wallMotor === undefined ? undefined : resolveDim(graph, j.wallMotor);
   } catch (err) {
     return { error: `${j.id}: ${(err as Error).message}` };
   }
@@ -155,10 +161,10 @@ export function jointInput(graph: GraphDoc, j: CadJoint): JointInput | { error: 
   return {
     id: j.id, intent: j.intent, motion: j.motion, duty: j.duty, driven: j.driven, speedClass: j.speedClass,
     torqueClass: j.torqueClass, precise: j.precise, load: j.load, access: j.access, wallA, wallB, lateral,
-    processA: pa.process, processB: pb.process, materialB: pb.material,
+    processA: pa.process, processB: pb.process, materialA: pa.material, materialB: pb.material,
     minWall: (payloadOf(b).process?.minWall as number | undefined) ?? FDM_MIN_WALL_MM,
     flush: j.flush, count: j.count, threadHint: j.threadHint, shaftHint: j.shaftHint, strokeMm: j.strokeMm,
-    allowPrinted: j.allowPrinted,
+    ratio: j.ratio, centerMm: j.centerMm, wallMotor, allowPrinted: j.allowPrinted,
   };
 }
 
@@ -188,7 +194,17 @@ class Expansion {
     return p;
   }
 
+  /** Port and param names the current joint has added to its parts, kept on
+   *  the joint (`minted`) so the next expansion strips exactly those. */
+  minted: string[] = [];
+
   addPort(node: OutNode, side: "provides" | "requires", port: CadPortT, declType: string = port.type, description = "") {
+    this.minted.push(port.name);
+    this.putPort(node, side, port, declType, description);
+  }
+
+  /** A minted hardware node's own port: stripped with the node, not by name. */
+  putPort(node: OutNode, side: "provides" | "requires", port: CadPortT, declType: string = port.type, description = "") {
     payloadOf(node).ports.push(port);
     node.contract[side].push({ key: port.name, type: declType, description });
   }
@@ -196,7 +212,15 @@ class Expansion {
   /** A host param, bound by T1 to the hardware it hosts. Its default is
    *  resolved here, so the first cook already sees the catalog number. */
   bindings: { node: OutNode; name: string; binding: string }[] = [];
+  /** An envelope volume for a feature the joint grows on a part (a pin, a
+   *  boss), minted as `envelope:<json>` so unmint can find it again. */
+  addVolume(node: OutNode, volume: CadContractPayload["envelope"]["volumes"][number]) {
+    this.minted.push(`envelope:${JSON.stringify(volume)}`);
+    payloadOf(node).envelope.volumes.push(volume);
+  }
+
   addParam(node: OutNode, name: string, description: string, binding: string) {
+    this.minted.push(name);
     node.contract.params.push({ type: "number", name, description, default: 0 });
     payloadOf(node).paramBindings = { ...(payloadOf(node).paramBindings ?? {}), [name]: binding };
     this.bindings.push({ node, name, binding });
@@ -243,7 +267,7 @@ class Expansion {
     };
     this.out.nodes.push(node);
     this.graph.nodes[id] = { id, params: {}, contract: node.contract } as unknown as NodeRecord;
-    for (const p of ports) this.addPort(node, p.side, p.port, p.decl);
+    for (const p of ports) this.putPort(node, p.side, p.port, p.decl);
     if (typeof length === "string") {
       payloadOf(node).paramBindings = { length: length.startsWith("screwLengthIn:") ? length : `expr: ${strip(length)}` };
       this.bindings.push({ node, name: "length", binding: payloadOf(node).paramBindings.length! });
@@ -288,12 +312,26 @@ const pose = (origin: D[], z: Vec = [0, 0, 1]): Pose => ({ origin: origin as [D,
 
 // ---------- Strip ----------
 
-/** Remove everything a joint minted, so expansion can run again. */
-function unmint(out: ArchitectOutput, joint: CadJoint) {
-  const v = jointVar(joint.id);
-  const minted = (id: string) => id.startsWith(`${joint.id}_`) || id.startsWith(`${joint.id}-`);
+/** The names a joint's last expansion put on its parts: its `minted` list,
+ *  or for a joint expanded before that list existed, its prefix. A joint never
+ *  expanded owns nothing, so an architect's `bracket_face` survives a joint
+ *  called `bracket`. */
+export function mintedNames(joint: JointDecl): (name: string) => boolean {
+  const j = joint as JointDecl & { minted?: string[]; expanded?: string };
+  if (j.minted) {
+    const names = new Set(j.minted);
+    return (name) => names.has(name);
+  }
+  const v = jointVar(j.id);
+  return j.expanded ? (name) => name.startsWith(`${v}_`) : () => false;
+}
+
+/** Remove everything a joint minted, so expansion can run again. Hardware
+ *  ids carry `_`, which the architect's slugger never emits. */
+function unmint(out: ArchitectOutput, joint: JointDecl) {
+  const minted = (id: string) => id.startsWith(`${joint.id}_`);
   out.nodes = out.nodes.filter((n) => !minted(n.id));
-  const mine = (name: string) => name.startsWith(`${v}_`);
+  const mine = mintedNames(joint);
   for (const n of out.nodes) {
     if (n.id !== joint.a.node && n.id !== joint.b.node) continue;
     const p = payloadOf(n);
@@ -302,6 +340,7 @@ function unmint(out: ArchitectOutput, joint: CadJoint) {
     n.contract.requires = n.contract.requires.filter((x) => !mine(x.key));
     n.contract.params = n.contract.params.filter((x) => !mine(x.name));
     p.paramBindings = Object.fromEntries(Object.entries(p.paramBindings ?? {}).filter(([k]) => !mine(k)));
+    p.envelope.volumes = p.envelope.volumes.filter((v) => !mine(`envelope:${JSON.stringify(v)}`));
   }
   out.edges = out.edges.filter((e) => !minted(e.from) && !minted(e.to) && !mine(e.fromPort) && !mine(e.toPort));
 }
@@ -311,6 +350,7 @@ function unmint(out: ArchitectOutput, joint: CadJoint) {
 interface Ctx {
   x: Expansion;
   j: CadJoint;
+  i: JointInput;
   v: string;
   d: JointDecision;
   A: OutNode;
@@ -526,17 +566,27 @@ function spindle(c: Ctx) {
   x.addEdge(A.id, `${v}_seat_a`, ida, "seat");
   x.addEdge(A.id, `${v}_seat_b`, idb, "seat");
 
-  // A collar outside each seat: one node, two placements.
+  // A collar outside each seat: one node, two placements. A drive's driven
+  // wheel takes the upper one's place, on a spacer washer.
+  const drive = d.recipe === "belt_drive" || d.recipe === "gear_drive";
   x.mint(j.id, keep, d.summary, [{ side: "requires", port: { name: "seat", type: "FLAT_FACE", pose: SEAT_POSE as unknown as Pose, params: { ring_diameter: d.dims.d! + 1 } }, decl: "FLAT_FACE" }]);
-  x.addEdge(ida, "bore", kid, "seat");
+  if (!drive) x.addEdge(ida, "bore", kid, "seat");
   x.addEdge(idb, "bore", kid, "seat");
+  if (drive) {
+    x.mint(j.id, part(d, "spacer")!, d.summary, [{ side: "requires", port: { name: "seat", type: "FLAT_FACE", pose: SEAT_POSE as unknown as Pose, params: { ring_diameter: d.dims.d! + 1 } }, decl: "FLAT_FACE" }]);
+    x.addEdge(ida, "bore", hardwareId(j.id, "spacer"), "seat");
+  }
 
   // The shaft starts kw below a's far face (under the outer collar) and ends
-  // flush with b's far face, through b's hub.
-  const hubAt = sum(2 * kw, j.wallA);
+  // flush with b's far face, through b's hub: on the upper collar, or above a
+  // drive's driven wheel.
+  const hubAt = drive ? sum(kw, j.wallA, d.dims.zB!) : sum(2 * kw, j.wallA);
   x.mint(j.id, shaft, d.summary, [
     { side: "requires", port: { name: "end", type: "FLAT_FACE", pose: pose([0, 0, kw]), params: { ring_diameter: d.dims.d! / 2 } }, decl: "FLAT_FACE" },
     { side: "provides", port: { name: "hub", type: "FLAT_FACE", pose: pose([0, 0, hubAt]), params: { ring_diameter: d.dims.d! / 2 } }, decl: "HUB_BORE" },
+    ...(drive
+      ? [{ side: "provides" as const, port: { name: "drive", type: "FLAT_FACE" as const, pose: pose([0, 0, sum(kw, j.wallA, d.dims.zDriven!)]), params: { ring_diameter: d.dims.d! / 2 } }, decl: "HUB_BORE" }]
+      : []),
   ], sum(hubAt, j.wallB));
   x.addEdge(idb, "bore", sid, "end");
 
@@ -552,14 +602,29 @@ function spindle(c: Ctx) {
   ringFace(c, B, j.b.port, sum(`param(${B.id}.${v}_shaft_d)`, 2.4));
 }
 
+/** A pin printed on a, through b, its e-clip in a CLIP_GROOVE just past b's
+ *  far face: the clip's face on b, the groove a clip-width wide around it. */
 function printedPin(c: Ctx) {
   const { x, j, v, d, A, B, fa, fb } = c;
-  x.addPort(A, "provides", { name: `${v}_pin`, type: "SHAFT", pose: at(fa, 0, 0, 0), params: { diameter: d.dims.d!, length: j.wallB } });
+  const gw = d.dims.grooveWidth!;
+  x.addPort(A, "provides", { name: `${v}_pin`, type: "SHAFT", pose: at(fa, 0, 0, 0), params: { diameter: d.dims.d!, length: d.dims.length! } });
+  x.addPort(A, "provides", {
+    name: `${v}_clip_groove`, type: "CLIP_GROOVE", pose: at(fa, 0, 0, sum(j.wallB, gw / 2)),
+    params: { diameter: d.dims.groove!, width: gw, shaft_diameter: d.dims.d! },
+  });
+  x.mint(j.id, part(d, "pin_clip")!, d.summary, [{
+    side: "requires", port: { name: "seat", type: "FLAT_FACE", pose: pose([0, 0, round(gw / 2)], [0, 0, -1]), params: { ring_diameter: d.dims.groove! } }, decl: "CLIP_GROOVE",
+  }]);
+  x.addEdge(A.id, `${v}_clip_groove`, hardwareId(j.id, "pin_clip"), "seat");
+  x.addVolume(A, { kind: "cylinder", pose: at(fa, 0, 0, round(d.dims.length! / 2 - 0.5)), d: round(d.dims.d! + 1), h: round(d.dims.length! + 1) });
   x.addPort(B, "provides", { name: `${v}_pin_bore`, type: "BORE", pose: at(fb, 0, 0, 0), params: { diameter: d.dims.bore! } });
   faceMate(c);
   ringFace(c, A, j.a.port, d.dims.d! + 2.4);
   ringFace(c, B, j.b.port, d.dims.bore! + 2.4);
 }
+
+/** An LM-UU's pocket in b, pressed, standing on a lip. */
+const lmSeat = (c: Ctx): CadPortT["params"] => ({ od: `param(${c.B.id}.${c.v}_lm_od)`, length: c.d.dims.length!, fit: "press", retention: "lip" });
 
 function rodSlide(c: Ctx) {
   const { x, j, v, d, A, B, fa, fb } = c;
@@ -569,7 +634,7 @@ function rodSlide(c: Ctx) {
   unmate(c);
   const socket = sum(j.wallA, -FDM_MIN_WALL_MM);
   x.addParam(A, `${v}_rod_d`, `rod Ø for ${j.id}`, `hw:shaftD:param:${rid}.sku`);
-  x.addPort(A, "provides", { name: `${v}_rod`, type: "BORE", pose: at(fa, 0, 0, 0), params: { diameter: `param(${A.id}.${v}_rod_d)` } });
+  x.addPort(A, "provides", { name: `${v}_rod`, type: "BORE", pose: at(fa, 0, 0, 0), params: { diameter: `param(${A.id}.${v}_rod_d)`, depth: socket } });
   // Socketed in a, out along a's +z through b, long enough for the stroke.
   x.mint(j.id, rod, d.summary, [
     { side: "requires", port: { name: "end", type: "FLAT_FACE", pose: pose([0, 0, socket], [0, 0, -1]), params: { ring_diameter: d.dims.d! / 2 } }, decl: "BORE" },
@@ -577,9 +642,9 @@ function rodSlide(c: Ctx) {
   ], sum(socket, 1, d.dims.stroke!, j.wallB));
   x.addEdge(A.id, `${v}_rod`, rid, "end");
   x.addParam(B, `${v}_lm_od`, `linear bearing OD for ${j.id}`, `hw:bearingSeatD:param:${lid}.sku`);
-  x.addPort(B, "provides", { name: `${v}_lm_seat`, type: "BEARING_SEAT", pose: at(fb, 0, 0, 0), params: { od: `param(${B.id}.${v}_lm_od)`, width: d.dims.length!, fit: "press" } });
+  x.addPort(B, "provides", { name: `${v}_lm_seat`, type: "LINEAR_BEARING_SEAT", pose: at(fb, 0, 0, 0), params: lmSeat(c) });
   x.mint(j.id, lm, d.summary, [
-    { side: "requires", port: { name: "seat", type: "FLAT_FACE", pose: INSET_POSE as unknown as Pose, params: { ring_diameter: d.dims.od! - 1 } }, decl: "BEARING_SEAT" },
+    { side: "requires", port: { name: "seat", type: "FLAT_FACE", pose: INSET_POSE as unknown as Pose, params: { ring_diameter: d.dims.od! - 1 } }, decl: "LINEAR_BEARING_SEAT" },
     { side: "requires", port: { name: "bore", type: "FLAT_FACE", pose: SEAT_POSE as unknown as Pose, params: { ring_diameter: d.dims.d! + 1 } }, decl: "FLAT_FACE" },
   ]);
   x.addEdge(B.id, `${v}_lm_seat`, lid, "seat");
@@ -601,9 +666,6 @@ function rail(c: Ctx) {
     { side: "requires", port: { name: "seat", type: "FLAT_FACE", pose: SEAT_POSE as unknown as Pose, params: { size: dim(row, "width") } }, decl: "FLAT_FACE" },
     { side: "provides", port: { name: "top", type: "FLAT_FACE", pose: pose([0, 0, dim(row, "height")]), params: { size: dim(row, "width") } }, decl: "FLAT_FACE" },
   ]);
-  if (!A.contract.provides.some((p) => p.key === j.a.port)) A.contract.provides.push({ key: j.a.port, type: "FLAT_FACE", description: `joint ${j.id} rail` });
-  x.addEdge(A.id, j.a.port, rid, "seat");
-  x.addEdge(A.id, j.a.port, cid, "seat");
   if (!B.contract.requires.some((p) => p.key === j.b.port)) B.contract.requires.push({ key: j.b.port, type: "FLAT_FACE", description: `joint ${j.id} carriage` });
   x.addEdge(cid, "top", B.id, j.b.port);
   const thread = String(row.mountThread);
@@ -614,6 +676,19 @@ function rail(c: Ctx) {
     params: { diameter: `param(${B.id}.${v}_clear)`, nx: 2, ny: 2, pitch_x: mx, pitch_y: my },
   });
   ringFace(c, B, j.b.port, Math.hypot(mx, my) + CATALOG.threads[thread]!.clearance + 1.2);
+  // The rail's own screws, one node at every hole, heads on the counterbore
+  // floors, and the land they and the rail sit on: a RAIL_MOUNT on a's face.
+  const rr = familyDims(r.family, r.key)!;
+  const holes = railHoles(r.key, r.length!);
+  const screws = hostScrews(c, "rail", railScrews(c.i, r.key) as JointDecision, holes.map((u) => [u, 0]), 0, dim(rr, "height") - dim(rr, "cboreDepth"), j.wallA);
+  x.addPort(A, "provides", {
+    name: `${v}_rail_mount`, type: "RAIL_MOUNT", pose: at(c.fa, 0, 0, 0),
+    params: { width: dim(rr, "width"), length: r.length!, pitch: dim(rr, "pitch"), count: holes.length, hole_diameter: screws.hole, depth: screws.depth },
+  }, "RAIL_MOUNT", `the ${r.key} rail's land`);
+  x.addEdge(A.id, `${v}_rail_mount`, rid, "seat");
+  x.addEdge(A.id, `${v}_rail_mount`, cid, "seat");
+  // A ring of Ø10 passes between the holes whatever the pitch (≥ 20).
+  ringFace(c, A, j.a.port, 10);
 }
 
 function directDrive(c: Ctx) {
@@ -667,6 +742,220 @@ function directDrive(c: Ctx) {
   ringFace(c, B, j.b.port, d.dims.d! + 2.4);
 }
 
+/** Number params on a minted catalog node beside its sku: a gear's teeth, a
+ *  belt's wrap. */
+function setParams(node: OutNode, values: Record<string, number>) {
+  for (const [name, value] of Object.entries(values)) node.contract.params.push({ type: "number", name, description: "", default: round(value) });
+}
+
+/**
+ * Screws through catalog hardware into a, as the fixed-joint decision `sub`
+ * picked them (joints.ts hardwareScrews): one screw node placed at every
+ * position, each into a tapped hole or a heat-set insert in a, `w` up a's
+ * joint normal. The screw's `host` port sits `clamp` down its shank, so the
+ * head lands on the hardware. Returns the host ports, which the hardware the
+ * screws hold can mate to as well, and the params they share.
+ */
+function hostScrews(c: Ctx, prefix: string, sub: JointDecision, at_: [number, number][], w: D, clamp: number, wallHost: D, note = "") {
+  const { x, j, v, A, fa } = c;
+  const screw = part(sub, "screw")!;
+  const thread = sub.thread!;
+  const sid = hardwareId(j.id, `${prefix}_screw`);
+  const iid = hardwareId(j.id, `${prefix}_insert`);
+  const tapped = sub.recipe === "tapped";
+  const type = tapped ? "THREADED_HOLE" : "INSERT_POCKET";
+  const bound = (l: Lin) => strip(String(linExpr(l, clamp, wallHost)));
+  x.mint(j.id, { ...screw, role: `${prefix}_screw` }, sub.summary, [
+    { side: "requires", port: { name: "host", type: "FLAT_FACE", pose: pose([0, 0, -round(clamp)], [0, 0, -1]), params: { ring_diameter: CATALOG.threads[thread]!.clearance + 1 } }, decl: type },
+  ], `screwLengthIn: ${screw.family}, ${thread}, min=${bound(sub.window!.min)}, max=${bound(sub.window!.max)}`);
+  const depth = `expr: param(${sid}.length) - ${round(clamp)} + 0.5`;
+  let params: CadPortT["params"];
+  if (tapped) {
+    x.addParam(A, `${v}_${prefix}_tap_depth`, `tapped depth for ${j.id}'s ${prefix} screws`, depth);
+    params = { thread, depth: `param(${A.id}.${v}_${prefix}_tap_depth)` };
+  } else {
+    const ins = part(sub, "insert")!;
+    x.addParam(A, `${v}_${prefix}_insert_d`, `heat-set insert hole Ø for ${j.id}'s ${prefix} screws`, `hw:insertHoleD:param:${iid}.sku`);
+    x.addParam(A, `${v}_${prefix}_pocket`, `insert pocket depth for ${j.id}'s ${prefix} screws`, depth);
+    x.mint(j.id, { ...ins, role: `${prefix}_insert` }, sub.summary, [{ side: "requires", port: { name: "seat", type: "FLAT_FACE", pose: INSET_POSE as unknown as Pose, params: { ring_diameter: n(ins, "holeD") } }, decl: "INSERT_POCKET" }]);
+    params = { diameter: `param(${A.id}.${v}_${prefix}_insert_d)`, depth: `param(${A.id}.${v}_${prefix}_pocket)` };
+  }
+  const ports = at_.map(([u, vv], k) => {
+    const name = `${v}_${prefix}_${tapped ? "tap" : "pocket"}${at_.length > 1 ? `_${k + 1}` : ""}`;
+    x.addPort(A, "provides", { name, type, pose: at(fa, u, vv, w), params }, type, note);
+    if (!tapped) x.addEdge(A.id, name, iid, "seat");
+    x.addEdge(A.id, name, sid, "host");
+    return name;
+  });
+  return { ports, hole: tapped ? CATALOG.threads[thread]!.tapDrill : params.diameter!, depth: params.depth! };
+}
+
+/** A NEMA 17 under a at (u, v) on a's joint face, its shaft up through a:
+ *  the mount face wallMotor under a's face (a pocket in a's underside when
+ *  that is thinner than wallA), the shaft's port `z` above a's face. */
+function nemaUnder(c: Ctx, u: number, vv: number, z: number): string {
+  const { x, j, v, d, A, fa } = c;
+  const motor = part(d, "motor")!;
+  const row = familyDims(motor.family, motor.key)!;
+  const mid = hardwareId(j.id, "motor");
+  const wm: D = j.wallMotor ?? j.wallA;
+  x.addParam(A, `${v}_pilot`, `motor pilot Ø for ${j.id}`, `hw:motorPilot:param:${mid}.sku`);
+  x.addPort(A, "provides", {
+    name: `${v}_motor_mount`, type: "MOTOR_MOUNT", pose: at(fa, u, vv, times(-1, wm), true),
+    params: { pilot_diameter: `param(${A.id}.${v}_pilot)`, hole_diameter: CATALOG.threads[String(row.holeThread)]!.clearance, pitch_x: dim(row, "holePitch"), pitch_y: dim(row, "holePitch") },
+  }, "MOTOR_MOUNT", j.wallMotor === undefined ? "" : `the motor's face, under a: pocket a's underside around the ${dim(row, "face")} square body up to here`);
+  x.mint(j.id, motor, d.summary, [
+    { side: "requires", port: { name: "mount", type: "FLAT_FACE", pose: SEAT_POSE as unknown as Pose, params: { ring_diameter: dim(row, "shaftD") + 2 } }, decl: "MOTOR_MOUNT" },
+    { side: "provides", port: { name: "shaft", type: "FLAT_FACE", pose: pose([0, 0, times(-1, sum(wm, z))], [0, 0, -1]), params: { ring_diameter: dim(row, "shaftD") / 2 } }, decl: "HUB_BORE" },
+  ]);
+  x.addEdge(A.id, `${v}_motor_mount`, mid, "mount");
+  return mid;
+}
+
+/** A wheel on a shaft: its bore port at its hub face (a pulley) or, for a
+ *  centred gear, half its thickness down. */
+const wheelBore = (dz: number, d: number) => ({
+  side: "requires" as const, port: { name: "bore", type: "FLAT_FACE" as const, pose: pose([0, 0, round(dz)], [0, 0, -1]), params: { ring_diameter: d + 1 } }, decl: "HUB_BORE",
+});
+
+/** A GT2 belt round the motor pulley and one more wheel `center` along its
+ *  +x (or -x with `back`), resting on the motor pulley's `belt` port. Its
+ *  inner Ø clears the tips by 0.1, a running clearance the envelope band
+ *  needs so its tessellated arcs never cut the rims. */
+function wrapBelt(c: Ctx, pulleyId: string, center: number, teeth: [number, number], back: boolean) {
+  const { x, j, d } = c;
+  const node = x.mint(j.id, part(d, "belt")!, d.summary, [{
+    side: "requires",
+    port: { name: "seat", type: "FLAT_FACE", pose: { origin: [0, 0, 0], zAxis: [0, 0, -1], xAxis: [back ? -1 : 1, 0, 0] }, params: { standoff: 0 } },
+    decl: "FLAT_FACE",
+  }]);
+  setParams(node, { center, d1: gt2TipD(teeth[0]) + 0.2, d2: gt2TipD(teeth[1]) + 0.2 });
+  x.addEdge(pulleyId, "belt", hardwareId(j.id, "belt"), "seat");
+}
+
+/** A belt or gear drive: b on the spindle, above the driven wheel; the
+ *  motor `center` along a's x, its wheel at the height the rule set. */
+function offsetDrive(c: Ctx) {
+  spindle(c);
+  const { x, j, d } = c;
+  const mid = nemaUnder(c, d.dims.center!, 0, d.dims.zMotor!);
+  const sid = hardwareId(j.id, part(d, "shaft")!.role);
+  const motorShaft = familyDims("nema17", part(d, "motor")!.key)!;
+  if (d.recipe === "belt_drive") {
+    const [mp, dp] = [part(d, "motor_pulley")!, part(d, "driven_pulley")!];
+    const width = dim(familyDims("gt2_loop", part(d, "belt")!.key)!, "width");
+    x.mint(j.id, mp, d.summary, [
+      wheelBore(0, n(mp, "bore")),
+      { side: "provides", port: { name: "belt", type: "FLAT_FACE", pose: pose([0, 0, round(rimMid(familyDims(mp.family, mp.key)!) - width / 2)]), params: { standoff: 0 } }, decl: "FLAT_FACE" },
+    ]);
+    x.mint(j.id, dp, d.summary, [wheelBore(0, n(dp, "bore"))]);
+    x.addEdge(mid, "shaft", hardwareId(j.id, mp.role), "bore");
+    x.addEdge(sid, "drive", hardwareId(j.id, dp.role), "bore");
+    // From the motor back along -x to the driven axis.
+    wrapBelt(c, hardwareId(j.id, mp.role), d.dims.center!, [d.dims.teethMotor!, d.dims.teethDriven!], true);
+    return;
+  }
+  const t = d.dims.thickness!;
+  const shaft = part(d, "shaft")!;
+  const gear = (role: string, teeth: number, bore: number, flat: number, phase: number) => {
+    const node = x.mint(j.id, part(d, role)!, d.summary, [wheelBore(-t / 2, bore)]);
+    setParams(node, { module: d.dims.module!, teeth, pressure_angle: 20, thickness: t, bore, flat, phase });
+  };
+  gear("motor_gear", d.dims.teethMotor!, dim(motorShaft, "shaftD"), dim(motorShaft, "shaftD") / 2 - dim(motorShaft, "flatDepth"), d.dims.phase!);
+  gear("driven_gear", d.dims.teethDriven!, d.dims.d!, shaft.family === "d_shaft" ? d.dims.d! / 2 - n(shaft, "flatDepth") : 0, 0);
+  x.addEdge(mid, "shaft", hardwareId(j.id, "motor_gear"), "bore");
+  x.addEdge(sid, "drive", hardwareId(j.id, "driven_gear"), "bore");
+}
+
+/** A lead screw on a's normal: motor under a, coupler, screw, its nut in b
+ *  (placing b), and the guide rod in a beside it through an LM8UU in b. The
+ *  rod is not mated to the bearing, so b has one placement. */
+function leadScrew(c: Ctx) {
+  const { x, j, v, d, A, B, fa, fb } = c;
+  unmate(c);
+  const [cp, nut] = [familyDims("coupler", part(d, "coupler")!.key)!, familyDims("lead_nut", part(d, "lead_nut")!.key)!];
+  const [cid, sid, nid, rid, lid] = ["coupler", "lead_screw", "lead_nut", "rod", "linear_bearing"].map((r) => hardwareId(j.id, r)) as [string, string, string, string, string];
+  const ft = dim(nut, "flangeT");
+  const mid = nemaUnder(c, 0, 0, d.dims.gap!);
+  x.mint(j.id, part(d, "coupler")!, d.summary, [
+    wheelBore(0, dim(cp, "boreA")),
+    { side: "provides", port: { name: "screw", type: "FLAT_FACE", pose: pose([0, 0, dim(cp, "length") / 2]), params: { ring_diameter: dim(cp, "boreB") + 1 } }, decl: "HUB_BORE" },
+  ]);
+  x.addEdge(mid, "shaft", cid, "bore");
+  x.mint(j.id, part(d, "lead_screw")!, d.summary, [
+    { side: "requires", port: { name: "end", type: "FLAT_FACE", pose: SEAT_POSE as unknown as Pose, params: { ring_diameter: 4 } }, decl: "HUB_BORE" },
+    { side: "provides", port: { name: "nut", type: "FLAT_FACE", pose: pose([0, 0, round(d.dims.z0! - ft - d.dims.screwStart!)]), params: { ring_diameter: dim(nut, "bodyD") } }, decl: "FLAT_FACE" },
+  ]);
+  x.addEdge(cid, "screw", sid, "end");
+  x.mint(j.id, part(d, "lead_nut")!, d.summary, [
+    { side: "requires", port: { name: "screw", type: "FLAT_FACE", pose: pose([0, 0, ft]), params: { ring_diameter: dim(nut, "bodyD") } }, decl: "FLAT_FACE" },
+    { side: "requires", port: { name: "seat", type: "FLAT_FACE", pose: SEAT_POSE as unknown as Pose, params: { ring_diameter: dim(nut, "flangeD") - 1 } }, decl: "BORE" },
+  ]);
+  x.addEdge(sid, "nut", nid, "screw");
+  x.addPort(B, "provides", { name: `${v}_nut`, type: "BORE", pose: at(fb, 0, 0, 0), params: { diameter: dim(nut, "bodyD") } }, "BORE", "the lead nut's body, its flange against this face");
+  x.addPort(B, "provides", {
+    name: `${v}_nut_holes`, type: "HOLE_PATTERN", pose: at(fb, 0, 0, 0),
+    params: { diameter: CATALOG.threads[String(nut.holeThread)]!.clearance, count: dim(nut, "holeCount"), pcd: dim(nut, "pcd") },
+  });
+  x.addEdge(B.id, `${v}_nut`, nid, "seat");
+
+  const g = d.dims.guide!;
+  const socket = sum(j.wallA, -FDM_MIN_WALL_MM);
+  x.addParam(A, `${v}_rod_d`, `guide rod Ø for ${j.id}`, `hw:shaftD:param:${rid}.sku`);
+  x.addPort(A, "provides", { name: `${v}_rod`, type: "BORE", pose: at(fa, g, 0, 0), params: { diameter: `param(${A.id}.${v}_rod_d)`, depth: socket } });
+  x.mint(j.id, part(d, "rod")!, d.summary, [
+    { side: "requires", port: { name: "end", type: "FLAT_FACE", pose: pose([0, 0, socket], [0, 0, -1]), params: { ring_diameter: 4 } }, decl: "BORE" },
+  ], sum(socket, d.dims.z0!, d.dims.stroke!, j.wallB));
+  x.addEdge(A.id, `${v}_rod`, rid, "end");
+  x.addParam(B, `${v}_lm_od`, `linear bearing OD for ${j.id}`, `hw:bearingSeatD:param:${lid}.sku`);
+  x.addPort(B, "provides", { name: `${v}_lm_seat`, type: "LINEAR_BEARING_SEAT", pose: at(fb, g, 0, 0), params: lmSeat(c) });
+  x.mint(j.id, part(d, "linear_bearing")!, d.summary, [
+    { side: "requires", port: { name: "seat", type: "FLAT_FACE", pose: INSET_POSE as unknown as Pose, params: { ring_diameter: d.dims.od! - 1 } }, decl: "LINEAR_BEARING_SEAT" },
+  ]);
+  x.addEdge(B.id, `${v}_lm_seat`, lid, "seat");
+  ringFace(c, A, j.a.port, dim(cp, "od") + 2.4);
+  ringFace(c, B, j.b.port, dim(nut, "pcd") + CATALOG.threads[String(nut.holeThread)]!.clearance + 2.4);
+}
+
+/** The rail, a NEMA 17 past one end and an idler past the other, both
+ *  `beltY` to a's +y, an open belt round them that b clamps in a slot over its
+ *  near run. The idler stands on a boss of a, on a washer, on its screw. */
+function beltCarriage(c: Ctx) {
+  rail(c);
+  const { x, j, v, d, A, B, fa, fb } = c;
+  const [X, Y] = [d.dims.drive!, d.dims.beltY!];
+  const mp = part(d, "motor_pulley")!;
+  const [idl, wash] = [familyDims("gt2_idler", part(d, "idler")!.key)!, familyDims("washer", part(d, "idler_washer")!.key)!];
+  const belt = familyDims("gt2_belt", part(d, "belt")!.key)!;
+  const mid = nemaUnder(c, -X, Y, d.dims.gap!);
+  x.mint(j.id, mp, d.summary, [
+    wheelBore(0, n(mp, "bore")),
+    { side: "provides", port: { name: "belt", type: "FLAT_FACE", pose: pose([0, 0, round(rimMid(familyDims(mp.family, mp.key)!) - dim(belt, "width") / 2)]), params: { standoff: 0 } }, decl: "FLAT_FACE" },
+  ]);
+  x.addEdge(mid, "shaft", hardwareId(j.id, mp.role), "bore");
+
+  const boss = d.dims.boss!;
+  const bossD = round(dim(wash, "od") + 2 * FDM_MIN_WALL_MM + 2);
+  const tw = dim(wash, "thickness");
+  const [host] = hostScrews(c, "idler", idlerScrews(c.i, boss) as JointDecision, [[X, Y]], boss, tw + pulleyHeight(idl), sum(boss, j.wallA),
+    `on a Ø${bossD} boss standing ${boss} above the joint face, under the belt idler`).ports;
+  x.addVolume(A, { kind: "cylinder", pose: at(fa, X, Y, round(boss / 2 - 0.5)), d: bossD + 1, h: round(boss + 1) });
+  x.mint(j.id, part(d, "idler_washer")!, d.summary, [{ side: "requires", port: { name: "seat", type: "FLAT_FACE", pose: SEAT_POSE as unknown as Pose, params: { ring_diameter: dim(wash, "id") + 1 } }, decl: "FLAT_FACE" }]);
+  x.addEdge(A.id, host!, hardwareId(j.id, "idler_washer"), "seat");
+  x.mint(j.id, part(d, "idler")!, d.summary, [{
+    side: "requires", port: { name: "seat", type: "FLAT_FACE", pose: pose([0, 0, -tw], [0, 0, -1]), params: { ring_diameter: dim(idl, "bore") + 1, standoff: tw } }, decl: "FLAT_FACE",
+  }]);
+  x.addEdge(A.id, host!, hardwareId(j.id, "idler"), "seat");
+  wrapBelt(c, hardwareId(j.id, mp.role), 2 * X, [20, 20], false);
+
+  // b's frame is a's turned about x, so a's +y is b's -y.
+  const t = dim(belt, "thickness");
+  x.addPort(B, "provides", {
+    name: `${v}_belt_slot`, type: "SLOT", pose: at(fb, 0, -round(Y - gt2TipD(20) / 2 - 0.1 - t / 2), 0),
+    params: { width: round(t + 1), depth: d.dims.slotDepth! },
+  }, "SLOT", "the belt's near run passes along here: b clamps it in this slot");
+}
+
 const RECIPES: Record<JointDecision["recipe"], ((c: Ctx) => void) | undefined> = {
   tapped: fastener,
   through_bolt: fastener,
@@ -681,6 +970,10 @@ const RECIPES: Record<JointDecision["recipe"], ((c: Ctx) => void) | undefined> =
   rod_slide: rodSlide,
   rail,
   direct_drive: directDrive,
+  belt_drive: offsetDrive,
+  gear_drive: offsetDrive,
+  lead_screw: leadScrew,
+  belt_carriage: beltCarriage,
   snap: undefined,
 };
 
@@ -712,7 +1005,7 @@ export function expandJoints(input: ArchitectOutput, live?: Live): ArchitectOutp
       cached.set(`${n.id}.${name}`, { binding, value: n.contract.params.find((p) => p.name === name)?.default });
     }
   }
-  for (const j of joints) if (j.success) unmint(out, j.data);
+  joints.forEach((j, i) => j.success && unmint(out, out.joints![i]!));
   const x = new Expansion(out, live);
   const kept: JointDecl[] = [];
   joints.forEach((parsed, i) => {
@@ -725,14 +1018,17 @@ export function expandJoints(input: ArchitectOutput, live?: Live): ArchitectOutp
     const decision = "error" in inp ? inp : selectJoint(inp);
     const recipe = "error" in decision ? undefined : RECIPES[decision.recipe];
     if ("error" in decision || !recipe || !A || !B) return void kept.push(j);
+    if (!payloadOf(A).ports.some((p) => p.name === j.a.port) || !payloadOf(B).ports.some((p) => p.name === j.b.port)) {
+      return void kept.push(j);
+    }
+    x.minted = [];
     try {
-      if (!payloadOf(A).ports.some((p) => p.name === j.a.port) || !payloadOf(B).ports.some((p) => p.name === j.b.port)) {
-        return void kept.push(j);
-      }
-      recipe({ x, j, v: jointVar(j.id), d: decision, A, B, fa: frameOf(x.port(A, j.a.port).pose), fb: frameOf(x.port(B, j.b.port).pose) });
-      kept.push({ ...j, expanded: decisionKey(decision) } as JointDecl);
-    } catch {
-      kept.push(j);
+      recipe({ x, j, i: inp as JointInput, v: jointVar(j.id), d: decision, A, B, fa: frameOf(x.port(A, j.a.port).pose), fb: frameOf(x.port(B, j.b.port).pose) });
+      kept.push({ ...j, expanded: decisionKey(decision), minted: [...new Set(x.minted)] } as JointDecl);
+    } catch (err) {
+      // Half a recipe is worse than none: strip what it got to, and say why.
+      unmint(out, { ...j, minted: x.minted } as JointDecl);
+      kept.push({ ...j, failed: `${decision.rule} could not be expanded: ${(err as Error).message}` } as JointDecl);
     }
   });
   x.settle();
@@ -743,7 +1039,8 @@ export function expandJoints(input: ArchitectOutput, live?: Live): ArchitectOutp
   }
   // The plan's own edges first, then the minted ones, so a re-expansion lists
   // a face mate it added last time exactly where this one does.
-  const minted = (e: OutEdge) => [e.from, e.to].some((id) => id.includes("_")) || [e.fromPort, e.toPort].some((p) => /_/.test(p) && kept.some((j) => p.startsWith(`${jointVar(j.id)}_`)));
+  const names = new Set(kept.flatMap((j) => (j as { minted?: string[] }).minted ?? []));
+  const minted = (e: OutEdge) => [e.from, e.to].some((id) => id.includes("_")) || names.has(e.fromPort) || names.has(e.toPort);
   out.edges = [...out.edges.filter((e) => !minted(e)), ...out.edges.filter(minted)];
   out.joints = kept;
   return out;
@@ -768,6 +1065,37 @@ export function jointErrors(graph: GraphDoc): string[] {
 }
 
 // ---------- Kinematics ----------
+
+/** A pose moved (u, v) across its own face. */
+function across(p: NumericPose, u: number, v: number): NumericPose {
+  const [z, x] = [p.zAxis, p.xAxis];
+  const y = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]];
+  return { ...p, origin: p.origin.map((o, k) => round(o + u * x[k]! + v * y[k]!)) as NumericPose["origin"] };
+}
+
+/** What a drive's motor turns, by role, about axes parallel to the joint's
+ *  port (in a's frame), in degrees per unit of the joint's travel: a belt's
+ *  pulleys turn together, a gear pair against each other, a lead screw 360°
+ *  per lead, the pulleys of a belt carriage 360° per pitch circumference. */
+function drivenWith(d: JointDecision, pose: NumericPose): { pose: NumericPose; ratio: number; moving: string[] }[] {
+  const r = (d.dims.teethDriven ?? 1) / (d.dims.teethMotor ?? 1);
+  const perMm = 360 / (Math.PI * gt2PitchD(20));
+  switch (d.recipe) {
+    case "belt_drive":
+      return [{ pose: across(pose, d.dims.center!, 0), ratio: round(r), moving: ["motor_pulley"] }];
+    case "gear_drive":
+      return [{ pose: across(pose, d.dims.center!, 0), ratio: round(-r), moving: ["motor_gear"] }];
+    case "lead_screw":
+      return [{ pose, ratio: round(360 / d.dims.lead!), moving: ["coupler", "lead_screw"] }];
+    case "belt_carriage":
+      return [
+        { pose: across(pose, -d.dims.drive!, d.dims.beltY!), ratio: round(perMm), moving: ["motor_pulley"] },
+        { pose: across(pose, d.dims.drive!, d.dims.beltY!), ratio: round(perMm), moving: ["idler"] },
+      ];
+    default:
+      return [];
+  }
+}
 
 /**
  * Every motion joint's axis, in a's frame at a's joint port, and the nodes
@@ -801,10 +1129,12 @@ export function jointAxes(graph: GraphDoc): JointAxisDef[] {
         }
       }
     }
-    const span = decision.recipe === "rail" ? (decision.dims.railLength! - decision.dims.carriage!) / 2 : 0;
+    const railed = decision.recipe === "rail" || decision.recipe === "belt_carriage";
+    const span = railed ? (decision.dims.railLength! - decision.dims.carriage!) / 2 : 0;
     const limits: [number, number] =
-      joint.motion === "revolute" ? (joint.limits ?? [-180, 180]) : decision.recipe === "rail" ? [-span, span] : [0, decision.dims.stroke ?? 0];
-    out.push({ id: joint.id, type: joint.motion, node: joint.a.node, pose, axis: decision.recipe === "rail" ? "x" : "z", limits, moving: [...moving] });
+      joint.motion === "revolute" ? (joint.limits ?? [-180, 180]) : railed ? [-span, span] : [0, decision.dims.stroke ?? 0];
+    const coupled = drivenWith(decision, pose).map((c) => ({ ...c, moving: c.moving.map((r) => hardwareId(joint.id, r)).filter((id) => graph.nodes[id]) }));
+    out.push({ id: joint.id, type: joint.motion, node: joint.a.node, pose, axis: railed ? "x" : "z", limits, moving: [...moving], ...(coupled.length ? { coupled } : {}) });
   }
   return out;
 }
@@ -821,7 +1151,8 @@ export const cadJointRuleLint = {
   run(graph: GraphDoc): string[] {
     const problems: string[] = [];
     const ids = new Set<string>();
-    for (const { joint, decision } of jointDecisions(graph)) {
+    const decisions = jointDecisions(graph);
+    for (const { joint, decision } of decisions) {
       if (ids.has(joint.id)) problems.push(`joint ${joint.id}: declared twice; joint ids must be unique`);
       ids.add(joint.id);
       if ("error" in decision) {
@@ -846,7 +1177,9 @@ export const cadJointRuleLint = {
           }
         });
         const missing = [joint.a, joint.b].some((end) => !payloadOf(graph.nodes[end.node] ?? { contract: {} }).ports?.some((p) => p.name === end.port));
-        if (!missing) problems.push(`joint ${joint.id}: was never expanded into hardware${unframed.length ? ` — ${unframed.join("; ")}` : ""}.`);
+        const failed = (graph.joints.find((j) => j.id === joint.id) as { failed?: string } | undefined)?.failed;
+        const why = [...unframed, ...(failed ? [failed] : [])];
+        if (!missing) problems.push(`joint ${joint.id}: was never expanded into hardware${why.length ? ` — ${why.join("; ")}` : ""}.`);
         continue;
       }
       if (was !== decisionKey(decision)) {
@@ -862,9 +1195,9 @@ export const cadJointRuleLint = {
     }
     // Hardware outside every joint: fasteners answer to cadFastenerJustifiedLint,
     // the rest must at least sit in a host feature.
-    const owned = new Set(jointDecisions(graph).flatMap(({ joint, decision }) =>
+    const owned = new Set(decisions.flatMap(({ joint, decision }) =>
       "error" in decision ? [] : decision.parts.map((p) => hardwareId(joint.id, p.role))));
-    const hosted = new Set(["THREADED_HOLE", "INSERT_POCKET", "NUT_TRAP", "COUNTERBORE", "COUNTERSINK", "DOWEL_HOLE", "BEARING_SEAT", "BUSHING_BORE", "MOTOR_MOUNT", "MAGNET_POCKET", "HUB_BORE", "SHAFT", "BORE"]);
+    const hosted = new Set([...HARDWARE_PORT_TYPES, "SHAFT", "BORE"]);
     const MOTION_KINDS = new Set(["bearing", "bushing", "shaft", "collar", "eclip", "linear_bearing", "rail", "carriage", "motor"]);
     for (const nd of Object.values(graph.nodes)) {
       if (!MOTION_KINDS.has(nd.kind) || owned.has(nd.id)) continue;

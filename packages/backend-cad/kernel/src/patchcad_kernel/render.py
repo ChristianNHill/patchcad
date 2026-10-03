@@ -376,7 +376,7 @@ def _sheet_from_mesh(v: np.ndarray, t: np.ndarray, path: str, views: int) -> dic
         _draw_scale_bar(draw, font, mm_per_px, x + VIEW_PX - 10, y + VIEW_PX - 12)
 
     sheet.save(path, "PNG", optimize=True)
-    return {"views": [n for n, _ in tiles], "triangles": int(len(t)), "size": list(sheet.size)}
+    return {"views": [n for n, _ in tiles], "triangles": len(t), "size": list(sheet.size)}
 
 
 def render_sheet(shape: Any, path: str, views: int = 6) -> dict[str, Any]:

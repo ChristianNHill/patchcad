@@ -2,13 +2,14 @@ import { describe, expect, it } from "vitest";
 import type { NodeRecord } from "@patchcad/shared";
 import {
   FASTENING_HARDWARE,
-  isoThreadedRodCode,
   METRIC,
   REGISTRY_HARDWARE,
   resolveDeterministic,
   resolveHardware,
   skuOf,
+  unresolvedHardware,
 } from "./registry.js";
+import { cadHardwareResolvesLint } from "./index.js";
 import { CATALOG, skuFor, standardLengths } from "./catalog.js";
 
 /**
@@ -29,7 +30,10 @@ const node = (over: Partial<NodeRecord> = {}): NodeRecord =>
 
 describe("resolveHardware", () => {
   it("covers every registry class", () => {
-    expect([...REGISTRY_HARDWARE].sort()).toEqual([
+    // Containment, not equality: drive families keep adding kinds. Every kind
+    // building is the per-family module test's job.
+    expect([...REGISTRY_HARDWARE]).toEqual(
+      expect.arrayContaining([
       "bearing",
       "belt",
       "bushing",
@@ -51,7 +55,8 @@ describe("resolveHardware", () => {
       "standoff",
       "threaded_rod",
       "washer",
-    ]);
+          ]),
+    );
   });
 
   it("only the joining hardware needs justifying by a hole port", () => {
@@ -88,7 +93,8 @@ describe("resolveHardware", () => {
   });
 
   it("declines a SKU of another kind rather than reinterpreting it", () => {
-    expect(resolveHardware(node({ kind: "fastener", params: { sku: "BRG-608" } }))).toBeNull();
+    expect(skuOf(node({ kind: "fastener", params: { sku: "BRG-608" } }))).toBeNull();
+    expect(resolveHardware(node({ kind: "fastener", params: { sku: "BRG-608" } }))).toContain("raise ValueError(");
     expect(resolveHardware(node({ kind: "bearing", params: { sku: "BRG-608" } }))).toContain("annulus(11, ");
   });
 
@@ -98,12 +104,14 @@ describe("resolveHardware", () => {
     );
   });
 
-  it("loads a vendor STEP when the SKU has one, falling back to the parametric model", () => {
+  it("loads a vendor STEP when the SKU has one, falling back to the parametric model only when it is missing", () => {
     CATALOG.skus.push({ id: "BRG-625", family: "bearing", key: "625", stepFile: "625-2rs.step" });
     try {
       const code = resolveHardware(node({ kind: "bearing", params: { sku: "BRG-625" } }))!;
       expect(code).toContain('return load_import("625-2rs.step")');
-      expect(code).toContain("except Exception:");
+      // A STEP that is there but broken must fail, not hide behind the fallback.
+      expect(code).toContain("except FileNotFoundError:");
+      expect(code).not.toContain("except Exception");
       expect(code).toContain("annulus(8, "); // the fallback ring is still there
     } finally {
       CATALOG.skus.pop();
@@ -124,7 +132,6 @@ describe("resolveHardware", () => {
     expect(resolveHardware(node({ kind: "threaded_rod", params: { thread: "M4" } }))).toContain("Cylinder(1.7725, L)");
     expect(resolveHardware(node({ kind: "threaded_rod", params: { thread: "M5" } }))).toContain("Cylinder(2.24, L)");
     expect(resolveHardware(node({ kind: "threaded_rod", params: { thread: "M4" } }))).not.toContain("IsoThread");
-    expect(isoThreadedRodCode("M4")).toContain("pitch=0.7");
   });
 
   it("takes the thread from live params first, contract default second", () => {
@@ -145,9 +152,17 @@ describe("resolveHardware", () => {
     );
   });
 
-  it("declines rather than guessing an unknown thread or kind", () => {
-    expect(resolveHardware(node({ kind: "nut", params: { thread: "M10" } }))).toBeNull();
+  it("leaves a non-hardware kind to the generator", () => {
     expect(resolveHardware(node({ kind: "part", params: { thread: "M4" } }))).toBeNull();
+  });
+
+  it("never hands hardware with an unknown thread or sku to the generator", () => {
+    // null here meant the engine fell through to the LLM and generated a screw.
+    for (const params of [{ thread: "M10" }, { sku: "ISO4032-M10" }, { sku: "BRG-608" }] as Record<string, string>[]) {
+      const code = resolveHardware(node({ kind: "nut", params }));
+      expect(code, JSON.stringify(params)).toContain("raise ValueError(");
+      expect(code).toContain("names no nut in the hardware catalog");
+    }
   });
 
   it("gives each thread its own geometry, which is why T1 re-codegens", () => {
@@ -181,5 +196,25 @@ describe("resolveDeterministic", () => {
 
   it("leaves ordinary parts to the generator", () => {
     expect(resolveDeterministic(node({ kind: "part" }))).toBeNull();
+  });
+});
+
+describe("cadHardwareResolvesLint", () => {
+  const graph = (nodes: NodeRecord[]) =>
+    ({ nodes: Object.fromEntries(nodes.map((n) => [n.id, n])), edges: [] }) as never;
+
+  it("fails a hardware node whose sku or thread names no catalog row, at plan time", () => {
+    const problems = cadHardwareResolvesLint.run(
+      graph([
+        node({ id: "nut-a", kind: "nut", params: { thread: "M10" } }),
+        node({ id: "j1_screw", kind: "fastener", params: { sku: "ISO4762-M3x13" } }),
+        node({ id: "ok", kind: "nut", params: { thread: "M4" } }),
+        node({ id: "plate", kind: "part" }),
+      ]),
+    );
+    expect(problems).toHaveLength(2);
+    expect(problems[0]).toMatch(/^nut-a: nut thread "M10" names no nut in the hardware catalog \(hex_nut has M2, /);
+    expect(problems[1]).toMatch(/^j1_screw: fastener sku "ISO4762-M3x13"/);
+    expect(unresolvedHardware(node({ kind: "gear" }))).toBeNull();
   });
 });

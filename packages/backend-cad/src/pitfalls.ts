@@ -1,5 +1,5 @@
 import { readFileSync, statSync } from "node:fs";
-import { MIN_PITFALL_OCCURRENCES, type LearnedPitfall } from "@patchcad/engine";
+import { learnedPitfallFix, MIN_PITFALL_OCCURRENCES, type LearnedPitfall } from "@patchcad/engine";
 
 /**
  * Error→fix retrieval for the repair loop. A gate report says WHAT broke; the
@@ -180,7 +180,7 @@ export const PITFALLS: Pitfall[] = [
   {
     id: "bearing-no-shoulder",
     stage: "G3",
-    match: /\(BEARING_SEAT\): no shoulder/,
+    match: /\((?:LINEAR_)?BEARING_SEAT\): no shoulder/,
     fix: "The bearing seat has no shoulder, so the bearing falls through. Cut the seat only `width` deep and leave a 1-2mm lip under it: the bore below the seat must be at most od - 2.",
   },
   {
@@ -365,7 +365,9 @@ function learnedPitfalls(): Pitfall[] {
       const raw = JSON.parse(readFileSync(learnedFile, "utf8")) as LearnedPitfall[];
       const list = raw
         .filter((p) => p.occurrences >= MIN_PITFALL_OCCURRENCES && !seeded.has(p.id))
-        .map((p) => ({ id: p.id, stage: p.stage, match: new RegExp(p.pattern), fix: p.fix }));
+        // The stored `fix` is never read: files mined before fixes went
+        // code-free carry another node's repair diff in it.
+        .map((p) => ({ id: p.id, stage: p.stage, match: new RegExp(p.pattern), fix: learnedPitfallFix(p.stage, p.occurrences) }));
       learnedCache = { mtimeMs, list };
     }
     return learnedCache.list;

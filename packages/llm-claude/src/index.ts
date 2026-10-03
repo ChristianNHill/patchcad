@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import type { LlmProvider, LlmRequest, LlmResult, LlmRole, LlmUsage} from "@patchcad/engine";
+import { LlmCallError, type LlmProvider, type LlmRequest, type LlmResult, type LlmRole, type LlmUsage } from "@patchcad/engine";
 
 /**
  * Native Anthropic adapter. Structured output via output_config.format with
@@ -133,6 +133,12 @@ export function sanitizeSchema(schema: unknown): unknown {
   return obj;
 }
 
+/** Engine's class, re-exported: cook and spend match it with `instanceof`, so a
+ *  copy declared here dropped the usage of every failed call on this provider.
+ *  The adapter accumulates usage before every throw, on purpose — the API bills
+ *  a refusal, and returning zero for it puts spend in the ledger nobody can see. */
+export { LlmCallError };
+
 /** Is this error the API refusing to compile the schema into a sampling grammar?
  *
  *  Narrow on purpose, and exported so a test pins the real predicate rather than
@@ -144,30 +150,6 @@ export function sanitizeSchema(schema: unknown): unknown {
  *  any tokens generate so the retry is free, while the post-generation throws
  *  are plain Errors, and BadRequestError, RateLimitError and InternalServerError
  *  are siblings under APIError. */
-/** A provider failure that still cost money.
- *
- *  The adapter accumulates usage before every throw, on purpose — the API bills
- *  a refusal, and returning zero for it puts spend in the ledger nobody can see.
- *  But the accumulator was local to the call, so a throw discarded it and the
- *  spend vanished anyway. A failed architect call cost two requests and reported
- *  $0.00, because the harness only records cost on the success path.
- */
-export class LlmCallError extends Error {
-  constructor(
-    message: string,
-    readonly usage: LlmUsage & Partial<ClaudeUsage>,
-    options?: { cause?: unknown },
-  ) {
-    // `cause` keeps the original error reachable. Wrapping otherwise destroys
-    // it: a 429 or a network blip arrives as an LlmCallError carrying only a
-    // message, and nothing in the repo inspects provider error types TODAY, so
-    // this is not a policy — it is refusing to throw away the evidence a future
-    // retry-on-status rule would need. Stdlib since ES2022.
-    super(message, options);
-    this.name = "LlmCallError";
-  }
-}
-
 export function isGrammarRejection(err: unknown): boolean {
   return err instanceof Anthropic.BadRequestError && /compiled grammar/i.test(err.message);
 }

@@ -1,0 +1,950 @@
+{
+  "schemaVersion": 1,
+  "id": "cad-joints",
+  "backend": "cad",
+  "brief": {
+    "goal": "a printed box with a lid screwed down into heat-set inserts",
+    "design": "Chunky printed parts, flat faces, edges left sharp.",
+    "refs": []
+  },
+  "nodes": {
+    "enclosure": {
+      "id": "enclosure",
+      "kind": "part",
+      "title": "Enclosure",
+      "spec": "A square box with a round cavity, solid in its corners where the lid screws go in through heat-set inserts.",
+      "contract": {
+        "name": "Enclosure",
+        "summary": "72 x 72 x 30 box, Ø40 cavity, four M3 inserts in the corners.",
+        "params": [
+          {
+            "type": "number",
+            "name": "height",
+            "description": "box height",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 30,
+            "min": 20,
+            "max": 60
+          },
+          {
+            "type": "number",
+            "name": "width",
+            "description": "box width",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 72,
+            "min": 64,
+            "max": 120
+          },
+          {
+            "type": "number",
+            "name": "cavity_diameter",
+            "description": "cavity width",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 40,
+            "min": 20,
+            "max": 50
+          },
+          {
+            "type": "number",
+            "name": "floor",
+            "description": "floor thickness",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 3,
+            "min": 2,
+            "max": 6
+          },
+          {
+            "type": "number",
+            "name": "j1_insert_d",
+            "description": "heat-set insert hole Ø for j1",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 4
+          },
+          {
+            "type": "number",
+            "name": "j1_pocket",
+            "description": "insert pocket depth (the screw's reach) for j1",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 7.5
+          }
+        ],
+        "provides": [
+          {
+            "key": "top",
+            "type": "FLAT_FACE",
+            "description": "rim the lid sits on"
+          },
+          {
+            "key": "j1_pocket_1",
+            "type": "INSERT_POCKET",
+            "description": ""
+          },
+          {
+            "key": "j1_pocket_2",
+            "type": "INSERT_POCKET",
+            "description": ""
+          },
+          {
+            "key": "j1_pocket_3",
+            "type": "INSERT_POCKET",
+            "description": ""
+          },
+          {
+            "key": "j1_pocket_4",
+            "type": "INSERT_POCKET",
+            "description": ""
+          }
+        ],
+        "requires": [
+          {
+            "key": "top",
+            "type": "FLAT_FACE",
+            "description": "joint j1"
+          }
+        ],
+        "payload": {
+          "units": "mm",
+          "process": {
+            "kind": "FDM",
+            "minWall": 1.2,
+            "nozzle": 0.4
+          },
+          "ports": [
+            {
+              "name": "top",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  "param(enclosure.height)"
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "size": 60,
+                "ring_diameter": "(param(enclosure.j1_insert_d)) + 63.4254"
+              }
+            },
+            {
+              "name": "j1_pocket_1",
+              "type": "INSERT_POCKET",
+              "pose": {
+                "origin": [
+                  -22,
+                  22,
+                  "(param(enclosure.height))"
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "diameter": "param(enclosure.j1_insert_d)",
+                "depth": "param(enclosure.j1_pocket)"
+              }
+            },
+            {
+              "name": "j1_pocket_2",
+              "type": "INSERT_POCKET",
+              "pose": {
+                "origin": [
+                  22,
+                  22,
+                  "(param(enclosure.height))"
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "diameter": "param(enclosure.j1_insert_d)",
+                "depth": "param(enclosure.j1_pocket)"
+              }
+            },
+            {
+              "name": "j1_pocket_3",
+              "type": "INSERT_POCKET",
+              "pose": {
+                "origin": [
+                  -22,
+                  -22,
+                  "(param(enclosure.height))"
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "diameter": "param(enclosure.j1_insert_d)",
+                "depth": "param(enclosure.j1_pocket)"
+              }
+            },
+            {
+              "name": "j1_pocket_4",
+              "type": "INSERT_POCKET",
+              "pose": {
+                "origin": [
+                  22,
+                  -22,
+                  "(param(enclosure.height))"
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "diameter": "param(enclosure.j1_insert_d)",
+                "depth": "param(enclosure.j1_pocket)"
+              }
+            }
+          ],
+          "envelope": {
+            "volumes": [
+              {
+                "kind": "box",
+                "pose": {
+                  "origin": [
+                    0,
+                    0,
+                    "param(enclosure.height) / 2"
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "dims": [
+                  "param(enclosure.width) + 1",
+                  "param(enclosure.width) + 1",
+                  "param(enclosure.height) + 1"
+                ]
+              }
+            ],
+            "clearance": 0.4
+          },
+          "paramBindings": {
+            "j1_insert_d": "hw:insertHoleD:param:j1_insert.sku",
+            "j1_pocket": "expr: param(j1_screw.length) - (param(lid.thickness)) - (0) + 0.5"
+          }
+        },
+        "hash": "cdc8ca3793547e10"
+      },
+      "params": {},
+      "hidden": false,
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "2fe900d8b2094dc4"
+      },
+      "thread": [],
+      "status": "ready",
+      "measurements": null,
+      "version": 0,
+      "history": [
+        {
+          "version": 1,
+          "contractHash": "cdc8ca3793547e10",
+          "artifactHash": "2fe900d8b2094dc4",
+          "cause": "handwritten",
+          "at": 1759363200000
+        }
+      ],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "lid": {
+      "id": "lid",
+      "kind": "part",
+      "title": "Lid",
+      "spec": "A flat lid, screwed down at its four corners.",
+      "contract": {
+        "name": "Lid",
+        "summary": "72 x 72 x 3 plate.",
+        "params": [
+          {
+            "type": "number",
+            "name": "thickness",
+            "description": "lid thickness",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 3,
+            "min": 2,
+            "max": 6
+          },
+          {
+            "type": "number",
+            "name": "width",
+            "description": "lid width",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 72,
+            "min": 64,
+            "max": 120
+          },
+          {
+            "type": "number",
+            "name": "j1_clear",
+            "description": "M3 clearance hole for j1",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 3.4
+          }
+        ],
+        "provides": [
+          {
+            "key": "bottom",
+            "type": "FLAT_FACE",
+            "description": "underside, on the enclosure's rim"
+          },
+          {
+            "key": "j1_head_1",
+            "type": "CLEARANCE_HOLE",
+            "description": "button M3 head for j1"
+          },
+          {
+            "key": "j1_head_2",
+            "type": "CLEARANCE_HOLE",
+            "description": "button M3 head for j1"
+          },
+          {
+            "key": "j1_head_3",
+            "type": "CLEARANCE_HOLE",
+            "description": "button M3 head for j1"
+          },
+          {
+            "key": "j1_head_4",
+            "type": "CLEARANCE_HOLE",
+            "description": "button M3 head for j1"
+          }
+        ],
+        "requires": [],
+        "payload": {
+          "units": "mm",
+          "process": {
+            "kind": "FDM",
+            "minWall": 1.2,
+            "nozzle": 0.4
+          },
+          "ports": [
+            {
+              "name": "bottom",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  0
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  -1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "size": 60,
+                "ring_diameter": "(param(lid.j1_clear)) + 63.4254"
+              }
+            },
+            {
+              "name": "j1_head_1",
+              "type": "CLEARANCE_HOLE",
+              "pose": {
+                "origin": [
+                  -22,
+                  22,
+                  "(-(-(param(lid.thickness))))"
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "diameter": "param(lid.j1_clear)"
+              }
+            },
+            {
+              "name": "j1_head_2",
+              "type": "CLEARANCE_HOLE",
+              "pose": {
+                "origin": [
+                  22,
+                  22,
+                  "(-(-(param(lid.thickness))))"
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "diameter": "param(lid.j1_clear)"
+              }
+            },
+            {
+              "name": "j1_head_3",
+              "type": "CLEARANCE_HOLE",
+              "pose": {
+                "origin": [
+                  -22,
+                  -22,
+                  "(-(-(param(lid.thickness))))"
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "diameter": "param(lid.j1_clear)"
+              }
+            },
+            {
+              "name": "j1_head_4",
+              "type": "CLEARANCE_HOLE",
+              "pose": {
+                "origin": [
+                  22,
+                  -22,
+                  "(-(-(param(lid.thickness))))"
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "diameter": "param(lid.j1_clear)"
+              }
+            }
+          ],
+          "envelope": {
+            "volumes": [
+              {
+                "kind": "box",
+                "pose": {
+                  "origin": [
+                    0,
+                    0,
+                    "param(lid.thickness) / 2"
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "dims": [
+                  "param(lid.width) + 1",
+                  "param(lid.width) + 1",
+                  "param(lid.thickness) + 1"
+                ]
+              }
+            ],
+            "clearance": 0.4
+          },
+          "paramBindings": {
+            "j1_clear": "hw:clearance:param:j1_screw.sku"
+          }
+        },
+        "hash": "4dde269f07ca31e0"
+      },
+      "params": {},
+      "hidden": false,
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "4c78e30e0788e845"
+      },
+      "thread": [],
+      "status": "ready",
+      "measurements": null,
+      "version": 0,
+      "history": [
+        {
+          "version": 1,
+          "contractHash": "4dde269f07ca31e0",
+          "artifactHash": "4c78e30e0788e845",
+          "cause": "handwritten",
+          "at": 1759363200000
+        }
+      ],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "j1_screw": {
+      "id": "j1_screw",
+      "kind": "fastener",
+      "title": "j1 screw",
+      "spec": "M3×10 button into a heat-set insert. Catalog ISO 7380-1 (M3 and up; M2 and M2.5 are outside the standard) M3, built by the registry, never generated.",
+      "contract": {
+        "name": "j1_screw",
+        "summary": "ISO7380-M3 × 10",
+        "params": [
+          {
+            "type": "string",
+            "name": "sku",
+            "description": "catalog part",
+            "default": "ISO7380-M3"
+          },
+          {
+            "type": "number",
+            "name": "length",
+            "description": "length, mm",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 10
+          }
+        ],
+        "provides": [],
+        "requires": [
+          {
+            "key": "head",
+            "type": "CLEARANCE_HOLE",
+            "description": ""
+          }
+        ],
+        "payload": {
+          "units": "mm",
+          "process": {
+            "kind": "FDM",
+            "minWall": 1.2,
+            "nozzle": 0.4
+          },
+          "ports": [
+            {
+              "name": "head",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  0
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  -1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "ring_diameter": 4.4
+              }
+            }
+          ],
+          "envelope": {
+            "volumes": [
+              {
+                "kind": "cylinder",
+                "pose": {
+                  "origin": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "d": 6.84,
+                "h": 20
+              }
+            ],
+            "clearance": 0.4
+          },
+          "paramBindings": {
+            "length": "screwLengthIn: button, M3, min=(param(lid.thickness)) + 5.3, max=(param(lid.thickness)) + (param(enclosure.height) - param(enclosure.floor)) - 2"
+          }
+        },
+        "hash": "f6357016a299cf09"
+      },
+      "params": {},
+      "hidden": false,
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "fa101682fd3470ce"
+      },
+      "thread": [],
+      "status": "ready",
+      "measurements": null,
+      "version": 0,
+      "history": [
+        {
+          "version": 1,
+          "contractHash": "f6357016a299cf09",
+          "artifactHash": "fa101682fd3470ce",
+          "cause": "registry",
+          "at": 1759363200000
+        }
+      ],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "j1_insert": {
+      "id": "j1_insert",
+      "kind": "insert",
+      "title": "j1 insert",
+      "spec": "M3×10 button into a heat-set insert. Catalog part M3, built by the registry, never generated.",
+      "contract": {
+        "name": "j1_insert",
+        "summary": "HEATSET-M3",
+        "params": [
+          {
+            "type": "string",
+            "name": "sku",
+            "description": "catalog part",
+            "default": "HEATSET-M3"
+          }
+        ],
+        "provides": [],
+        "requires": [
+          {
+            "key": "seat",
+            "type": "INSERT_POCKET",
+            "description": ""
+          }
+        ],
+        "payload": {
+          "units": "mm",
+          "process": {
+            "kind": "FDM",
+            "minWall": 1.2,
+            "nozzle": 0.4
+          },
+          "ports": [
+            {
+              "name": "seat",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  0
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "ring_diameter": 4
+              }
+            }
+          ],
+          "envelope": {
+            "volumes": [
+              {
+                "kind": "cylinder",
+                "pose": {
+                  "origin": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "d": 5.52,
+                "h": 11.6
+              }
+            ],
+            "clearance": 0.4
+          },
+          "paramBindings": {}
+        },
+        "hash": "5ee09f1e5142490a"
+      },
+      "params": {},
+      "hidden": false,
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "8876328ab733cd5d"
+      },
+      "thread": [],
+      "status": "ready",
+      "measurements": null,
+      "version": 0,
+      "history": [
+        {
+          "version": 1,
+          "contractHash": "5ee09f1e5142490a",
+          "artifactHash": "8876328ab733cd5d",
+          "cause": "registry",
+          "at": 1759363200000
+        }
+      ],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    }
+  },
+  "edges": [
+    {
+      "id": "e0-lid-enclosure",
+      "from": "lid",
+      "fromPort": "bottom",
+      "to": "enclosure",
+      "toPort": "top"
+    },
+    {
+      "id": "e1-lid-j1_screw",
+      "from": "lid",
+      "fromPort": "j1_head_1",
+      "to": "j1_screw",
+      "toPort": "head"
+    },
+    {
+      "id": "e2-lid-j1_screw",
+      "from": "lid",
+      "fromPort": "j1_head_2",
+      "to": "j1_screw",
+      "toPort": "head"
+    },
+    {
+      "id": "e3-lid-j1_screw",
+      "from": "lid",
+      "fromPort": "j1_head_3",
+      "to": "j1_screw",
+      "toPort": "head"
+    },
+    {
+      "id": "e4-lid-j1_screw",
+      "from": "lid",
+      "fromPort": "j1_head_4",
+      "to": "j1_screw",
+      "toPort": "head"
+    },
+    {
+      "id": "e5-enclosure-j1_insert",
+      "from": "enclosure",
+      "fromPort": "j1_pocket_1",
+      "to": "j1_insert",
+      "toPort": "seat"
+    },
+    {
+      "id": "e6-enclosure-j1_insert",
+      "from": "enclosure",
+      "fromPort": "j1_pocket_2",
+      "to": "j1_insert",
+      "toPort": "seat"
+    },
+    {
+      "id": "e7-enclosure-j1_insert",
+      "from": "enclosure",
+      "fromPort": "j1_pocket_3",
+      "to": "j1_insert",
+      "toPort": "seat"
+    },
+    {
+      "id": "e8-enclosure-j1_insert",
+      "from": "enclosure",
+      "fromPort": "j1_pocket_4",
+      "to": "j1_insert",
+      "toPort": "seat"
+    }
+  ],
+  "assembly": {
+    "entryNodeId": "enclosure"
+  },
+  "joints": [
+    {
+      "id": "j1",
+      "a": {
+        "node": "lid",
+        "port": "bottom"
+      },
+      "b": {
+        "node": "enclosure",
+        "port": "top"
+      },
+      "intent": "removable",
+      "motion": "fixed",
+      "duty": "occasional",
+      "load": "light",
+      "access": "one_side",
+      "count": 4,
+      "pitch": 44,
+      "wallA": "param(lid.thickness)",
+      "wallB": "param(enclosure.height) - param(enclosure.floor)",
+      "expanded": "R4|screw=button:M3|insert=heatset_std:M3",
+      "minted": [
+        "j1_clear",
+        "j1_head_1",
+        "j1_head_2",
+        "j1_head_3",
+        "j1_head_4",
+        "j1_insert_d",
+        "j1_pocket",
+        "j1_pocket_1",
+        "j1_pocket_2",
+        "j1_pocket_3",
+        "j1_pocket_4"
+      ]
+    }
+  ],
+  "rev": 0,
+  "ledger": {
+    "planning": {
+      "calls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "usd": 0
+    },
+    "classifier": {
+      "calls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "usd": 0
+    },
+    "renegotiate": {
+      "calls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "usd": 0
+    },
+    "nodes": {
+      "calls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "usd": 0
+    }
+  }
+}

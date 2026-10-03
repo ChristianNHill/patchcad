@@ -11,6 +11,7 @@ import {
   dfmIssues,
   isFdmPart,
   kernelProcess,
+  markCncSetups,
   processLines,
   sourcingOf,
   type KernelClient,
@@ -242,8 +243,49 @@ describe("BOM", () => {
     expect(csv).toContain("custom — send to vendor");
   });
 
+  it("keeps the length of joint-minted screws, which name a size and carry length as a param", () => {
+    const minted = (id: string, length: number) =>
+      node(id, "fastener", { ports: [{ name: "head_seat", type: "FLAT_FACE" }], params: { sku: "ISO7380-M3", length } });
+    const b = buildBom(graph([minted("j1_screw", 12), minted("j2_screw", 12), minted("j3_screw", 16)]));
+    expect(b.buy.map((r) => [r.sku, r.qty, r.description])).toEqual([
+      ["ISO7380-M3x12", 2, "button M3×12"],
+      ["ISO7380-M3x16", 1, "button M3×16"],
+    ]);
+  });
+
   it("withholds the vendor package until the gates pass", () => {
     const failed = buildBom(graph([{ ...shaft, status: "error_contract" }]));
     expect(failed.fabricate[0]).toMatchObject({ ready: false, vendorPackage: null });
+  });
+});
+
+describe("markCncSetups", () => {
+  const plan = (sourcing: Record<string, unknown>, zAxes: (number | string)[][], type = "CLEARANCE_HOLE") =>
+    ({
+      nodes: [{
+        id: "bracket",
+        contract: { payload: { sourcing: { ...sourcing }, ports: zAxes.map((z, i) => ({ name: `p${i}`, type, pose: { origin: [0, 0, 0], zAxis: z, xAxis: [1, 0, 0] } })) } },
+      }],
+      edges: [],
+      joints: [],
+    }) as never;
+  const flag = (out: { nodes: { contract: { payload: { sourcing: { allowUndercuts?: boolean } } } }[] }) =>
+    out.nodes[0]!.contract.payload.sourcing.allowUndercuts;
+  const cnc = { class: "fabricate", process: "cnc", material: "6061" };
+
+  it("plans a second setup for a cnc L-bracket with holes on both legs", () => {
+    expect(flag(markCncSetups(plan(cnc, [[0, 0, -1], [0, 1, 0]])))).toBe(true);
+  });
+  it("leaves a part whose features all open along Z in one setup", () => {
+    expect(flag(markCncSetups(plan(cnc, [[0, 0, 1], [0, 0, -1]])))).toBeUndefined();
+  });
+  it("ignores stock faces, other processes and the architect's explicit false", () => {
+    expect(flag(markCncSetups(plan(cnc, [[1, 0, 0]], "FLAT_FACE")))).toBeUndefined();
+    expect(flag(markCncSetups(plan({ ...cnc, process: "laser_cut" }, [[1, 0, 0]])))).toBeUndefined();
+    expect(flag(markCncSetups(plan({ ...cnc, allowUndercuts: false }, [[1, 0, 0]])))).toBe(false);
+  });
+  it("runs as part of the backend's plan expansion", () => {
+    const out = new CadBackend().planning.expandPlan(plan(cnc, [[0, 1, 0]]));
+    expect(flag(out as never)).toBe(true);
   });
 });

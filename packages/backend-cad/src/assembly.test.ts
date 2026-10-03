@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { invertRigid, mateTransform, mul, poseToMat, solveAssembly, IDENTITY, type Mat4 } from "./assembly.js";
+import { invertRigid, kinematicJoints, mateTransform, mul, poseToMat, solveAssembly, IDENTITY, type Mat4 } from "./assembly.js";
 import type { NumericPose as Pose } from "./bindings.js";
 
 /** Mating two +z-out port frames must bring them coincident and opposed —
@@ -192,5 +192,23 @@ describe("solveAssembly instancing", () => {
     );
     expect(instances.bracket).toHaveLength(1);
     expect(problems.join(" ")).toMatch(/disagrees with the placement/);
+  });
+});
+
+describe("kinematicJoints on instanced parts", () => {
+  const at = (x: number): Mat4 => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, 0, 1];
+  const def = { id: "j1", type: "revolute" as const, node: "arm", pose: topFace(5), axis: "z" as const, limits: [-180, 180] as [number, number] };
+
+  it("gives each rotor copy the axis of the arm copy it sits on", () => {
+    const joints = kinematicJoints([{ ...def, moving: ["rotor"] }],
+      { arm: at(0), rotor: at(0) }, { arm: [at(0), at(200)], rotor: [at(200), at(0)] });
+    expect(joints.map((j) => [j.origin[0], j.moving])).toEqual([[0, ["rotor#1"]], [200, ["rotor"]]]);
+  });
+
+  it("keeps every blade copy on a single hub's one axis", () => {
+    const joints = kinematicJoints([{ ...def, moving: ["blade"] }], { arm: at(0), blade: at(0) },
+      { blade: [at(10), at(-10), at(0)] });
+    expect(joints).toHaveLength(1);
+    expect(joints[0]!.moving).toEqual(["blade", "blade#1", "blade#2"]);
   });
 });
