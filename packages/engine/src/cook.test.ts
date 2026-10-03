@@ -1432,6 +1432,72 @@ describe("cookOne fresh start keeps the user's code", () => {
   });
 });
 
+describe("cookNodes: a clash pinned on one part's code", () => {
+  /** widget clashes until its code is `fixed`; the check pins it on widget. */
+  const setup = (opts: { maxAttempts?: number; fixes?: boolean; gatesPassRepair?: boolean } = {}) => {
+    const repairs: RepairCtx<unknown>[] = [];
+    let checks = 0;
+    const backend: DomainBackend<unknown> = {
+      ...mockBackend,
+      maxAttempts: opts.maxAttempts ?? 3,
+      buildRepairPrompt: (ctx) => {
+        repairs.push(ctx);
+        return { ...mockBackend.buildGeneratePrompt(ctx), role: "repair" };
+      },
+      execute: async (node) =>
+        opts.gatesPassRepair === false && node.artifact?.code === "fixed"
+          ? { ok: false, stage: "G3", report: "relief cut the port" }
+          : { ok: true, stage: "execute", report: "" },
+      globalCheck: async (g) => {
+        checks += 1;
+        if (g.nodes.widget!.artifact?.code === "fixed" && opts.fixes !== false) return { ok: true, problems: [], findings: [] };
+        const message = "G5 clash: widget and other";
+        return {
+          ok: false,
+          problems: [message],
+          findings: [{ nodeA: "widget", nodeB: "widget", kind: "clash", measured: 7, expected: 0, message, repair: { nodeId: "widget", report: "leave clearance near [0, 14, 0]" } }],
+        };
+      },
+    };
+    let calls = 0;
+    const provider: LlmProvider = {
+      id: "stub",
+      complete: async () => {
+        calls += 1;
+        return { data: { code: calls === 1 ? "first" : "fixed" }, usage: { inputTokens: 1, outputTokens: 1, usd: 0 }, model: "stub" } as never;
+      },
+    };
+    const deps = makeDeps(makeGraph(), provider, new MemoryLibrary(), backend);
+    return { deps, repairs, get checks() { return checks; } };
+  };
+
+  it("repairs that part against the clash and commits once the check clears", async () => {
+    const t = setup();
+    await cookNodes(t.deps, ["widget"]);
+    const n = t.deps.store.node("widget");
+    expect([n.status, n.artifact?.code, n.history.at(-1)?.cause]).toEqual(["ready", "fixed", "repair-assembly"]);
+    expect(t.repairs).toHaveLength(1);
+    expect(t.repairs[0]).toMatchObject({ failedCode: "first", failure: { stage: ASSEMBLY_STAGE, report: "leave clearance near [0, 14, 0]" } });
+    expect(t.checks).toBe(2);
+  });
+
+  it("stops at the node's attempt budget and leaves the contract block", async () => {
+    const t = setup({ maxAttempts: 2, fixes: false });
+    await cookNodes(t.deps, ["widget"]);
+    const n = t.deps.store.node("widget");
+    expect(t.repairs).toHaveLength(2);
+    expect(t.checks).toBe(3);
+    expect([n.status, n.statusDetail?.stage, n.statusDetail?.attribution]).toEqual(["error_contract", ASSEMBLY_STAGE, "contract-infeasible"]);
+  });
+
+  it("keeps the committed part when the repair misses its own gates", async () => {
+    const t = setup({ maxAttempts: 1, gatesPassRepair: false });
+    await cookNodes(t.deps, ["widget"]);
+    const n = t.deps.store.node("widget");
+    expect([n.status, n.artifact?.code, n.version]).toEqual(["error_contract", "first", 1]);
+  });
+});
+
 describe("applyCheck", () => {
   const blocked = () => {
     const store = new GraphStore(makeGraph(), new EventBus(), async () => {});

@@ -46,4 +46,33 @@ describe.skipIf(!live)("catalog parts build in the kernel", () => {
     }
     expect(failures).toEqual([]);
   }, 300_000);
+
+  it("passes G3 for a gear and a pulley that declare their own HUB_BORE", async () => {
+    // spur-gear-pair: the gear's port as the architect declared it, on the
+    // bore's -z face. Registry parts get no repair round, so this is terminal.
+    const hub = (fit?: string, origin: (number | string)[] = [0, 0, -3], zAxis = [0, 0, -1]) => ({
+      key: "bore", type: "HUB_BORE", pose: { origin, zAxis, xAxis: [1, 0, 0] }, params: { diameter: 5, ...(fit ? { fit } : {}) },
+    });
+    const jobs = [
+      { id: "gear slip", kind: "gear", params: { ...GEAR, thickness: 6 }, port: hub() },
+      { id: "gear press", kind: "gear", params: { ...GEAR, thickness: 6 }, port: hub("press") },
+      { id: "pulley slip", kind: "pulley", params: { sku: "GT2P-20T-5" }, port: hub(undefined, [0, 0, 0]) },
+    ];
+    const failures: string[] = [];
+    for (const job of jobs) {
+      const { key: name, ...port } = job.port;
+      const node = {
+        kind: job.kind, params: job.kind === "gear" ? {} : job.params,
+        contract: { params: [], payload: { ports: [{ name, ...port }] } },
+      } as unknown as NodeRecord;
+      const res = await fetch(`${base}/execute`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code: resolveHardware(node)!, params: job.kind === "gear" ? job.params : {}, ports: [job.port], solids: 1 }),
+      });
+      const body = (await res.json()) as { ok: boolean; stage?: string; error?: string };
+      if (!body.ok) failures.push(`${job.id}: ${body.stage} ${body.error}`);
+    }
+    expect(failures).toEqual([]);
+  }, 60_000);
 });

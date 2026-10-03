@@ -20,6 +20,8 @@ import { familyDims } from "./catalog.js";
 import { isMachined, sourcingOf } from "./sourcing.js";
 import { resolveDim } from "./bindings.js";
 import { jointOwner } from "./expand.js";
+import { invertRigid, transformPoint, type Mat4 } from "./assembly.js";
+import { contains, posedEnvelope } from "./plan-geometry.js";
 import {
   FDM_FIT_BANDS_MM,
   FDM_SLIP_FIT_MM,
@@ -323,16 +325,60 @@ export function fitFindings(graph: GraphDoc): CheckFinding[] {
 }
 
 /** The kernel's clash and contact report, attributed to node pairs. */
-export function clashFindings(graph: GraphDoc, report: NonNullable<ClashResult["clash"]>): CheckFinding[] {
+/** Clearance a relief leaves around the partner's envelope. */
+const RELIEF_MM = 0.3;
+
+/**
+ * Whose CODE a clash between two MATED parts is: when the shared material
+ * lies inside one part's envelope and outside the other's, the other part's
+ * material has left its own claim and entered its partner's (a hinge leaf's
+ * plate running into the other leaf's knuckle). That part can be repaired
+ * against its partner's envelope, which is contract data, so the repair stays
+ * hermetic. Inside both or neither, the poses are what disagree.
+ */
+function clashRepair(graph: GraphDoc, instances: Record<string, Mat4[]>, c: { a: string; b: string; at: number[]; volume_mm3: number }) {
+  const [a, b] = [nodeOf(c.a), nodeOf(c.b)];
+  if (!graph.edges.some((e) => (e.from === a && e.to === b) || (e.from === b && e.to === a))) return undefined;
+  const worldOf = (key: string) => instances[nodeOf(key)]?.[Number(key.split("#")[1] ?? 0)];
+  const [wa, wb] = [worldOf(c.a), worldOf(c.b)];
+  if (!wa || !wb) return undefined;
+  const p = c.at as [number, number, number];
+  const holding = (id: string, w: Mat4) => posedEnvelope(graph, id, w).find((o) => contains(o, p));
+  const [inA, inB] = [holding(a, wa), holding(b, wb)];
+  if (!inA === !inB) return undefined;
+  const [x, wx, y, prim] = inA ? [b, wb, a, inA] : [a, wa, b, inB!];
+  const inv = invertRigid(wx);
+  const local = (q: readonly number[]) => transformPoint(inv, q).map((v) => Math.round(v * 100) / 100);
+  const c0 = local(prim.c);
+  const axis = (k: 0 | 1 | 2) => local(prim.c.map((v, i) => v + prim.axes[k][i]!)).map((v, i) => Math.round((v - c0[i]!) * 1000) / 1000);
+  const fmt = (v: number[]) => `[${v.join(", ")}]`;
+  const shape = prim.round
+    ? `a cylinder Ø${(2 * prim.half[0]).toFixed(1)} × ${(2 * prim.half[2]).toFixed(1)} centred at ${fmt(c0)}, axis ${fmt(axis(2))}`
+    : `a box ${prim.half.map((h) => (2 * h).toFixed(1)).join(" × ")} centred at ${fmt(c0)}, its axes ${fmt(axis(0))}, ${fmt(axis(1))}, ${fmt(axis(2))}`;
+  return {
+    nodeId: x,
+    report:
+      `G5 clash with ${y}: ${c.volume_mm3.toFixed(1)} mm³ of this part sits inside ${y}'s envelope near ${fmt(local(p))} (this part's frame). ` +
+      `${y} claims ${shape} there. Leave ≥${RELIEF_MM}mm clearance around it: cut a relief in this part where ${y} sits, ` +
+      `and keep every port where it is.`,
+  };
+}
+
+export function clashFindings(graph: GraphDoc, report: NonNullable<ClashResult["clash"]>, instances: Record<string, Mat4[]> = {}): CheckFinding[] {
   const out: CheckFinding[] = [];
   for (const c of report.clashes) {
+    const repair = clashRepair(graph, instances, c);
+    const shared = `G5 clash: ${c.a} and ${c.b} occupy the same space: ${c.volume_mm3.toFixed(1)} mm³ of shared material near [${c.at.join(", ")}].`;
     out.push({
       nodeA: nodeOf(c.a),
       nodeB: nodeOf(c.b),
       kind: "clash",
       measured: c.volume_mm3,
       expected: 0,
-      message: `G5 clash: ${c.a} and ${c.b} occupy the same space: ${c.volume_mm3.toFixed(1)} mm³ of shared material near [${c.at.join(", ")}]. Both parts pass their own gates, so the fault is in a mate offset or a port pose, not in either part's code.`,
+      message: repair
+        ? `${shared} It lies in ${repair.nodeId === nodeOf(c.a) ? nodeOf(c.b) : nodeOf(c.a)}'s envelope and outside ${repair.nodeId}'s, so ${repair.nodeId}'s code reaches into its partner: it gets a repair round to cut a relief.`
+        : `${shared} Both parts pass their own gates, so the fault is in a mate offset or a port pose, not in either part's code.`,
+      ...(repair ? { repair } : {}),
     });
   }
   // A moving part at some pose of its joint, not at rest: the joint is the

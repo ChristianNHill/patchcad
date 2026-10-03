@@ -162,6 +162,33 @@ export async function cookNodes(deps: CookDeps, nodeIds: string[]): Promise<Cook
   }
 
   // Barrier: assembly + global check once the wave settles.
+  let check = await assembleAndCheck(deps);
+
+  // A finding the backend pins on one part's code buys that part a repair
+  // round, then the check runs again. Bounded by the node's own attempt
+  // budget across waves; past it the block stands as applyCheck set it.
+  const budget = deps.backend.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+  const spent = new Map<string, number>();
+  for (;;) {
+    const reports = new Map<string, string[]>();
+    for (const f of check.findings ?? []) {
+      if (!f.repair || !deps.store.doc.nodes[f.repair.nodeId] || (spent.get(f.repair.nodeId) ?? 0) >= budget) continue;
+      reports.set(f.repair.nodeId, [...(reports.get(f.repair.nodeId) ?? []), f.repair.report]);
+    }
+    if (reports.size === 0 || deps.signal?.aborted) break;
+    await Promise.all(
+      [...reports].map(async ([id, rs]) => {
+        spent.set(id, (spent.get(id) ?? 0) + 1);
+        await cookOne(deps, id, undefined, { stage: ASSEMBLY_STAGE, report: rs.join("\n") }).catch(() => {});
+      }),
+    );
+    check = await assembleAndCheck(deps);
+  }
+
+  return summary;
+}
+
+async function assembleAndCheck(deps: CookDeps): Promise<CheckResult> {
   const graph = deps.store.doc;
   await deps.backend.assemble(graph, deps.workspace);
   deps.store.emit({ type: "checker:status", projectId: graph.id, status: "checking", problems: [] });
@@ -175,8 +202,7 @@ export async function cookNodes(deps: CookDeps, nodeIds: string[]): Promise<Cook
     findings: check.findings ?? [],
     advisories: check.advisories ?? [],
   });
-
-  return summary;
+  return check;
 }
 
 /** statusDetail.stage of a node blocked by the assembly check, not its own gates. */
@@ -217,10 +243,10 @@ export function applyCheck(store: GraphStore, check: CheckResult): void {
  * settles it in error_code (cancelled on abort), and one a newer cook has
  * superseded leaves it alone.
  */
-export async function cookOne(deps: CookDeps, nodeIdValue: string, token?: number): Promise<void> {
+export async function cookOne(deps: CookDeps, nodeIdValue: string, token?: number, seed?: Failure): Promise<void> {
   const owner = token ?? deps.store.beginCook(nodeIdValue);
   try {
-    await cookBody(deps, nodeIdValue, owner);
+    await cookBody(deps, nodeIdValue, owner, seed);
   } catch (err) {
     const { store } = deps;
     const n = store.doc.nodes[nodeIdValue];
@@ -240,7 +266,11 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string, token?: numbe
   }
 }
 
-async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Promise<void> {
+/** `seed`: a failure found outside the node's own gates (an assembly clash
+ *  pinned on its code). The cook is then ONE repair round of the committed
+ *  code against that failure, and a miss puts the node back where the check
+ *  had it rather than failing a part that passes its own gates. */
+async function cookBody(deps: CookDeps, nodeIdValue: string, token: number, seed?: Failure): Promise<void> {
   const { store, backend, provider, workspace } = deps;
   const graph = store.doc;
   const projectId = graph.id;
@@ -440,8 +470,10 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Pro
     throw err;
   }
 
+  const seeded = seed && original ? { code: original.code, testCode: original.testCode, attempt: 0, failure: seed } : undefined;
+
   // -- registry fast path: domain-deterministic parts never touch an LLM --
-  const prebuilt = deterministicArtifact(backend, store.node(nodeIdValue));
+  const prebuilt = seeded ? null : deterministicArtifact(backend, store.node(nodeIdValue));
   if (prebuilt instanceof Error) {
     setStatus("error_code", { stage: "registry", message: prebuilt.message.slice(0, 1800), attribution: "unknown" });
     throw prebuilt;
@@ -475,7 +507,7 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Pro
   const lastAsk = held.thread.filter((m) => m.role === "user").at(-1)?.at ?? 0;
   const contractUnasked =
     lastCommit?.contractHash === held.contract.hash || held.expandedContractHash === held.contract.hash;
-  if (held.artifact && lastCommit?.artifactHash === held.artifact.hash && lastAsk <= lastCommit.at && contractUnasked) {
+  if (!seeded && held.artifact && lastCommit?.artifactHash === held.artifact.hash && lastAsk <= lastCommit.at && contractUnasked) {
     log("re-checking the existing part against the current contract — no LLM call");
     const { code, testCode, dts } = held.artifact;
     if ((await tryPrebuilt(code, testCode, "regate", dts)) === null) return;
@@ -486,7 +518,7 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Pro
 
   // -- library fast path: exact contract-hash hit skips the generator --
   const unspecialized = store.node(nodeIdValue).thread.length === 0;
-  if (library && unspecialized) {
+  if (library && unspecialized && !seeded) {
     const hit = await library.lookup(backend.id, baseContractHash);
     if (hit) {
       log("library hit — reusing verified code, no LLM call");
@@ -575,7 +607,7 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Pro
   let inspectRetries = 0;
 
   const gen = backend.generation;
-  const maxAttempts = backend.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+  const maxAttempts = seeded ? 1 : (backend.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
 
   /** `n` parallel completions of one prompt. Every call that returns is billed;
    *  the round fails only if NONE of them yields code — one rate-limited draft
@@ -739,7 +771,7 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Pro
   const startingCode = original?.code;
   const candidates = Math.max(1, gen?.firstRoundCandidates ?? 1);
   /** The repair base: best score so far, ties to the latest. */
-  let best: Attempt | undefined;
+  let best: Attempt | undefined = seeded;
   /** Gate-passing code a looks-wrong verdict sent back for a rewrite. */
   let bestPassing: (Draft & { verify: VerifyResult }) | undefined;
   /** The latest round, which the failure the node surfaces describes. */
@@ -765,7 +797,7 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Pro
 
     let prompt: PromptSpec;
     let repairedFrom: Attempt | undefined;
-    if (attempt === 1 || fresh) {
+    if ((attempt === 1 && !seeded) || fresh) {
       const ctx = makeCtx();
       prompt = backend.buildGeneratePrompt({
         ...ctx,
@@ -789,9 +821,11 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Pro
       } as RepairCtx<unknown>);
     }
 
-    const n = attempt === 1 ? candidates : 1;
+    const n = attempt === 1 && !seeded ? candidates : 1;
     log(
-      attempt === 1
+      seeded
+        ? `repairing the committed part against ${seed!.stage}…`
+        : attempt === 1
         ? n > 1 ? `generating ${n} candidates…` : "generating…"
         : fresh
           ? `fresh start, attempt ${attempt} — ${STALE_REPAIRS} repairs did not improve`
@@ -823,7 +857,7 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Pro
             const { stage, report } = repairedFrom.failure;
             void deps.library?.recordFix?.(backend.id, { stage, report }).catch(() => {});
           }
-          await finish(attempt === 1 ? "generate" : `repair-${attempt}`, d, gated.verify, true, attempt);
+          await finish(seeded ? `repair-${seed!.stage}` : attempt === 1 ? "generate" : `repair-${attempt}`, d, gated.verify, !seeded, attempt);
           return;
         }
         log(`looks wrong: ${verdict.map((a) => a.question).join(" / ")}`);
@@ -866,6 +900,13 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Pro
       await finish("generate-inspect-fallback", bestPassing, gated.verify, false);
       return;
     }
+  }
+
+  // A seeded round that missed its own gates: the committed part still
+  // passes them, so it goes back to the block the check put it under.
+  if (seeded) {
+    setStatus("error_contract", { stage: seed!.stage, message: seed!.report.slice(0, 2000), attribution: "contract-infeasible" });
+    return;
   }
 
   // Budget exhausted — attribute and surface.

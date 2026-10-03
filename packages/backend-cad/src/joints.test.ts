@@ -258,6 +258,15 @@ describe("eval fixes", () => {
     expect((r as { error: string }).error).toContain("M2d walls 2.0/2.0: no Ø5/Ø4/Ø3/Ø2.5/Ø2 pin");
   });
 
+  it("a slip bore a already declares on the axis turns the pin there too", () => {
+    // The eval's hinge: 7.6 knuckles and the brief's Ø3.2 bores for a Ø3 pin.
+    const d = ok({ motion: "revolute", wallA: 7.6, wallB: 7.6, shaftHint: 3, boreA: 3.2 });
+    expect([d.rule, ...roles(d)]).toEqual(["M2d", "pin:dowel:3x12"]);
+    expect(d.dims).toEqual({ d: 3, length: 12, press: 4.4, run: 7.6, slipA: 1 });
+    // A bore no stocked pin slips in leaves the press fit alone.
+    expect(ok({ motion: "revolute", wallA: 7.6, wallB: 7.6, shaftHint: 3, boreA: 4 }).dims.slipA).toBeUndefined();
+  });
+
   it("DIN 6799 clips reach Ø2-3 shafts, so a printed Ø3 pin is e-clipped", () => {
     expect(roles(ok({ motion: "revolute", allowPrinted: true, shaftHint: 3, wallB: 4 }))).toEqual(["pin_clip:eclip:1.9"]);
     expect(roles(ok({ motion: "revolute", allowPrinted: true, shaftHint: 2, wallB: 4 }))).toEqual(["pin_clip:eclip:1.2"]);

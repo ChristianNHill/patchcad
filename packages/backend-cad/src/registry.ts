@@ -1,5 +1,7 @@
 import type { NodeRecord } from "@patchcad/shared";
 import { importedNodeCode } from "./segment-joints.js";
+import { fitOffset } from "./grounding.js";
+import { isMachined, sourcingOf } from "./sourcing.js";
 import {
   CATALOG,
   canonicalKey,
@@ -201,9 +203,9 @@ export function threadedRodCode(thread: string, defaultLength = 50): string {
  * Flanged (F6xx): the flange's underside is the seat at z = 0, flange +z, and
  * the body hangs -z into its bore like a screw shank.
  */
-export function bearingCode(family: string, size: string): string {
+export function bearingCode(family: string, size: string, fit = 0): string {
   const r = familyDims(family, size)!;
-  const [bore, od, w] = [dim(r, "bore"), dim(r, "od"), dim(r, "width")];
+  const [bore, od, w] = [dim(r, "bore") + fit, dim(r, "od"), dim(r, "width")];
   const ring = ((od - bore) / 2) * 0.3;
   const z0 = family === "bearing_flanged" ? dim(r, "flangeW") - w : 0;
   const flange =
@@ -223,10 +225,10 @@ export function bearingCode(family: string, size: string): string {
 }
 
 /** Plain sleeve bushing, face on z = 0, body +z. */
-export function bushingCode(size: string, defaultLength: number): string {
+export function bushingCode(size: string, defaultLength: number, fit = 0): string {
   const r = familyDims("bushing", size)!;
   return module(`    L = p.get("length", ${defaultLength})
-    return Pos(0, 0, L / 2) * (Cylinder(${dim(r, "od") / 2}, L) - Cylinder(${dim(r, "bore") / 2}, L * 2))
+    return Pos(0, 0, L / 2) * (Cylinder(${dim(r, "od") / 2}, L) - Cylinder(${(dim(r, "bore") + fit) / 2}, L * 2))
 `);
 }
 
@@ -243,9 +245,9 @@ export function shaftCode(family: string, size: string, defaultLength: number): 
 }
 
 /** Set-screw shaft collar, face on z = 0, body +z, tapped radially along +x. */
-export function collarCode(size: string): string {
+export function collarCode(size: string, fit = 0): string {
   const r = familyDims("collar", size)!;
-  const [bore, od, w] = [dim(r, "bore"), dim(r, "od"), dim(r, "width")];
+  const [bore, od, w] = [dim(r, "bore") + fit, dim(r, "od"), dim(r, "width")];
   const screw = String(r.setScrew);
   return module(`    ring = Pos(0, 0, ${w / 2}) * (Cylinder(${od / 2}, ${w}) - Cylinder(${bore / 2}, ${w * 2}))
     hole = Pos(${(od + bore) / 4}, 0, ${w / 2}) * Rot(0, 90, 0) * Cylinder(${tap(screw) / 2}, ${(od - bore) / 2 + 1})
@@ -265,9 +267,9 @@ export function eclipCode(size: string): string {
 
 /** LM-UU linear ball bushing with its two retaining-ring grooves. Face on
  *  z = 0, body +z. */
-export function linearBearingCode(size: string): string {
+export function linearBearingCode(size: string, fit = 0): string {
   const r = familyDims("lm_uu", size)!;
-  const [bore, od, L] = [dim(r, "bore"), dim(r, "od"), dim(r, "length")];
+  const [bore, od, L] = [dim(r, "bore") + fit, dim(r, "od"), dim(r, "length")];
   const [span, gw, gd] = [dim(r, "grooveSpan"), dim(r, "grooveWidth"), dim(r, "grooveD")];
   return module(`    body = Pos(0, 0, ${L / 2}) * (Cylinder(${od / 2}, ${L}) - Cylinder(${bore / 2}, ${L * 2}))
     for z in (${L / 2 - span / 2 + gw / 2}, ${L / 2 + span / 2 - gw / 2}):
@@ -330,11 +332,12 @@ export const gt2TipD = (teeth: number) => (teeth * 2) / Math.PI - 0.508;
  * the right tip Ø, not a conjugate profile. An idler (gt2_idler) has no hub:
  * its first flange sits on z = 0.
  */
-export function pulleyCode(size: string, family = "gt2_pulley"): string {
+export function pulleyCode(size: string, family = "gt2_pulley", fit = 0): string {
   const r = familyDims(family, size)!;
   const teeth = dim(r, "teeth");
   const tip = gt2TipD(teeth);
-  const [bore, tw, fd, fw] = ["bore", "toothWidth", "flangeD", "flangeW"].map((k) => dim(r, k)) as [number, number, number, number];
+  const [tw, fd, fw] = ["toothWidth", "flangeD", "flangeW"].map((k) => dim(r, k)) as [number, number, number];
+  const bore = dim(r, "bore") + fit;
   const hl = typeof r.hubL === "number" ? r.hubL : 0;
   const total = hl + 2 * fw + tw;
   const hub = hl
@@ -500,8 +503,10 @@ export function standoffCode(thread: string, defaultLength: number): string {
  * with a tooth on +x. `phase` turns the teeth (not the bore) by that many
  * degrees, so a meshing pair can put a gap opposite a tooth; `flat` makes the
  * bore a D, the flat that far from the axis along +x, like a D-shaft's.
+ * `fit` is added to the bore Ø (see boreFit).
  */
-export function gearCode(): string {
+export function gearCode(fit = 0): string {
+  const bore = fit ? `(p.bore ${fit < 0 ? "-" : "+"} ${Math.abs(fit)})` : "p.bore";
   return `from build123d import *
 
 def build(p):
@@ -513,7 +518,7 @@ def build(p):
         rotation=(0, 0, p.get("phase", 0)),
     )
     if p.bore > 0:
-        hole = Cylinder(p.bore / 2, p.thickness * 2)
+        hole = Cylinder(${bore} / 2, p.thickness * 2)
         if p.get("flat", 0) > 0:
             hole = hole - Pos(p.flat + p.bore / 2, 0, 0) * Box(p.bore, p.bore * 2, p.thickness * 4)
         gear = gear - hole
@@ -537,8 +542,9 @@ def build(p):
 `;
 }
 
-/** Family → codegen. Each takes the canonical key and the resolved SKU. */
-const CODEGEN: Record<string, (key: string, sku: Sku) => string> = {
+/** Family → codegen. Each takes the canonical key, the resolved SKU and the
+ *  bore's fit offset (boreFit), which only the bored families use. */
+const CODEGEN: Record<string, (key: string, sku: Sku, fit: number) => string> = {
   shcs: (k, s) => screwCode("shcs", k, lengthOf("shcs", k, s)),
   button: (k, s) => screwCode("button", k, lengthOf("button", k, s)),
   csk: (k, s) => screwCode("csk", k, lengthOf("csk", k, s)),
@@ -548,21 +554,21 @@ const CODEGEN: Record<string, (key: string, sku: Sku) => string> = {
   washer: (k) => washerCode(k),
   dowel: (k, s) => dowelCode(k, lengthOf("dowel", k, s)),
   threaded_rod: (k, s) => threadedRodCode(k, lengthOf("threaded_rod", k, s)),
-  bearing: (k) => bearingCode("bearing", k),
-  bearing_flanged: (k) => bearingCode("bearing_flanged", k),
-  bushing: (k, s) => bushingCode(k, lengthOf("bushing", k, s)),
+  bearing: (k, _s, f) => bearingCode("bearing", k, f),
+  bearing_flanged: (k, _s, f) => bearingCode("bearing_flanged", k, f),
+  bushing: (k, s, f) => bushingCode(k, lengthOf("bushing", k, s), f),
   shaft: (k, s) => shaftCode("shaft", k, lengthOf("shaft", k, s)),
   d_shaft: (k, s) => shaftCode("d_shaft", k, lengthOf("d_shaft", k, s)),
-  collar: (k) => collarCode(k),
+  collar: (k, _s, f) => collarCode(k, f),
   eclip: (k) => eclipCode(k),
-  lm_uu: (k) => linearBearingCode(k),
+  lm_uu: (k, _s, f) => linearBearingCode(k, f),
   mgn_rail: (k, s) => railCode(k, lengthOf("mgn_rail", k, s)),
   mgn_carriage: (k) => carriageCode(k),
-  gt2_pulley: (k) => pulleyCode(k),
-  gt2_idler: (k) => pulleyCode(k, "gt2_idler"),
+  gt2_pulley: (k, _s, f) => pulleyCode(k, "gt2_pulley", f),
+  gt2_idler: (k, _s, f) => pulleyCode(k, "gt2_idler", f),
   gt2_belt: (k, s) => beltCode(k, lengthOf("gt2_belt", k, s)),
   gt2_loop: (k, s) => beltCode(k, lengthOf("gt2_loop", k, s), "gt2_loop"),
-  spur_gear: () => gearCode(),
+  spur_gear: (_k, _s, f) => gearCode(f),
   coupler: (k) => couplerCode(k),
   lead_screw: (k, s) => shaftCode("lead_screw", k, lengthOf("lead_screw", k, s)),
   lead_nut: (k) => leadNutCode(k),
@@ -578,6 +584,19 @@ const CODEGEN: Record<string, (key: string, sku: Sku) => string> = {
 /** Live value first, contract default second, never from generated code. */
 function paramOf(node: NodeRecord, name: string): string {
   return String(node.params[name] ?? node.contract.params.find((p) => p.name === name)?.default ?? "");
+}
+
+/**
+ * A bought part's bore is exact, but a HUB_BORE the node declares on itself is
+ * probed against a fit band, and registry parts get no repair round: a gear
+ * bored at the nominal Ø5.00 fails a slip band of 5.05..5.25 for good. So the
+ * bore is cut at the band's middle for the process that makes the part, from
+ * the same table the generator's cut annotation reads (grounding.ts).
+ */
+function boreFit(node: NodeRecord): number {
+  const ports = (node.contract.payload as { ports?: { type: string; params: Record<string, number | string> }[] } | undefined)?.ports;
+  const hub = ports?.find((p) => p.type === "HUB_BORE");
+  return hub ? fitOffset(hub, isMachined(sourcingOf(node).process)) : 0;
 }
 
 /**
@@ -609,7 +628,7 @@ export function skuOf(node: NodeRecord): Sku | null {
 function bySku(node: NodeRecord): string | null {
   const sku = skuOf(node);
   if (!sku) return null;
-  const code = CODEGEN[sku.family]!(sku.key, sku);
+  const code = CODEGEN[sku.family]!(sku.key, sku, boreFit(node));
   if (!sku.stepFile) return code;
   return code.replace(
     "def build(p):\n",
@@ -625,7 +644,7 @@ function bySku(node: NodeRecord): string | null {
 const REGISTRY: Record<string, (node: NodeRecord) => string | null> = {
   ...Object.fromEntries(Object.values(CATALOG.families).map((f) => [f.kind, bySku])),
   // Param-driven: the code text is constant, see gearCode.
-  gear: () => gearCode(),
+  gear: (node) => gearCode(boreFit(node)),
 };
 
 /** Kinds resolved from REGISTRY. Exported because the gates and lints need to

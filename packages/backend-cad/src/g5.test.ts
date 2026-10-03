@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { GraphDoc } from "@patchcad/shared";
 import { CadBackend, cadPlanGeometryLint, fitFindings, hardwareAllowances, type ClashResult, type KernelClient } from "./index.js";
-import { threadAllowances } from "./g5.js";
+import { clashFindings, threadAllowances } from "./g5.js";
+import { solvePlan } from "./plan-geometry.js";
 import { threadEngagementVolume } from "./grounding.js";
 
 /** G5 attribution and the plan-time geometry lint. The kernel is stubbed: what
@@ -11,12 +12,12 @@ import { threadEngagementVolume } from "./grounding.js";
 type Vec = [number, number, number];
 const UP: Vec = [0, 0, 1];
 const DOWN: Vec = [0, 0, -1];
-const pose = (origin: Vec, zAxis: Vec = UP) => ({ origin, zAxis, xAxis: [1, 0, 0] });
+const pose = (origin: Vec, zAxis: Vec = UP, xAxis: Vec = [1, 0, 0]) => ({ origin, zAxis, xAxis });
 
 interface Spec {
   id: string;
   kind?: string;
-  ports: { name: string; type: string; at: Vec; z?: Vec; params?: Record<string, number | string> }[];
+  ports: { name: string; type: string; at: Vec; z?: Vec; x?: Vec; params?: Record<string, number | string> }[];
   volumes?: unknown[];
   params?: { name: string; default: string | number }[];
   measured?: { key: string; measured_diameter: number }[];
@@ -40,7 +41,7 @@ function node(s: Spec) {
       payload: {
         units: "mm",
         process: { kind: "FDM", minWall: 1.2, nozzle: 0.4 },
-        ports: s.ports.map((p) => ({ name: p.name, type: p.type, pose: pose(p.at, p.z ?? UP), params: p.params ?? {} })),
+        ports: s.ports.map((p) => ({ name: p.name, type: p.type, pose: pose(p.at, p.z ?? UP, p.x), params: p.params ?? {} })),
         envelope: { volumes: s.volumes ?? [box([10, 10, 10])], clearance: 0.4 },
       },
       hash: "",
@@ -290,9 +291,65 @@ describe("plan-time geometry lint", () => {
     expect(cadPlanGeometryLint.run(graph([peg], []))).toEqual([]);
   });
 
+  // The eval's hinge plan, resolved: both leaves 40×30×3 with a Ø7 knuckle
+  // along x at y = 11.5, mated knuckle face to knuckle face with the same
+  // xAxis, so leaf-b landed exactly on leaf-a (G5 measured 2678mm³).
+  const leaf = (id: string, faceX: number, z: Vec, x: Vec): Spec => ({
+    id,
+    volumes: [box([40, 26.5, 3], [0, -1.75, 0]), { kind: "cylinder", pose: pose([0, 11.5, 0], [1, 0, 0], [0, 1, 0]), d: 7, h: 40 }],
+    ports: [{ name: "knuckle_face", type: "FLAT_FACE", at: [faceX, 11.5, 0], z, x, params: { ring_diameter: 5.4 } }],
+  });
+  const hinge = (bX: Vec) =>
+    cadPlanGeometryLint.run(
+      graph([leaf("leaf-a", 3.8, [1, 0, 0], [0, 1, 0]), leaf("leaf-b", 4.2, [-1, 0, 0], bX)], [["leaf-a", "knuckle_face", "leaf-b", "knuckle_face"]]),
+    );
+
+  it("flags a revolute mate that lays one leaf on top of the other", () => {
+    const out = hinge([0, 1, 0]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatch(/^leaf-a and leaf-b are mated, but once placed about \d+mm³ .* coincide away from the mate's axis/);
+    expect(out[0]).toContain("flip the mated port's xAxis");
+  });
+
+  it("passes the same hinge with leaf-b's xAxis flipped to the far side of the pin", () => {
+    expect(hinge([0, -1, 0])).toEqual([]);
+  });
+
   it("reports a node the mates never place", () => {
     const out = cadPlanGeometryLint.run(graph([plate, cube("loose")], []));
     expect(out.some((p) => p.startsWith("plan assembly: loose is not positioned"))).toBe(true);
+  });
+});
+
+describe("G5 clash between mated parts: whose code", () => {
+  // The eval's second hinge: leaves on opposite sides of the pin, a's middle
+  // knuckle at x ∈ [-4, 4], b's two knuckles either side, b's plate starting
+  // 3.3 from the pin axis — and b's real plate running into a's knuckle.
+  const plate = box([40, 23.2, 3], [0, -3.4, 0]);
+  const knuckle = (x: number, h: number) => ({ kind: "cylinder", pose: pose([x, 11.5, 0], [1, 0, 0], [0, 1, 0]), d: 7, h });
+  const face = (z: Vec, x: Vec) => [{ name: "knuckle_face", type: "FLAT_FACE", at: [4, 11.5, 0] as Vec, z, x }];
+  const g = graph(
+    [
+      { id: "leaf-a", volumes: [plate, knuckle(0, 8)], ports: face([1, 0, 0], [0, -1, 0]) },
+      { id: "leaf-b", volumes: [plate, knuckle(7.8, 7.6), knuckle(-7.8, 7.6)], ports: face([-1, 0, 0], [0, 1, 0]) },
+    ],
+    [["leaf-a", "knuckle_face", "leaf-b", "knuckle_face"]],
+  );
+  const clash = (at: [number, number, number]) =>
+    clashFindings(g, { parts: 2, pairs_tested: 1, clashes: [{ a: "leaf-a", b: "leaf-b", volume_mm3: 7.2, at }] }, solvePlan(g).instances);
+
+  it("pins material in a's knuckle and outside b's envelope on b's code, with a's knuckle in b's frame", () => {
+    const [f] = clash([0.11, 14.11, 0.06]);
+    expect(f!.repair?.nodeId).toBe("leaf-b");
+    expect(f!.repair?.report).toContain("leaf-a claims a cylinder Ø7.0 × 8.0");
+    expect(f!.repair?.report).toContain("cut a relief");
+    expect(f!.message).toContain("leaf-b's code reaches into its partner");
+  });
+
+  it("leaves a clash inside both envelopes to the contract", () => {
+    const [f] = clash([0, 14.9, 0]);
+    expect(f!.repair).toBeUndefined();
+    expect(f!.message).toContain("mate offset or a port pose");
   });
 });
 

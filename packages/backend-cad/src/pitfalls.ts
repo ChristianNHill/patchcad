@@ -297,7 +297,7 @@ export const PITFALLS: Pitfall[] = [
   {
     id: "assert-helix",
     match: /assertion "helix/,
-    fix: "The stated thread is missing, at the wrong radius, or the wrong pitch, hand or start count. Model it as real geometry: a triangular profile on Plane.XZ spanning minor to major radius, swept along Helix(pitch, threaded_length, minor_radius), unioned to (external) or cut from (internal) the core over the asserted z range. A plain cylinder or a stack of rings is not a thread. Never wrap the thread in try/except or drop it when the boolean fails; fix the boolean.",
+    fix: "The stated thread is missing, at the wrong radius, or the wrong pitch, hand or start count. Model it as real geometry: the cheat sheet's THREADS groove, a profile on Plane.XZ swept along a Helix and CUT from a major-Ø cylinder (external) or from the solid body before its bore (internal) over the asserted z range. A swept tooth fused onto a core often leaves two solids or a non-watertight mesh. A plain cylinder or a stack of rings is not a thread. Never wrap the thread in try/except or drop it when the boolean fails; fix the boolean.",
   },
   {
     id: "assert-line-count",

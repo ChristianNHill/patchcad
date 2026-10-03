@@ -69,6 +69,9 @@ export const CadJoint = z.object({
   hubFit: z.enum(["slip", "press"]).optional().describe("revolute: press when b is pressed onto the shaft (a wheel onto an axle), else slip"),
   /** Revolute travel in degrees; continuous joints sweep the full turn. */
   limits: z.tuple([z.number(), z.number()]).optional(),
+  /** "derived": plan expansion swept the parts' envelopes for `limits`
+   *  because none were stated, and re-derives them on every expansion. */
+  limitsSource: z.enum(["derived"]).optional().describe("set by plan expansion; never write it"),
   /** Why the joint is what it is, when that is not what was asked for (an
    *  import's fastener that did not fit and became an alignment dowel). */
   note: z.string().optional(),
@@ -109,6 +112,8 @@ export interface JointInput {
   lateral?: number;
   /** a is a catalog part (a rail, an idler), so no counterbore can be cut in it. */
   noRecess?: boolean;
+  /** Ø of a bore a already declares on the joint's axis (a brief's "3.2mm knuckle bores"). */
+  boreA?: number;
 }
 
 /** One catalog part a joint needs. `role` becomes the node id suffix. */
@@ -540,13 +545,28 @@ const M2pin: JointRule = {
 /** Occasional and light, walls too thin for bushings (or no printed pin): a
  *  separate ISO 2338 pin pressed 1.5·d or more into a and turning in b's bore
  *  at the slip band. The longest stocked pin both walls hold, from the
- *  largest Ø at or under the load's (or the hinted one). */
+ *  largest Ø at or under the load's (or the hinted one). When a already
+ *  declares a slip bore for a stocked pin on the axis, the pin turns in a too:
+ *  a press hole there would be a second, smaller hole on the same axis. */
 const M2d: JointRule = {
   id: "M2d",
   when: (i) => revolute(i) && !i.driven && casual(i),
   fit: (i) => {
     const preferred = i.shaftHint ?? (i.load === "none" ? 3 : 5);
     const stocked = Object.keys(CATALOG.families.dowel!.dims).map(Number);
+    const loose = stocked.find((d) => i.boreA !== undefined && i.boreA > d && i.boreA - d <= FDM_SLIP_FIT_MM && (i.shaftHint ?? d) === d);
+    if (loose !== undefined && i.wallA >= loose && i.wallB >= loose) {
+      const key = canonicalKey("dowel", String(loose))!;
+      const L = [...standardLengths("dowel", key)].reverse().find((l) => l >= 2 * loose && l <= i.wallA + i.wallB);
+      if (L !== undefined) {
+        const run = r2(Math.min(i.wallB, L - loose));
+        return decision("M2d", "pin", `Ø${loose}×${L} loose pin, turning in a and b`, [
+          "revolute, occasional, light: a separate pin, no bushings",
+          `a already declares a Ø${i.boreA} bore on the axis, a slip bore for a Ø${loose} pin: the pin turns in a as in b (a loose-pin hinge; cap or peen its ends to keep it)`,
+          `${L}mm: the longest stocked that stays inside a ${mm(i.wallA)} + b ${mm(i.wallB)}`,
+        ], { parts: [{ role: "pin", family: "dowel", key, length: L }], dims: { d: loose, length: L, press: r2(L - run), run, slipA: 1 } });
+      }
+    }
     const sizes = i.shaftHint ? stocked.filter((d) => d === i.shaftHint) : stocked.filter((d) => d <= preferred).sort((a, b) => b - a);
     if (sizes.length === 0) return `no Ø${preferred} pin stocked`;
     for (const d of sizes) {

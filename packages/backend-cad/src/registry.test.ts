@@ -98,6 +98,19 @@ describe("resolveHardware", () => {
     expect(resolveHardware(node({ kind: "bearing", params: { sku: "BRG-608" } }))).toContain("annulus(11, ");
   });
 
+  it("cuts a part's own HUB_BORE at its fit band's middle, not the nominal", () => {
+    // spur-gear-pair: a Ø5 gear bore failed the slip band 5.05..5.25 for good.
+    const hub = (params: Record<string, string | number>, sourcing?: object) =>
+      ({ params: [], payload: { ports: [{ name: "bore", type: "HUB_BORE", params: { diameter: 5, ...params } }], ...(sourcing ? { sourcing } : {}) } }) as never;
+    expect(resolveHardware(node({ kind: "gear", contract: { params: [] } as never }))).toContain("Cylinder(p.bore / 2");
+    expect(resolveHardware(node({ kind: "gear", contract: hub({}) }))).toContain("Cylinder((p.bore + 0.15) / 2");
+    expect(resolveHardware(node({ kind: "gear", contract: hub({ fit: "press" }) }))).toContain("Cylinder((p.bore - 0.05) / 2");
+    expect(resolveHardware(node({ kind: "gear", contract: hub({}, { class: "fabricate", process: "cnc", material: "steel" }) }))).toContain("(p.bore + 0.025)");
+    // Every bored catalog family: the pulley's Ø5 bore, cut at 5.15.
+    expect(resolveHardware(node({ kind: "pulley", params: { sku: "GT2P-20T-5" }, contract: hub({}) }))).toContain("Cylinder(2.575, ");
+    expect(resolveHardware(node({ kind: "pulley", params: { sku: "GT2P-20T-5" } }))).toContain("Cylinder(2.5, ");
+  });
+
   it("builds a size-keyed part from `size` when there is no SKU", () => {
     expect(resolveHardware(node({ kind: "bearing", params: { size: "608" } }))).toBe(
       resolveHardware(node({ kind: "bearing", params: { sku: "BRG-608" } })),

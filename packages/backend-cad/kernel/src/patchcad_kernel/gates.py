@@ -333,6 +333,9 @@ def g2_validity(shape: Any) -> dict[str, Any]:
     return out
 
 
+HELIX_SEAM_EDGES = 50  # bad edges on one radius before G2 names a fused thread
+
+
 def _g2_watertight(shape: Any) -> None:
     """The B-rep can be valid while its tessellation is not closed: a
     sphere's pole on a boolean seam left one open edge in a ball socket, and
@@ -356,10 +359,18 @@ def _g2_watertight(shape: Any) -> None:
             mids = mesh.vertices[bad].mean(axis=1)
             at = "; ".join("[" + ", ".join(f"{c:.2f}" for c in m) + "]" for m in mids[:3])
             rows.append(f"{len(bad)} {label} edge(s) at {at}{' …' if len(bad) > 3 else ''}")
-    raise GateError("G2", "the exported mesh is not watertight although the B-rep is valid: " + "; ".join(rows),
-                    "a sphere/revolve pole meets a boolean seam: rotate the sphere so its pole is off the cut, "
-                    "or build the cavity as a revolve. Bodies touching along an edge or a point are non-manifold "
-                    "too: overlap them or move them apart")
+    hint = ("a sphere/revolve pole meets a boolean seam: rotate the sphere so its pole is off the cut, "
+            "or build the cavity as a revolve. Bodies touching along an edge or a point are non-manifold "
+            "too: overlap them or move them apart")
+    # A swept thread fused onto its core fails along the whole helix: many bad
+    # edges, all one radius about Z, spread over several mm of Z.
+    mids = mesh.vertices[edges[counts != 2]].mean(axis=1)
+    radii = np.hypot(mids[:, 0], mids[:, 1])
+    if len(mids) >= HELIX_SEAM_EDGES and np.ptp(mids[:, 2]) > 2.0 and np.percentile(radii, 90) - np.percentile(radii, 10) < 0.2:
+        hint = (f"the bad edges lie on one radius ({float(np.median(radii)):.2f}mm about Z) along "
+                f"{float(np.ptp(mids[:, 2])):.0f}mm of Z: a swept thread fused onto a core. Cut a helical groove "
+                "into a plain cylinder instead (the cheat sheet's THREADS recipe); the fuse fails this way often")
+    raise GateError("G2", "the exported mesh is not watertight although the B-rep is valid: " + "; ".join(rows), hint)
 
 
 def g2_solid_count(shape: Any, expected: int) -> None:
@@ -2466,15 +2477,16 @@ def _probe_hub_bore(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
         hit = _march(shape, frame, math.cos(t), math.sin(t), w, d + 2.0)
         if hit is not None:
             pts.append((hit * math.cos(t), hit * math.sin(t)))
-    fit = _fit_circle(pts) if len(pts) >= 3 else None
-    if fit is None:
+    circle = _fit_circle(pts) if len(pts) >= 3 else None
+    if circle is None:
         raise GateError("G3", f'port "{key}" (HUB_BORE): no bore wall around the declared origin',
                         f"cut a Ø{d:g} D-bore centred on the contract pose")
-    cu, cv, r = fit
+    cu, cv, r = circle
     measured = 2 * r
     if not band[0] - FIT_EPS_MM <= measured <= band[1] + FIT_EPS_MM:
         raise GateError("G3", f'port "{key}" (HUB_BORE): expected Ø{band[0]:.2f}..{band[1]:.2f}, measured Ø{measured:.2f}',
-                        f"cut the bore Ø{sum(band) / 2:.2f}, a {fit} fit on the Ø{d:g} shaft",
+                        f"cut the bore Ø{sum(band) / 2:.2f}, a {fit} fit on the Ø{d:g} shaft, with the D-flat "
+                        f"along +xAxis only: a flat on another side reads as a smaller bore",
                         expected=round(sum(band) / 2, 3), measured=round(measured, 3))
     if math.hypot(cu, cv) > HOLE_CENTER_TOL_MM:
         raise GateError("G3", f'port "{key}" (HUB_BORE): bore centre is {math.hypot(cu, cv):.2f}mm off the declared origin',
@@ -2825,8 +2837,9 @@ def _check_helix(shape: Any, a: dict[str, Any]) -> dict[str, Any]:
     pitch = a.get("pitch")
     hint = (f"model the thread as a real {hand}-hand helix of {starts} start(s)"
             + (f" at pitch {float(pitch):g}" if pitch else "")
-            + f" crossing radius {float(a['radius']):g} about the part's Z axis: sweep the profile along a "
-              "Helix (lefthand=True for a left hand) and fuse it; stacked rings or a plain cylinder are not a thread")
+            + f" crossing radius {float(a['radius']):g} about the part's Z axis: cut a groove swept along a "
+              "Helix (lefthand=True for a left hand) into the cylinder, the cheat sheet's THREADS recipe; "
+              "stacked rings or a plain cylinder are not a thread")
     if got["starts"] != starts or got["hand"] != hand:
         raise GateError("G4b", f'assertion "helix": expected a {hand}-hand {starts}-start thread at radius '
                                f'{float(a["radius"]):g}, measured {got["starts"]} start(s), hand {got["hand"]}',

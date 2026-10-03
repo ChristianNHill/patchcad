@@ -146,6 +146,11 @@ export interface CheckFinding {
   measured: number;
   expected: number;
   message: string;
+  /** The backend can name whose CODE is at fault (one part's material in its
+   *  partner's envelope): cookNodes then gives that node a repair round with
+   *  `report` as the failure, up to its attempt budget, before the block
+   *  stands as contract-infeasible. */
+  repair?: { nodeId: string; report: string };
 }
 
 export interface CheckResult {

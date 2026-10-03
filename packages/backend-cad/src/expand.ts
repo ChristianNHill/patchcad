@@ -9,7 +9,7 @@ import {
 import { gt2TipD } from "./registry.js";
 import { resolveBinding, resolveDim, resolvePose, type NumericPose } from "./bindings.js";
 import type { JointAxisDef, KinematicJoint, Mat4 } from "./assembly.js";
-import { solvePlan } from "./plan-geometry.js";
+import { reachableTravel, solvePlan } from "./plan-geometry.js";
 import { SEAT_POSE } from "./grounding.js";
 import { isMachined, sourcingOf } from "./sourcing.js";
 import { HARDWARE_PORT_TYPES } from "./index.js";
@@ -139,7 +139,7 @@ type Live = Record<string, Record<string, ParamValue>>;
  *  live param values when expanding a graph someone has been editing. */
 function asGraph(out: ArchitectOutput, live: Live = {}): GraphDoc {
   return {
-    nodes: Object.fromEntries(out.nodes.map((n) => [n.id, { id: n.id, params: { ...live[n.id] }, contract: n.contract }])),
+    nodes: Object.fromEntries(out.nodes.map((n) => [n.id, { id: n.id, kind: n.kind, params: { ...live[n.id] }, contract: n.contract }])),
   } as unknown as GraphDoc;
 }
 
@@ -159,20 +159,46 @@ export function jointInput(graph: GraphDoc, j: CadJoint): JointInput | { error: 
   }
   const pa = processOf(a);
   const pb = processOf(b);
+  const boreA = coaxialBore(graph, a, j.a.port);
   return {
     id: j.id, intent: j.intent, motion: j.motion, duty: j.duty, driven: j.driven, speedClass: j.speedClass,
     torqueClass: j.torqueClass, precise: j.precise, load: j.load, access: j.access, wallA, wallB, lateral,
     processA: pa.process, processB: pb.process, materialA: pa.material, materialB: pb.material,
     minWall: (payloadOf(b).process?.minWall as number | undefined) ?? FDM_MIN_WALL_MM,
     flush: j.flush, count: j.count, threadHint: j.threadHint, shaftHint: j.shaftHint, strokeMm: j.strokeMm,
-    ratio: j.ratio, centerMm: j.centerMm, wallMotor, allowPrinted: j.allowPrinted,
+    ratio: j.ratio, centerMm: j.centerMm, wallMotor, allowPrinted: j.allowPrinted, boreA,
   };
+}
+
+/** Ø of a BORE or CLEARANCE_HOLE `node` declares on the axis of its `port`
+ *  (the port's z through its origin), in the node's own frame. */
+function coaxialBore(graph: GraphDoc, node: NodeRecord, port: string): number | undefined {
+  const ports = (node.contract.payload as CadContractPayload | undefined)?.ports ?? [];
+  const at = ports.find((p) => p.name === port);
+  if (!at) return undefined;
+  try {
+    const unit = (v: number[]) => v.map((c) => c / Math.hypot(...v));
+    const dot = (u: number[], v: number[]) => u[0]! * v[0]! + u[1]! * v[1]! + u[2]! * v[2]!;
+    const { origin: o, zAxis } = resolvePose(graph, at.pose);
+    const z = unit(zAxis);
+    for (const p of ports) {
+      if (p.type !== "BORE" && p.type !== "CLEARANCE_HOLE") continue;
+      const q = resolvePose(graph, p.pose);
+      const dz = [0, 1, 2].map((k) => q.origin[k]! - o[k]!);
+      const along = dot(dz, z);
+      const parallel = Math.abs(Math.abs(dot(unit(q.zAxis), z)) - 1) < 1e-3;
+      if (parallel && Math.hypot(...dz.map((v, k) => v - along * z[k]!)) < 0.5) return resolveDim(graph, p.params.diameter as number | string);
+    }
+  } catch {
+    // an unresolvable pose or size: no bore to reuse
+  }
+  return undefined;
 }
 
 /** What a decision fixes, lengths aside: when this changes, the joint is
  *  re-expanded; when only a length moves, T1 already followed it. */
 export function decisionKey(d: JointDecision): string {
-  return [d.rule, ...d.parts.map((p) => `${p.role}=${p.family}:${p.key}`)].join("|");
+  return [d.rule, ...d.parts.map((p) => `${p.role}=${p.family}:${p.key}`), ...(d.dims.slipA ? ["slipA"] : [])].join("|");
 }
 
 // ---------- Minting ----------
@@ -658,8 +684,9 @@ function printedPin(c: Ctx) {
   ringFace(c, B, j.b.port, d.dims.bore! + 2.4);
 }
 
-/** A catalog pin pressed `press` deep into a and turning `run` deep in b:
- *  both DOWEL_HOLEs at the pin's nominal Ø, the fit in each port's `fit`. A
+/** A catalog pin pressed `press` deep into a (or loose there, `slipA`) and
+ *  turning `run` deep in b: both DOWEL_HOLEs at the pin's nominal Ø, the fit
+ *  in each port's `fit`. A
  *  hole that would leave less than a minimum wall under it goes through. */
 function pin(c: Ctx) {
   const { x, j, i, v, d, A, B, fa, fb } = c;
@@ -671,7 +698,7 @@ function pin(c: Ctx) {
   x.mint(j.id, part(d, "pin")!, d.summary, [{
     side: "requires", port: { name: "center", type: "FLAT_FACE", pose: pose([0, 0, round(d.dims.length! / 2 - d.dims.press!)]), params: { ring_diameter: d.dims.d! / 2 } }, decl: "DOWEL_HOLE",
   }]);
-  x.addPort(A, "provides", { name: `${v}_pin_a`, type: "DOWEL_HOLE", pose: at(fa, 0, 0, 0), params: { diameter: `param(${A.id}.${v}_pin_d)`, depth: deep(d.dims.press!, i.wallA), fit: "press" } });
+  x.addPort(A, "provides", { name: `${v}_pin_a`, type: "DOWEL_HOLE", pose: at(fa, 0, 0, 0), params: { diameter: `param(${A.id}.${v}_pin_d)`, depth: deep(d.dims.press!, i.wallA), fit: d.dims.slipA ? "slip" : "press" } });
   x.addPort(B, "provides", { name: `${v}_pin_b`, type: "DOWEL_HOLE", pose: at(fb, 0, 0, 0), params: { diameter: `param(${B.id}.${v}_pin_d)`, depth: deep(d.dims.run!, i.wallB), fit: "slip" } });
   x.addEdge(A.id, `${v}_pin_a`, id, "center");
   faceMate(c);
@@ -1119,7 +1146,28 @@ export function expandJoints(input: ArchitectOutput, live?: Live): ArchitectOutp
   const minted = (e: OutEdge) => [e.from, e.to].some((id) => id.includes("_")) || names.has(e.fromPort) || names.has(e.toPort);
   out.edges = [...out.edges.filter((e) => !minted(e)), ...out.edges.filter(minted)];
   out.joints = kept;
+  deriveTravel(out, live);
   return out;
+}
+
+/**
+ * A revolute joint with no stated limits turns as far as its parts'
+ * envelopes let it, not a full turn: two flat hinge leaves on one pin meet
+ * folded well short of 180°, and the ±180° default sent G5's sweep straight
+ * through the other leaf. Continuous duty keeps the full turn, which the
+ * plan lint holds it to. Re-derived on every expansion, so a moved part
+ * moves its stops.
+ */
+function deriveTravel(out: ArchitectOutput, live?: Live) {
+  const graph = { ...asGraph(out, live), edges: out.edges, joints: out.joints, assembly: { entryNodeId: out.entryNodeId } } as unknown as GraphDoc;
+  const axes = jointAxes(graph);
+  out.joints = out.joints!.map((raw) => {
+    const j = raw as CadJoint;
+    if (j.motion !== "revolute" || j.duty === "continuous" || (j.limits && j.limitsSource !== "derived")) return raw;
+    const def = axes.find((a) => a.id === j.id);
+    if (!def) return raw;
+    return { ...raw, limits: reachableTravel(graph, def), limitsSource: "derived" } as JointDecl;
+  });
 }
 
 type Planned = { j: CadJoint; inp: JointInput; decision: JointDecision; A: OutNode; B: OutNode } | undefined;

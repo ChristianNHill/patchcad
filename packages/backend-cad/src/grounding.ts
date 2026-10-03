@@ -156,6 +156,21 @@ const FITTED_PORTS: Record<string, { param: string; cut: keyof typeof FDM_FIT_CU
   NUT_TRAP: { param: "af", cut: "nutTrapAf" },
 };
 
+/** Which band a fitted port is probed against, or null when it has none. */
+function fitOf(port: { type: string; params: Record<string, number | string> }): keyof typeof FDM_FIT_CUT_MM | null {
+  const spec = FITTED_PORTS[port.type];
+  if (!spec) return null;
+  if (spec.cut !== "fit") return spec.cut;
+  return port.params.fit === "slip" || port.params.fit === "press" ? port.params.fit : (spec.unfit ?? "press");
+}
+
+/** The cut offset on a fitted port's nominal size (the band's middle), or 0.
+ *  For code that cuts the feature itself rather than telling a generator to. */
+export function fitOffset(port: { type: string; params: Record<string, number | string> }, machined = false): number {
+  const cut = fitOf(port);
+  return cut ? (machined ? MACHINED_FIT_CUT_MM : FDM_FIT_CUT_MM)[cut] : 0;
+}
+
 /**
  * The generator's annotation for one of its own ports: the size to cut on FDM,
  * worked out from the nominal the port declares, plus the shape rules the
@@ -174,9 +189,8 @@ export function fitCut(
   }
   const spec = FITTED_PORTS[port.type];
   if (!spec) return null;
-  const fit = port.params.fit === "slip" || port.params.fit === "press" ? port.params.fit : (spec.unfit ?? "press");
-  const cut = spec.cut === "fit" ? fit : spec.cut;
-  const offset = (machined ? MACHINED_FIT_CUT_MM : FDM_FIT_CUT_MM)[cut];
+  const cut = fitOf(port)!;
+  const offset = fitOffset(port, machined);
   const raw = port.params[spec.param];
   const nominal = raw === undefined ? undefined : num(raw);
   const sign = offset < 0 ? "−" : "+";
@@ -189,7 +203,14 @@ export function fitCut(
     port.type === "BEARING_SEAT" || (port.type === "LINEAR_BEARING_SEAT" && port.params.retention !== "clip")
       ? `; pocket ≥ ${port.type === "BEARING_SEAT" ? "width" : "length"} deep on a shoulder lip ≥ 1 mm (bore below ≤ od − 2)`
       : "";
-  return `cut ${what} ${size}${shoulder}`;
+  // A wheel on its axle: the interference is hundredths, and a D-flat put
+  // anywhere but +x reads to the probe as a smaller bore.
+  const flat = port.params.flat === undefined ? undefined : (num(port.params.flat) ?? "flat");
+  const hub =
+    port.type !== "HUB_BORE"
+      ? ""
+      : `${cut === "press" ? "; interference is tiny on FDM, do not undersize" : ""}${flat === undefined ? "" : `; D-flat ${flat} mm from the axis along this port's +x, never another side`}`;
+  return `cut ${what} ${size}${shoulder}${hub}`;
 }
 
 /** Rendered for the architect, because a number it cannot read is a number it

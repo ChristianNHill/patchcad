@@ -1305,6 +1305,9 @@ function cadPlanning(meshAvailable: boolean) {
       "  leave flat around what the rules cut there. A fixed joint's two ports are",
       "  also the a-b face mate (wire that edge as usual). A moving b is placed",
       "  through its hardware, so never wire a to b directly for motion.",
+      "  At travel 0 the two parts of a revolute joint face AWAY from each other:",
+      "  pick b.port's xAxis so b lies on the far side of the axis from a (hinge",
+      "  leaves open flat), never on top of a.",
       "  wallA / wallB: each part's thickness at the joint, along the joint axis,",
       "  as a number or a param expression. A wall too thin for every rule comes",
       "  back as a lint naming the wall and how thick it must be.",
@@ -1334,6 +1337,9 @@ function cadPlanning(meshAvailable: boolean) {
       "rules mint them, with ids like",
       "j1_screw. Hardware no joint owns must still be justified by a host port.",
       "",
+      "",
+      "Every hole or bore the brief states with a size is a declared port on",
+      "its part (a BORE or CLEARANCE_HOLE at that Ø), joint or no joint.",
       "",
       // THE RULE THE ARCHITECT TRIPPED ON 14 OF 15 PLANS. It lived only in the
       // lint, so every first emission declared a face and a hole on one axis —
@@ -1863,7 +1869,7 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
           problems.push(`clash check incomplete — ${e}. Those two parts were not compared.`);
         }
         if ((res.clash.errors ?? []).length > 0) incomplete = true;
-        findings.push(...clashFindings(graph, res.clash));
+        findings.push(...clashFindings(graph, res.clash, instances));
       } catch (err) {
         incomplete = true;
         problems.push(

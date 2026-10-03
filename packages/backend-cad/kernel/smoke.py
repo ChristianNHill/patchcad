@@ -1508,6 +1508,41 @@ def build(p):
     return core + sweep(prof, Helix(2.0, 12.0, 4.0, center=(0, 0, 2.0)), is_frenet=True)
 """
 
+# prompts.ts THREADS, verbatim: an M8 x 1.25 x 30 groove cut under a thumb
+# screw's head (the threaded-thumb-screw eval), and the same thread as the
+# fused swept tooth that cost that eval three G2 repair rounds.
+GROOVE_THREAD = """
+from build123d import *
+
+def groove(pitch, length, r_from, r_to, h=0.25, c=0.1):
+    s = 1 if r_to > r_from else -1
+    a, b = r_from - 0.3 * s, r_from + 0.05 * s
+    pts = [(a, -h * pitch), (b, -h * pitch), (r_to, -c * pitch), (r_to, c * pitch), (b, h * pitch), (a, h * pitch)]
+    return sweep(Plane.XZ * Polygon(*pts[::-s], align=None), Helix(pitch, length, a), is_frenet=True)
+
+def build(p):
+    _ = p['nonce']
+    L, pitch = 30, 1.25
+    r_maj, r_min = 4 - 0.1, 4 - 0.6134 * pitch - 0.1
+    head = Pos(0, 0, 4) * Cylinder(10, 8)
+    shank = Pos(0, 0, -L / 2) * Cylinder(r_maj, L)
+    shank = shank - Pos(0, 0, -L - pitch) * groove(pitch, L + pitch - 0.5, r_maj, r_min)
+    shank = shank - Pos(0, 0, -L - pitch / 2) * groove(pitch, pitch, r_maj, r_min - 0.05, 0.48, 0.48)
+    return head + shank
+"""
+FUSED_THREAD = """
+from build123d import *
+
+def build(p):
+    _ = p['nonce']
+    head = Pos(0, 0, 4) * Cylinder(10, 8)
+    core = Pos(0, 0, -14.75) * Cylinder(3.2, 30.5)
+    core = chamfer(core.edges().group_by(Axis.Z)[0], 0.6)
+    prof = Plane.XZ * Polygon((3.0, -0.6), (3.9, -0.25), (3.9, 0.25), (3.0, 0.6), align=None)
+    thread = Pos(0, 0, -29.4) * sweep(prof, Helix(1.25, 30.4, 3.0), is_frenet=True)
+    return head + core + thread
+"""
+
 
 def bench_fixes(client: httpx.Client) -> None:
     """CADClamp benchmark zeros: a hole breaking out into a cavity, a keyed
@@ -1580,6 +1615,15 @@ def bench_fixes(client: httpx.Client) -> None:
     check("G4b: a plain cylinder fails both helix and line_count",
           plain.status_code == 422 and any('"helix"' in e for e in errors) and any('"line_count"' in e for e in errors),
           str(errors)[:200])
+
+    screw = run(GROOVE_THREAD, assertions=[{"kind": "helix", "radius": 3.65, "z": [-30, 0], "pitch": 1.25}],
+                process={"kind": "fdm"})
+    check("the cheat sheet's THREADS groove: M8x1.25x30 is one watertight solid, a helix, and printable",
+          screw.status_code == 200, screw.json().get("error", "")[:200])
+    fused = run(FUSED_THREAD)
+    check("G2: a swept thread fused onto its core is named in the hint, with the groove to use instead",
+          fused.status_code == 422 and fused.json().get("stage") == "G2"
+          and "swept thread fused onto a core" in fused.json().get("hint", ""), fused.json().get("hint", "")[:200])
 
     fdm = {"kind": "fdm"}
     plate = run("from build123d import *\ndef build(p):\n    _ = p['nonce']\n    return Box(40, 30, p['t'])\n",

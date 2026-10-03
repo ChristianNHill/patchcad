@@ -117,6 +117,10 @@ describe("fit cut targets for the generator", () => {
     expect(cut("MAGNET_POCKET", { diameter: 6, depth: 3 })).toBe("cut Ø 6.125 (diameter 6 + 0.125, magnet)");
     expect(cut("NUT_TRAP", { af: 5.5, depth: 2.4, entry: "axial" })).toBe("cut across the flats 5.7 (af 5.5 + 0.2, nutTrapAf)");
     expect(cut("HUB_BORE", { diameter: 5 })).toBe("cut Ø 5.15 (diameter 5 + 0.15, slip)");
+    // The toy car's wheels cut a D-bore with the flat on +y, which the probe read as Ø4.53.
+    expect(cut("HUB_BORE", { diameter: 5, fit: "press", flat: 2 })).toBe(
+      "cut Ø 4.95 (diameter 5 − 0.05, press); interference is tiny on FDM, do not undersize; D-flat 2 mm from the axis along this port's +x, never another side",
+    );
     expect(cut("MOTOR_MOUNT", { pilot_diameter: 22, hole_diameter: 3.4, pcd: 43.84, count: 4 })).toBe("cut Ø 22.15 (pilot_diameter 22 + 0.15, slip)");
     expect(cut("INSERT_POCKET", { diameter: 4, depth: 5.8 })).toContain("depth + 0.3");
     expect(cut("THREADED_HOLE", { thread: "M4", depth: 8 })).toBe("cut Ø 3.3 (tap drill for M4)");

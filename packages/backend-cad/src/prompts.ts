@@ -43,12 +43,32 @@ a fairing, a grip, a blade). Primitives plus fillet only ever make a boxy part:
   extrude(section, amount, taper=deg)
   Spline([(x, y), ...]) / Polyline(...) / Line(p1, p2) / RadiusArc(p1, p2, r)
   make_face(closed_wire) / mirror(shape, Plane.YZ)
-  Helix(pitch, height, radius)              # a thread's path; the thread itself is
-    sweep(Plane.XZ * Polygon((r0, -h), (r1, 0), (r0, h), align=None), Helix(pitch, length, r0), is_frenet=True)
+  Helix(pitch, height, radius)              # a thread's path: see THREADS below
   The cheapest smooth body is a loft through offset circles:
     loft([Plane.XY.offset(z) * Circle(r) for z, r in ((0, 8), (20, 14), (45, 6))])
   Sections must be sketches on planes, listed in order along the blend; a loft
   through two identical circles is just a cylinder, so vary the radii.
+THREADS — CUT a helical groove, never fuse a swept tooth onto a core: that
+fuse leaves two solids or a mesh that is not watertight about one time in
+five. This helper is measured watertight, one solid, and read by the helix
+gate for M3-M12 at any length:
+  def groove(pitch, length, r_from, r_to, h=0.25, c=0.1):
+      s = 1 if r_to > r_from else -1
+      a, b = r_from - 0.3 * s, r_from + 0.05 * s
+      pts = [(a, -h * pitch), (b, -h * pitch), (r_to, -c * pitch), (r_to, c * pitch), (b, h * pitch), (a, h * pitch)]
+      return sweep(Plane.XZ * Polygon(*pts[::-s], align=None), Helix(pitch, length, a), is_frenet=True)
+  External, M8 x 1.25 for L mm below z = 0 (under a head): r_maj = 4 - 0.1,
+  r_min = 4 - 0.6134 * pitch - 0.1. The groove runs out of the tip and stops
+  0.5 short of the head; the second, full-width cut takes the first turn so
+  the tooth starts square instead of as a feather the wall check fails:
+    shank = Pos(0, 0, -L / 2) * Cylinder(r_maj, L)
+    shank = shank - Pos(0, 0, -L - pitch) * groove(pitch, L + pitch - 0.5, r_maj, r_min)
+    shank = shank - Pos(0, 0, -L - pitch / 2) * groove(pitch, pitch, r_maj, r_min - 0.05, 0.48, 0.48)
+  Internal (a nut H tall from z = 0): cut the groove into the SOLID body
+  first, then the bore; bored first, the groove cut silently removes nothing.
+  r_min = 4 - 1.0825 * pitch + 0.1, r_maj = 4 + 0.1:
+    body = body - Pos(0, 0, -pitch) * groove(pitch, H + 2 * pitch, r_min, r_maj) - Cylinder(r_min, 3 * H)
+  An M3 x 30 (60 turns) builds in about 4 s; more turns than that near the budget.
 RULES:
   - def build(p): ... return <shape>   (exactly this entrypoint; p.name reads a param)
   - millimeters everywhere; NO topological string selectors; NO other imports.

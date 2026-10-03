@@ -654,6 +654,84 @@ describe("the butt hinge: a catalog pin pressed in one knuckle, turning in the o
   });
 });
 
+describe("the butt hinge whose brief pins a slip bore in both knuckles", () => {
+  // "turn on a separate 3mm pin through 3.2mm knuckle bores": a's Ø3.2 BORE
+  // is on the pin's axis, so a press hole there would be a second hole.
+  const bore = { name: "pin_bore", type: "BORE", pose: { origin: [0, 0, 0], zAxis: [0, 0, -1], xAxis: [1, 0, 0] }, params: { diameter: 3.2 } };
+  const out = expandJoints({
+    ...plates({}),
+    nodes: [
+      part("leaf-a", 7.7, [face("knuckle", 7.7, 6), bore as never]),
+      part("leaf-b", 7.7, [face("knuckle", 0, 6, [0, 0, -1])]),
+    ] as never,
+    entryNodeId: "leaf-a",
+    joints: [{
+      id: "hinge", a: { node: "leaf-a", port: "knuckle" }, b: { node: "leaf-b", port: "knuckle" },
+      intent: "permanent", motion: "revolute", load: "light", wallA: 7.7, wallB: 7.7, shaftHint: 3,
+    }],
+  } as ArchitectOutput);
+
+  it("turns the pin in a's declared bore instead of pressing it into a second hole", () => {
+    const hole = (id: string, name: string) => (out.nodes.find((n) => n.id === id)!.contract.payload as CadContractPayload).ports.find((p) => p.name === name)!.params;
+    expect(hole("leaf-a", "hinge_pin_a")).toMatchObject({ fit: "slip" });
+    expect(hole("leaf-b", "hinge_pin_b")).toMatchObject({ fit: "slip" });
+    expect(out.joints![0]!.expanded).toBe("M2d|pin=dowel:3|slipA");
+    expect(lintAll(out)).toEqual([]);
+  });
+});
+
+describe("revolute travel derived from the parts' envelopes", () => {
+  // Two flat 40×30×3 leaves on one Ø7 knuckle line along x at y = 11.5, the
+  // eval's hinge: a's middle knuckle, b's two either side, leaves opposite.
+  const pose = (origin: number[], zAxis: number[], xAxis: number[]) => ({ origin, zAxis, xAxis });
+  const leaf = (id: string, knuckles: [number, number][], z: number[], x: number[]) =>
+    part(id, 3, [{ name: "knuckle_face", type: "FLAT_FACE", pose: pose([4, 11.5, 0], z, x), params: { size: 6 } }] as never, {
+      envelope: {
+        volumes: [
+          { kind: "box", pose: pose([0, -3.4, 0], [0, 0, 1], [1, 0, 0]), dims: [40, 23.2, 3] },
+          ...knuckles.map(([at, h]) => ({ kind: "cylinder", pose: pose([at, 11.5, 0], [1, 0, 0], [0, 1, 0]), d: 7, h })),
+        ],
+        clearance: 0.4,
+      } as never,
+    });
+  const hinge = (joint: Record<string, unknown> = {}) =>
+    expandJoints({
+      ...plates({}),
+      nodes: [leaf("leaf-a", [[0, 8]], [1, 0, 0], [0, -1, 0]), leaf("leaf-b", [[7.8, 7.6], [-7.8, 7.6]], [-1, 0, 0], [0, 1, 0])] as never,
+      entryNodeId: "leaf-a",
+      joints: [{
+        id: "hinge", a: { node: "leaf-a", port: "knuckle_face" }, b: { node: "leaf-b", port: "knuckle_face" },
+        intent: "removable", motion: "revolute", load: "light", wallA: 7.6, wallB: 7.6, shaftHint: 3, ...joint,
+      }],
+    } as ArchitectOutput);
+
+  it("stops two flat leaves short of folding into each other, both ways", () => {
+    const j = hinge().joints![0] as { limits?: [number, number]; limitsSource?: string };
+    expect(j.limitsSource).toBe("derived");
+    const [lo, hi] = j.limits!;
+    for (const v of [-lo, hi]) {
+      expect(v).toBeGreaterThanOrEqual(90);
+      expect(v).toBeLessThanOrEqual(170);
+    }
+    expect(new CadBackend().solveScene(graphOf(hinge())).joints.find((x) => x.id === "hinge")?.limits).toEqual(j.limits);
+  });
+
+  it("re-derives its own limits but keeps stated ones, and lints stated ones past the stops", () => {
+    const again = expandJoints(hinge());
+    expect(again.joints![0]).toEqual(hinge().joints![0]);
+    const stated = hinge({ limits: [-180, 180] });
+    expect((stated.joints![0] as { limitsSource?: string }).limitsSource).toBeUndefined();
+    expect(lintAll(stated).some((p) => /joint hinge states limits \[-180, 180\]°, but the parts' envelopes only reach/.test(p))).toBe(true);
+    expect(lintAll(hinge()).filter((p) => p.includes("limits"))).toEqual([]);
+  });
+
+  it("holds a continuous joint to a full turn: a rotor keeps ±180°, a hinge cannot spin", () => {
+    const rotor = JSON.parse(readFileSync(new URL("../../../examples/cad-rotor/patchcad.json", import.meta.url), "utf8")) as GraphDoc;
+    expect(new CadBackend().solveScene(rotor).joints.filter((x) => x.type === "revolute").map((x) => x.limits)).toContainEqual([-180, 180]);
+    expect(lintAll(hinge({ duty: "continuous", wallA: 14, wallB: 8, shaftHint: 5 })).some((p) => p.startsWith("joint hinge is continuous"))).toBe(true);
+  });
+});
+
 /** A body with a wheel face on each side of two axles, y = ±25. */
 function car(wheels: "four" | "one", hubFit?: "press") {
   const side = (name: string, x: number, s: 1 | -1) => ({ name, type: "FLAT_FACE" as const, pose: { origin: [x, 25 * s, 10], zAxis: [0, s, 0] as [number, number, number], xAxis: [1, 0, 0] }, params: { size: 12 } });
