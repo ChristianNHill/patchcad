@@ -7,6 +7,9 @@ come back as structured, repairable errors instead of a dead service.
 from __future__ import annotations
 
 import multiprocessing as mp
+import os
+import re
+import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -26,14 +29,30 @@ class WorkerTimeout(Exception):
     pass
 
 
+def _timeout_line(trace_path: str, code: str) -> str | None:
+    """The node line a killed worker was stuck on, from the faulthandler dump
+    it wrote just before the deadline. Most recent call first, so the first
+    "<node>" frame is the innermost line the model wrote."""
+    from .gates import source_context  # OCP-free at module level
+
+    try:
+        with open(trace_path, encoding="utf8", errors="replace") as f:
+            m = re.search(r'File "<node>", line (\d+)', f.read())
+    except OSError:
+        return None
+    return source_context(code, int(m.group(1))) if m and code else None
+
+
 class Worker:
     def __init__(self) -> None:
         self.respawns = 0
+        fd, self.trace_path = tempfile.mkstemp(prefix="patchcad-trace-", suffix=".txt")
+        os.close(fd)
         self._start()
 
     def _start(self) -> None:
         self.parent_conn, child_conn = SPAWN.Pipe()
-        self.process = SPAWN.Process(target=worker_main, args=(child_conn,), daemon=True)
+        self.process = SPAWN.Process(target=worker_main, args=(child_conn, self.trace_path), daemon=True)
         self.process.start()
         child_conn.close()
         # The child is already running by here, so a boot failure has to reap it:
@@ -57,8 +76,9 @@ class Worker:
     def request(self, job: dict[str, Any], timeout_s: float) -> dict[str, Any]:
         """Blocking send+recv. Raises WorkerTimeout / WorkerCrash; either way
         the caller must consider this worker dead and call respawn()."""
+        # Dump the stack a second before the kill, so a timeout can say where.
         try:
-            self.parent_conn.send(job)
+            self.parent_conn.send(job | {"trace_after_s": max(timeout_s - 1, timeout_s * 0.8)})
         except (BrokenPipeError, OSError) as err:
             raise WorkerCrash(f"worker pipe broken before send: {err}") from None
         deadline = time.monotonic() + timeout_s
@@ -93,6 +113,10 @@ class Worker:
             pass
         if self.process.is_alive():
             self.process.kill()
+        try:
+            os.unlink(self.trace_path)
+        except OSError:
+            pass
 
 
 class WorkerPool:
@@ -135,9 +159,13 @@ class WorkerPool:
         try:
             return worker.request(job, timeout_s)
         except WorkerTimeout:
+            # Read before respawn: the new worker truncates the same trace file.
+            where = _timeout_line(worker.trace_path, job.get("code", ""))
             worker.respawn()
-            return {"ok": False, "stage": "TIMEOUT",
-                    "error": f"execution exceeded {timeout_s:.0f}s and was killed",
+            error = f"execution exceeded {timeout_s:.0f}s and was killed"
+            if where:
+                error += f", still running {where}"
+            return {"ok": False, "stage": "TIMEOUT", "error": error,
                     "hint": "the code likely loops forever or models something explosive — simplify"}
         except WorkerCrash as err:
             worker.respawn()

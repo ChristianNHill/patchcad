@@ -17,7 +17,7 @@ if (!fenced.success || fenced.data.sum !== 7) throw new Error(`fenced parse fail
 if (tryParse({ schema }, '{"sum":"seven"}').success) throw new Error("expected a validation failure for a string sum");
 console.log("tryParse: fenced ok, invalid rejected");
 
-// --- routing: an image must outrank the role map, or inspect ("generator")
+// --- routing: an image must outrank the role map, or inspect ("classifier")
 // and the render-bearing CAD repair ("repair") silently lose their picture.
 const stub = (id: string): LlmProvider => ({
   id,

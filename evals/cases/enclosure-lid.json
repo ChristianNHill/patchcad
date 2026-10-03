@@ -1,0 +1,16 @@
+{
+  "id": "enclosure-lid",
+  "prompt": "a 60x40x25mm electronics enclosure with 2mm walls and a separate flat lid held on by four M3 screws",
+  "why": "The two-part box. G3 measures the lid's M3 clearance holes; G5 clashes the lid against the walls and the screws against the holes they pass, so a lid that sits inside the walls or screws that miss their bosses fail. volumeFraction on the largest node fails a solid block posing as the box (the hollow shell is about 0.25).",
+  "expect": {
+    "nodes": { "min": 2, "max": 7 },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": ["fastener", "nut", "insert", "threaded_rod", "gear"],
+    "ports": [
+      { "anyType": ["CLEARANCE_HOLE", "HOLE_PATTERN"], "minCount": 1, "diameter": 3.4, "tol": 0.4, "through": true }
+    ],
+    "volumeFraction": { "max": 0.5 },
+    "assemblyProblems": 0
+  }
+}

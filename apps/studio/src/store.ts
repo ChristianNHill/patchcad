@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import type { Contract, CookFailure, EngineEvent, GraphDoc, NodeStatus, ParamValue } from "@patchcad/shared";
 import { API, WS_API } from "./api";
+import { belongsToOpenProject, mergeNode } from "./events";
+import { refsBody, type PlanRefs, type RefDraft } from "./refs";
 
 export type PlanPhase = Extract<EngineEvent, { type: "plan:phase" }>["phase"];
 
@@ -9,6 +11,10 @@ export type PlanState =
   | { status: "planning"; goal: string; phase: PlanPhase; detail: string; startedAt: number }
   | { status: "pending"; plan: GraphDoc; rationale: string; usd: number }
   | { status: "error"; message: string };
+
+/** What segmentation puts at each cut: real hardware the joint rules pick
+ *  (auto), clearance-fit pegs, screw holes, or nothing. */
+export type JointMode = "auto" | "none" | "holes" | "pegs";
 
 /** A T3 contract renegotiation awaiting user approval. */
 export interface Proposal {
@@ -26,6 +32,20 @@ export interface ProjectEntry {
   name: string;
   goal: string;
   nodes: number;
+  /** patchcad.json mtime; the server lists newest first. */
+  mtime: number;
+  /** Hand-authored under examples/, offered to try rather than resume. */
+  example: boolean;
+}
+
+/** GET /api/status. */
+export interface ServerStatus {
+  provider: { id: string; source: string } | null;
+  /** How to configure one, when `provider` is null. */
+  providerHelp: string;
+  maxUsd: number | null;
+  /** null when the open project is not CAD. */
+  kernel: { ok: boolean } | null;
 }
 
 interface StudioState {
@@ -48,12 +68,16 @@ interface StudioState {
   codeLoading: boolean;
   previewFrame: HTMLIFrameElement | null;
   planState: PlanState;
+  planRefs: PlanRefs;
+  setPlanRefs: (refs: PlanRefs) => void;
   checker: { status: "clean" | "checking" | "failing"; problems: string[] };
   proposal: Proposal | null;
   projectDir: string | null;
   projects: ProjectEntry[];
   projectPickerOpen: boolean;
   undo: { depth: number; label: string };
+  status: ServerStatus | null;
+  loadStatus: () => Promise<ServerStatus | null>;
   /** Bumped whenever the CAD scene should refetch (commits, T0/T1 re-executes). */
   cadSceneRev: number;
   /** Per-node DfAM measurements (CADClamp-derived), filled by the viewport fetch. */
@@ -69,7 +93,7 @@ interface StudioState {
   plan: (goal: string, backend?: "web-code" | "cad") => Promise<void>;
   approvePlan: () => Promise<void>;
   discardPlan: () => Promise<void>;
-  reprompt: (nodeId: string, message: string) => Promise<{ tier: "T2" | "T3"; reason: string }>;
+  reprompt: (nodeId: string, message: string, images?: RefDraft[]) => Promise<{ tier: "T2" | "T3"; reason: string }>;
   acceptProposal: () => Promise<void>;
   rejectProposal: () => Promise<void>;
   revert: (nodeId: string, version: number) => Promise<void>;
@@ -81,15 +105,17 @@ interface StudioState {
   cookDirty: () => Promise<void>;
   /** Halt every in-flight node. They settle to `cancelled` and cook-dirty resumes them. */
   cancelCook: () => Promise<void>;
+  /** Abort the architect call. Separate from cancelCook: a plan is not a cook. */
+  cancelPlan: () => Promise<void>;
   loadProjects: () => Promise<void>;
   openProject: (dir: string) => Promise<void>;
   closeProject: () => Promise<void>;
   setProjectPickerOpen: (open: boolean) => void;
   undoLast: () => Promise<void>;
   /** Returns an error message, or null on success. */
-  importCad: (file: File, opts: { pieces: number; joints: "none" | "holes" | "pegs"; thread: string }) => Promise<string | null>;
+  importCad: (file: File, opts: { pieces: number; joints: JointMode; thread: string }) => Promise<string | null>;
   /** Split an imported node into its natural pieces. Returns error or a notice. */
-  segmentNode: (nodeId: string, joints: "none" | "holes" | "pegs") => Promise<string | null>;
+  segmentNode: (nodeId: string, joints: JointMode) => Promise<string | null>;
 }
 
 const persistTimers: Record<string, ReturnType<typeof setTimeout>> = {};
@@ -157,12 +183,15 @@ export const useStudio = create<StudioState>((set, get) => ({
   codeLoading: false,
   previewFrame: null,
   planState: { status: "idle" },
+  planRefs: { images: [], symmetric: false },
+  setPlanRefs: (planRefs) => set({ planRefs }),
   checker: { status: "clean", problems: [] },
   proposal: null,
   projectDir: null,
   projects: [],
   projectPickerOpen: false,
   undo: { depth: 0, label: "" },
+  status: null,
   cadSceneRev: 0,
   printability: {},
 
@@ -194,10 +223,12 @@ export const useStudio = create<StudioState>((set, get) => ({
       setTimeout(() => void get().connect(), 2000);
       return;
     }
+    void get().loadStatus();
 
     const ws = new WebSocket(`${WS_API}/ws`);
     ws.onmessage = (msg) => {
       const event = JSON.parse(msg.data as string) as EngineEvent;
+      if (!belongsToOpenProject(event, get().graph?.id)) return;
       if (event.type === "graph:replaced") {
         const st: Record<string, NodeStatus> = {};
         for (const n of Object.values(event.graph.nodes)) st[n.id] = n.status;
@@ -224,6 +255,8 @@ export const useStudio = create<StudioState>((set, get) => ({
         // Re-fetch the inspected code if the selected node just re-cooked.
         if (get().selectedNodeId === event.nodeId) void get().selectNode(event.nodeId);
         set((s) => ({ cadSceneRev: s.cadSceneRev + 1 }));
+      } else if (event.type === "node:updated") {
+        set((s) => (s.graph ? { graph: mergeNode(s.graph, event.node) } : {}));
       } else if (event.type === "preview:reload") {
         set((s) => ({ cadSceneRev: s.cadSceneRev + 1 }));
       } else if (event.type === "checker:status") {
@@ -233,7 +266,21 @@ export const useStudio = create<StudioState>((set, get) => ({
       } else if (event.type === "cost:update") {
         // Fold streamed usage into the local graph so totals stay live.
         set((s) => {
-          if (!s.graph || !event.nodeId) return {};
+          if (!s.graph) return {};
+          if (event.bucket) {
+            const prev = s.graph.ledger[event.bucket];
+            const ledger = {
+              ...s.graph.ledger,
+              [event.bucket]: {
+                calls: prev.calls + 1,
+                inputTokens: prev.inputTokens + event.inputTokens,
+                outputTokens: prev.outputTokens + event.outputTokens,
+                usd: prev.usd + event.usd,
+              },
+            };
+            return { graph: { ...s.graph, ledger } };
+          }
+          if (!event.nodeId) return {};
           const node = s.graph.nodes[event.nodeId];
           if (!node) return {};
           node.cost = {
@@ -254,6 +301,18 @@ export const useStudio = create<StudioState>((set, get) => ({
 
   dismissProblem() {
     set({ problem: null });
+  },
+
+  async loadStatus() {
+    try {
+      const res = await fetch(`${API}/api/status`);
+      if (!res.ok) return null;
+      const status = (await res.json()) as ServerStatus;
+      set({ status });
+      return status;
+    } catch {
+      return null;
+    }
   },
 
   async selectNode(nodeIdValue) {
@@ -291,7 +350,7 @@ export const useStudio = create<StudioState>((set, get) => ({
       const res = await fetch(`${API}/api/project/plan`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ goal, backend }),
+        body: JSON.stringify({ goal, backend, ...refsBody(get().planRefs) }),
       });
       const data = (await res.json()) as {
         plan?: GraphDoc;
@@ -299,6 +358,8 @@ export const useStudio = create<StudioState>((set, get) => ({
         usage?: { usd: number };
         error?: string;
       };
+      // Stopped while the architect was still drafting: its answer is moot.
+      if (get().planState.status !== "planning") return;
       if (!res.ok || !data.plan) {
         set({ planState: { status: "error", message: data.error ?? `plan failed (${res.status})` } });
         return;
@@ -312,6 +373,7 @@ export const useStudio = create<StudioState>((set, get) => ({
         },
       });
     } catch (err) {
+      if (get().planState.status !== "planning") return;
       set({ planState: { status: "error", message: (err as Error).message } });
     }
   },
@@ -322,7 +384,7 @@ export const useStudio = create<StudioState>((set, get) => ({
       set({ planState: { status: "error", message: await reason(res, "could not start the cook") } });
       return;
     }
-    set({ planState: { status: "idle" }, selectedNodeId: null });
+    set({ planState: { status: "idle" }, selectedNodeId: null, planRefs: { images: [], symmetric: false } });
     // graph:replaced + node statuses arrive over the WS as the cook runs.
   },
 
@@ -331,11 +393,11 @@ export const useStudio = create<StudioState>((set, get) => ({
     set({ planState: { status: "idle" } });
   },
 
-  async reprompt(nodeIdValue, message) {
+  async reprompt(nodeIdValue, message, images = []) {
     const res = await fetch(`${API}/api/project/nodes/${nodeIdValue}/reprompt`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, images: images.map(({ dataB64, mediaType }) => ({ dataB64, mediaType })) }),
     });
     const data = (await res.json()) as {
       tier?: "T2" | "T3";
@@ -471,7 +533,15 @@ export const useStudio = create<StudioState>((set, get) => ({
 
   async cancelCook() {
     // 409 = nothing was cooking. Not worth a banner; the button is already gone.
-    await send("/api/project/cook/cancel", "could not stop the cook", { expect: [409] });
+    await send("/api/project/cook/cancel", "could not stop the cook", {
+      body: { projectId: get().graph?.id },
+      expect: [409],
+    });
+  },
+
+  async cancelPlan() {
+    set({ planState: { status: "idle" } });
+    await send("/api/project/plan/cancel", "could not stop the plan", { expect: [409] });
   },
 
   async revert(nodeIdValue, version) {

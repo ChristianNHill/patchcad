@@ -64,6 +64,15 @@ export function poseToMat(pose: Pose): Mat4 {
   return [x[0], x[1], x[2], 0, y[0], y[1], y[2], 0, z[0], z[1], z[2], 0, o[0], o[1], o[2], 1];
 }
 
+/** A point through a rigid transform. */
+export function transformPoint(m: Mat4, p: readonly number[]): [number, number, number] {
+  return [0, 1, 2].map((r) => m[r]! * p[0]! + m[4 + r]! * p[1]! + m[8 + r]! * p[2]! + m[12 + r]!) as [
+    number,
+    number,
+    number,
+  ];
+}
+
 /** π about local X: z → -z, y → -y — mating frames face each other. */
 const FLIP_X: Mat4 = [1, 0, 0, 0, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1];
 
@@ -97,12 +106,21 @@ const MATE_CONSISTENCY_TOL_MM = 0.05;
  * that is where a two-hole bracket whose second hole is 10mm out shows up.
  * Unreached nodes are reported: identity is a fallback so the viewport has a
  * matrix, not a placement.
+ *
+ * `mateOrigins[i]` is where mate i's two ports meet in world space — on the
+ * pose that mate actually placed, copies included — or null when it placed
+ * nothing. G5 checks the parts touch there.
  */
 export function solveAssembly(
   nodes: AssemblyNode[],
   mates: AssemblyMate[],
   rootId: string,
-): { world: Record<string, Mat4>; instances: Record<string, Mat4[]>; problems: string[] } {
+): {
+  world: Record<string, Mat4>;
+  instances: Record<string, Mat4[]>;
+  problems: string[];
+  mateOrigins: ([number, number, number] | null)[];
+} {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const world: Record<string, Mat4> = {};
   /** Every pose a node is placed at. world[id] is always the first of these. */
@@ -111,7 +129,9 @@ export function solveAssembly(
   const placedByPort: Record<string, string> = {};
   const problems: string[] = [];
   const used = new Set<AssemblyMate>();
-  if (!byId.has(rootId)) return { world, instances, problems: [`root node "${rootId}" not found`] };
+  const origins = new Map<AssemblyMate, [number, number, number]>();
+  const mateOrigins = () => mates.map((m) => origins.get(m) ?? null);
+  if (!byId.has(rootId)) return { world, instances, problems: [`root node "${rootId}" not found`], mateOrigins: mateOrigins() };
 
   world[rootId] = IDENTITY;
   const queue = [rootId];
@@ -140,6 +160,7 @@ export function solveAssembly(
       // Symmetric: A is always the already-placed side, so direction does not
       // change the transform.
       world[placingId] = mul(world[placedId]!, mateTransform(portA, portB));
+      origins.set(mate, transformPoint(world[placedId]!, portA.origin));
       placedByPort[placingId] = placingPortKey;
       queue.push(placingId);
     }
@@ -168,10 +189,12 @@ export function solveAssembly(
     // by the check below, which is the case that check was written for.
     if (placedByPort[mate.toNode] === mate.toPort) {
       (instances[mate.toNode] ??= []).push(mul(world[mate.fromNode]!, mateTransform(portA, portB)));
+      origins.set(mate, transformPoint(world[mate.fromNode]!, portA.origin));
       continue;
     }
     if (placedByPort[mate.fromNode] === mate.fromPort) {
       (instances[mate.fromNode] ??= []).push(mul(world[mate.toNode]!, mateTransform(portB, portA)));
+      origins.set(mate, transformPoint(world[mate.toNode]!, portB.origin));
       continue;
     }
     const expected = mul(world[mate.fromNode]!, mateTransform(portA, portB));
@@ -183,6 +206,8 @@ export function solveAssembly(
       problems.push(
         `mate ${mate.fromNode}.${mate.fromPort} → ${mate.toNode}.${mate.toPort} disagrees with the placement already solved for ${mate.toNode} by ${off.toFixed(2)}mm. Both parts are positioned by another mate, so this one cannot be satisfied — the two features will not line up.`,
       );
+    } else {
+      origins.set(mate, transformPoint(world[mate.fromNode]!, portA.origin));
     }
   }
 
@@ -203,6 +228,45 @@ export function solveAssembly(
   }
   // world[id] is the primary pose; extras collected above follow it.
   for (const n of nodes) instances[n.id] = [world[n.id]!, ...(instances[n.id] ?? [])];
-  return { world, instances, problems };
+  return { world, instances, problems, mateOrigins: mateOrigins() };
 }
 
+
+/**
+ * A joint that moves: where its axis is in the world, how far it travels, and
+ * which nodes travel with it. Revolute limits are degrees about the axis,
+ * prismatic limits millimetres along it; the solved pose is the joint at 0.
+ * The scene records these beside the rigid poses, and G5 sweeps the moving
+ * nodes through the limits.
+ */
+export interface KinematicJoint {
+  id: string;
+  type: "revolute" | "prismatic";
+  origin: [number, number, number];
+  direction: [number, number, number];
+  limits: [number, number];
+  moving: string[];
+}
+
+/** A joint's axis declared in one node's frame: a port pose, and which of its
+ *  axes the motion is about (z for a shaft or a rod, x for a rail). */
+export interface JointAxisDef {
+  id: string;
+  type: KinematicJoint["type"];
+  node: string;
+  pose: Pose;
+  axis: "x" | "z";
+  limits: [number, number];
+  moving: string[];
+}
+
+export function kinematicJoints(defs: JointAxisDef[], world: Record<string, Mat4>): KinematicJoint[] {
+  return defs.flatMap((d) => {
+    const placed = world[d.node];
+    if (!placed) return [];
+    const m = mul(placed, poseToMat(d.pose));
+    const col = d.axis === "x" ? 0 : 8;
+    const direction = [m[col]!, m[col + 1]!, m[col + 2]!].map((v) => Math.round(v * 1e6) / 1e6) as [number, number, number];
+    return [{ id: d.id, type: d.type, origin: transformPoint(m, [0, 0, 0]), direction, limits: d.limits, moving: d.moving }];
+  });
+}

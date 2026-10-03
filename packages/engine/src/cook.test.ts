@@ -4,8 +4,8 @@ import { GraphDoc, hashValue } from "@patchcad/shared";
 import { cookNodes, cookOne, type CookDeps } from "./cook.js";
 import { EventBus } from "./events.js";
 import { GraphStore } from "./graph/store.js";
-import type { DomainBackend, RepairCtx } from "./backend.js";
-import type { LlmImage, LlmProvider } from "./llm.js";
+import type { DomainBackend, GenerateCtx, RepairCtx } from "./backend.js";
+import { LlmCallError, type LlmImage, type LlmProvider } from "./llm.js";
 import type { LibraryEntry, LibraryListing, NodeLibrary } from "./library.js";
 
 /** The library fast path must never reach the generator; capture must run on
@@ -184,6 +184,22 @@ describe("cookOne empty-completion guard", () => {
     expect(node.status).toBe("error_code");
     expect(node.cost.calls).toBe(1);
     expect(node.cost.outputTokens).toBe(9999);
+  });
+
+  it("bills a failed call that carries its usage, even when every candidate fails", async () => {
+    const h = makeRepairBackend({ failTimes: 0, maxAttempts: 5 });
+    const failing: LlmProvider = {
+      id: "failing",
+      complete: async () => {
+        throw new LlmCallError("error_max_turns", { inputTokens: 10, outputTokens: 20, usd: 0.1 });
+      },
+    };
+    const deps = makeDeps(makeGraph(), failing, new MemoryLibrary(), h.backend);
+    await expect(cookOne(deps, "widget")).rejects.toThrow(/error_max_turns/);
+    const node = deps.store.node("widget");
+    expect(node.status).toBe("error_code");
+    expect(node.cost.calls).toBe(1);
+    expect(node.cost.usd).toBeCloseTo(0.1);
   });
 });
 
@@ -525,6 +541,101 @@ describe("cookOne near-match reuse", () => {
   });
 });
 
+describe("cookOne regate (dirty wave)", () => {
+  /** A node cooked once, then dirtied by a neighbour's contract change. */
+  async function cookedThenDirty(backend: DomainBackend<unknown> = mockBackend) {
+    // No library: its exact hit would answer before the generator does.
+    const deps = { ...makeDeps(makeGraph(), stubProvider, new MemoryLibrary(), backend), library: undefined };
+    await cookOne(deps, "widget");
+    deps.store.setStatus("widget", "dirty");
+    return deps;
+  }
+
+  it("commits the code it already has when it still passes, with no LLM call", async () => {
+    const deps = await cookedThenDirty();
+    await cookOne({ ...deps, provider: trapProvider }, "widget");
+    const node = deps.store.node("widget");
+    expect(node.status).toBe("ready");
+    expect(node.history.map((h) => h.cause)).toEqual(["generate", "regate"]);
+    expect(node.cost.calls).toBe(1);
+  });
+
+  it("regenerates when the existing code fails the current contract", async () => {
+    let verifies = 0;
+    const deps = await cookedThenDirty({
+      ...mockBackend,
+      // Passes the first cook, fails the regate, passes the regeneration.
+      verify: async () => (++verifies === 2 ? { ok: false, stage: "G3", report: "port moved" } : { ok: true, stage: "verify", report: "" }),
+    });
+    await cookOne(deps, "widget");
+    expect(deps.store.node("widget").history.map((h) => h.cause)).toEqual(["generate", "generate"]);
+    expect(deps.store.node("widget").cost.calls).toBe(2);
+  });
+
+  it("never regates over a user's reprompt — they asked for new code", async () => {
+    const deps = await cookedThenDirty();
+    const after = deps.store.node("widget").history.at(-1)!.at + 1;
+    deps.store.applyOp((g) => {
+      g.nodes.widget!.thread.push({ role: "user", content: "make it rounder", at: after });
+    });
+    await cookOne(deps, "widget");
+    expect(deps.store.node("widget").history.map((h) => h.cause)).toEqual(["generate", "generate"]);
+  });
+
+  it("does not regate a failed draft that was never committed", async () => {
+    const deps = makeDeps(makeGraph(), stubProvider, new MemoryLibrary());
+    deps.store.applyOp((g) => {
+      g.nodes.widget!.artifact = { code: "half-done", testCode: "", hash: hashValue("half-done") };
+    });
+    await cookOne(deps, "widget");
+    expect(deps.store.node("widget").history.map((h) => h.cause)).toEqual(["generate"]);
+  });
+});
+
+describe("cookOne library outcome stats", () => {
+  class StatsLibrary extends MemoryLibrary {
+    reuses: string[] = [];
+    fixes: { stage: string; report: string; diff: string }[] = [];
+    async recordReuse(_b: string, hash: string) {
+      this.reuses.push(hash);
+    }
+    async recordFix(_b: string, fix: { stage: string; report: string; diff: string }) {
+      this.fixes.push(fix);
+    }
+  }
+
+  it("counts a reuse when a library hit commits", async () => {
+    const graph = makeGraph();
+    const library = new StatsLibrary();
+    const deps = makeDeps(graph, trapProvider, library);
+    const hash = deps.store.node("widget").contract.hash;
+    library.entries.set(`mock/${hash}`, { code: "cached", testCode: "", kind: "component", title: "Widget" });
+    await cookOne(deps, "widget");
+    expect(library.reuses).toEqual([hash]);
+  });
+
+  it("records the rounds a captured entry took to pass", async () => {
+    const h = makeRepairBackend({ failTimes: 1 });
+    const library = new StatsLibrary();
+    const deps = makeDeps(makeGraph(), stubProvider, library, h.backend);
+    await cookOne(deps, "widget");
+    expect([...library.entries.values()][0]?.attemptsToPass).toBe(2);
+  });
+
+  it("records the failure a repair cleared and what it changed", async () => {
+    let n = 0;
+    const provider: LlmProvider = {
+      id: "stub",
+      complete: async () =>
+        ({ data: { code: `line a\nline ${++n}` }, usage: { inputTokens: 1, outputTokens: 1, usd: 0 }, model: "stub" }) as never,
+    };
+    const h = makeRepairBackend({ failTimes: 1 });
+    const library = new StatsLibrary();
+    await cookOne(makeDeps(makeGraph(), provider, library, h.backend), "widget");
+    expect(library.fixes).toEqual([{ stage: "G2", report: "boom 1", diff: "- line 1\n+ line 2" }]);
+  });
+});
+
 describe("cookOne render-assisted repair", () => {
   const img = { mediaType: "image/png" as const, dataB64: "iVBORw0KGgo=" };
 
@@ -573,16 +684,28 @@ describe("cookOne render-assisted repair", () => {
 
 describe("cookOne inspect step (write → render → inspect → rewrite)", () => {
   const img = { mediaType: "image/png" as const, dataB64: "iVBORw0KGgo=" };
+  const yes = { answers: [{ question: "Is the opening on top?", answer: "yes", evidence: "top view" }] };
+  const no = { answers: [{ question: "Is the opening on top?", answer: "no", evidence: "top view is solid" }] };
 
-  /** Passes every gate; a vision call decides whether it LOOKS right. */
+  /** The architect's yes/no questions, pinned in the contract payload. */
+  const checked = (checks: string[] = ["Is the opening on top?"]) => {
+    const g = makeGraph();
+    g.nodes.widget!.contract.payload = { visualChecks: checks };
+    return g;
+  };
+
+  /** Passes every gate; a vision call answers the visual checks. */
   function inspecting(verdicts: unknown[]) {
     let generated = 0;
+    let renders = 0;
+    const inspectRoles: string[] = [];
     const provider: LlmProvider = {
       id: "stub",
       complete: async (req) => {
         const zero = { inputTokens: 1, outputTokens: 1, usd: 0 };
         if (req.label.startsWith("inspect:")) {
-          const verdict = verdicts.shift() ?? { looksRight: true, severity: "none", issue: "", fix: "" };
+          inspectRoles.push(req.role);
+          const verdict = verdicts.shift() ?? yes;
           return { data: (req.schema as { parse: (v: unknown) => unknown }).parse(verdict), usage: zero, model: "stub" } as never;
         }
         generated += 1;
@@ -592,26 +715,28 @@ describe("cookOne inspect step (write → render → inspect → rewrite)", () =
     const backend: DomainBackend<unknown> = {
       ...mockBackend,
       maxAttempts: 3,
-      renderArtifact: async () => img,
+      renderArtifact: async () => {
+        renders += 1;
+        return img;
+      },
       buildRepairPrompt: (ctx) => ({ ...mockBackend.buildGeneratePrompt(ctx), role: "repair" }),
     };
-    return { provider, backend, generations: () => generated };
+    return { provider, backend, generations: () => generated, renders: () => renders, inspectRoles };
   }
 
-  it("commits straight away when the part looks right", async () => {
-    const h = inspecting([{ looksRight: true, severity: "none", issue: "", fix: "" }]);
-    const deps = { ...makeDeps(makeGraph(), h.provider, new MemoryLibrary(), h.backend), inspect: true };
+  it("commits straight away when every check answers yes", async () => {
+    const h = inspecting([yes]);
+    const deps = { ...makeDeps(checked(), h.provider, new MemoryLibrary(), h.backend), inspect: true };
     await cookOne(deps, "widget");
     expect(deps.store.node("widget").history[0]?.cause).toBe("generate");
     expect(h.generations()).toBe(1);
+    // The judge is not the generator's model on any shipped default.
+    expect(h.inspectRoles).toEqual(["classifier"]);
   });
 
-  it("buys one rewrite when the part is plainly the wrong object", async () => {
-    const h = inspecting([
-      { looksRight: false, severity: "blocking", issue: "no upright leg", fix: "add the wall" },
-      { looksRight: true, severity: "none", issue: "", fix: "" },
-    ]);
-    const deps = { ...makeDeps(makeGraph(), h.provider, new MemoryLibrary(), h.backend), inspect: true };
+  it("buys one rewrite when a check answers no", async () => {
+    const h = inspecting([no, yes]);
+    const deps = { ...makeDeps(checked(), h.provider, new MemoryLibrary(), h.backend), inspect: true };
     await cookOne(deps, "widget");
     const node = deps.store.node("widget");
     expect(node.status).toBe("ready");
@@ -622,27 +747,50 @@ describe("cookOne inspect step (write → render → inspect → rewrite)", () =
   it("takes the gate-passing code when the rewrite also looks wrong", async () => {
     // Appearance NEVER fails a node. One opinion, one round, then ship what
     // passes the gates.
-    const h = inspecting([
-      { looksRight: false, severity: "blocking", issue: "wrong", fix: "x" },
-      { looksRight: false, severity: "blocking", issue: "still wrong", fix: "y" },
-    ]);
-    const deps = { ...makeDeps(makeGraph(), h.provider, new MemoryLibrary(), h.backend), inspect: true };
+    const h = inspecting([no, no]);
+    const deps = { ...makeDeps(checked(), h.provider, new MemoryLibrary(), h.backend), inspect: true };
     await cookOne(deps, "widget");
     expect(deps.store.node("widget").status).toBe("ready");
     expect(deps.store.node("widget").history[0]?.cause).toBe("repair-2");
   });
 
-  it("ignores anything softer than blocking", async () => {
-    const h = inspecting([{ looksRight: false, severity: "minor", issue: "I'd chamfer it", fix: "chamfer" }]);
-    const deps = { ...makeDeps(makeGraph(), h.provider, new MemoryLibrary(), h.backend), inspect: true };
+  it("never rewrites on unsure", async () => {
+    const h = inspecting([{ answers: [{ question: "Is the opening on top?", answer: "unsure", evidence: "hidden" }] }]);
+    const deps = { ...makeDeps(checked(), h.provider, new MemoryLibrary(), h.backend), inspect: true };
     await cookOne(deps, "widget");
     expect(h.generations()).toBe(1);
   });
 
+  it("skips the render and the call when the contract asks no questions", async () => {
+    const h = inspecting([no]);
+    const deps = { ...makeDeps(makeGraph(), h.provider, new MemoryLibrary(), h.backend), inspect: true };
+    await cookOne(deps, "widget");
+    expect(h.generations()).toBe(1);
+    expect(h.renders()).toBe(0);
+    expect(h.inspectRoles).toEqual([]);
+  });
+
+  it("always looks at a library near-match, and regenerates when it looks wrong", async () => {
+    const h = inspecting([no, yes]);
+    const library = new (class extends MemoryLibrary {
+      async list() {
+        return [{
+          contractHash: "elsewhere", code: "borrowed", testCode: "", kind: "component", title: "Widget",
+          contract: { name: "W", summary: "", params: [], requires: [], payload: {}, hash: "elsewhere",
+            provides: [{ key: "Any", type: "component", description: "" }] },
+        }];
+      }
+    })();
+    const deps = { ...makeDeps(checked(), h.provider, library, h.backend), inspect: true };
+    await cookOne(deps, "widget");
+    expect(h.generations()).toBe(1);
+    expect(deps.store.node("widget").history[0]?.cause).toBe("generate");
+  });
+
   it("does nothing at all unless asked", async () => {
-    const h = inspecting([{ looksRight: false, severity: "blocking", issue: "wrong", fix: "x" }]);
+    const h = inspecting([no]);
     // No `inspect: true` — the default cook must be byte-identical to before.
-    const deps = makeDeps(makeGraph(), h.provider, new MemoryLibrary(), h.backend);
+    const deps = makeDeps(checked(), h.provider, new MemoryLibrary(), h.backend);
     await cookOne(deps, "widget");
     expect(h.generations()).toBe(1);
     expect(deps.store.node("widget").history[0]?.cause).toBe("generate");
@@ -752,5 +900,229 @@ describe("cookNodes orders the queue", () => {
     const summary = await cookNodes(deps, ids);
     expect(summary.failed.map((f) => f.nodeId)).toEqual(ids);
     expect(summary.succeeded).toEqual([]);
+  });
+});
+
+describe("cookOne repair convergence", () => {
+  type Outcome = { stage: string; score?: number };
+
+  /** Hands out code-1, code-2, … in call order, and records every request. */
+  function sequenceProvider() {
+    const requests: { label: string; effort?: string; maxTokens?: number }[] = [];
+    const provider: LlmProvider = {
+      id: "seq",
+      complete: async (req) => {
+        requests.push({ label: req.label, effort: req.effort, maxTokens: req.maxTokens });
+        return {
+          data: { code: `code-${requests.length}` },
+          usage: { inputTokens: 10, outputTokens: 5, usd: 0.01 },
+          model: "stub",
+        } as never;
+      },
+    };
+    return { provider, requests };
+  }
+
+  /** Execute fails code listed in `fails` with that stage and score; anything
+   *  else passes. Records every generate and repair context. */
+  function scripted(fails: Record<string, Outcome>, over: Partial<DomainBackend<unknown>> = {}) {
+    const generates: GenerateCtx<unknown>[] = [];
+    const repairs: RepairCtx<unknown>[] = [];
+    const renders: string[] = [];
+    const backend: DomainBackend<unknown> = {
+      ...mockBackend,
+      maxAttempts: 5,
+      buildGeneratePrompt: (ctx) => {
+        generates.push(ctx);
+        return mockBackend.buildGeneratePrompt(ctx);
+      },
+      buildRepairPrompt: (ctx) => {
+        repairs.push(ctx);
+        return { ...mockBackend.buildGeneratePrompt(ctx), role: "repair" };
+      },
+      execute: async (node) => {
+        const f = fails[node.artifact!.code];
+        return f
+          ? { ok: false, stage: f.stage, report: `${node.artifact!.code} failed ${f.stage}`, score: f.score }
+          : { ok: true, stage: "execute", report: "" };
+      },
+      renderArtifact: async (node) => {
+        renders.push(node.artifact!.code);
+        return null;
+      },
+      ...over,
+    };
+    return { backend, generates, repairs, renders };
+  }
+
+  it("repairs from the best-scoring attempt, not a regression", async () => {
+    const h = scripted({ "code-1": { stage: "G3", score: 3 }, "code-2": { stage: "G1", score: 1 } });
+    const deps = makeDeps(makeGraph(), sequenceProvider().provider, new MemoryLibrary(), h.backend);
+    await cookOne(deps, "widget");
+
+    expect(h.repairs.map((r) => r.failedCode)).toEqual(["code-1", "code-1"]);
+    const third = h.repairs[1]!;
+    expect(third.basedOnAttempt).toBe(1);
+    expect(third.failure.report).toBe("code-1 failed G3");
+    // The regression is still in the ledger — only not repaired from.
+    expect(third.priorFailures.map((f) => f.report)).toEqual(["code-2 failed G1"]);
+    expect(deps.store.node("widget").artifact?.code).toBe("code-3");
+  });
+
+  it("starts fresh after two repairs that do not improve", async () => {
+    const h = scripted({
+      "code-1": { stage: "G3", score: 3 },
+      "code-2": { stage: "G3", score: 2 },
+      "code-3": { stage: "G3", score: 3 },
+      "code-4": { stage: "G1", score: 1 },
+    });
+    const deps = makeDeps(makeGraph(), sequenceProvider().provider, new MemoryLibrary(), h.backend);
+    await cookOne(deps, "widget");
+
+    // Round 4 is a generate carrying every failure, with no failed code anywhere.
+    expect(h.repairs.map((r) => r.attempt)).toEqual([2, 3, 5]);
+    expect(h.generates).toHaveLength(2);
+    expect(h.generates[0]!.priorFailures).toBeUndefined();
+    expect(h.generates[1]!.priorFailures?.map((f) => f.report)).toEqual([
+      "code-1 failed G3",
+      "code-2 failed G3",
+      "code-3 failed G3",
+    ]);
+    expect(h.generates[1]!.node.currentCode).toBeUndefined();
+    // ...and round 5 goes back to the best base, which is still attempt 3.
+    expect(h.repairs[2]!.basedOnAttempt).toBe(3);
+  });
+
+  it("never starts fresh for a backend that does not score", async () => {
+    const h = scripted({ "code-1": { stage: "G3" }, "code-2": { stage: "G3" }, "code-3": { stage: "G3" } });
+    const deps = makeDeps(makeGraph(), sequenceProvider().provider, new MemoryLibrary(), h.backend);
+    await cookOne(deps, "widget");
+    expect(h.generates).toHaveLength(1);
+    expect(h.repairs.map((r) => r.failedCode)).toEqual(["code-1", "code-2", "code-3"]);
+  });
+
+  it("drafts N candidates on round 1 and commits the first that passes", async () => {
+    const h = scripted(
+      { "code-1": { stage: "G3", score: 2 }, "code-2": { stage: "G1", score: 1 } },
+      { generation: { firstRoundCandidates: 3 } },
+    );
+    const seq = sequenceProvider();
+    const deps = makeDeps(makeGraph(), seq.provider, new MemoryLibrary(), h.backend);
+    await cookOne(deps, "widget");
+
+    const node = deps.store.node("widget");
+    expect(node.artifact?.code).toBe("code-3");
+    expect(node.history[0]?.cause).toBe("generate");
+    expect(h.repairs).toHaveLength(0);
+    // Every draft is billed, not just the winner.
+    expect(node.cost.calls).toBe(3);
+    expect(node.cost.inputTokens).toBe(30);
+    expect(seq.requests).toHaveLength(3);
+  });
+
+  it("gates round-1 candidates concurrently and still picks the first pass", async () => {
+    // code-3 settles first; code-2 is still the winner because selection is
+    // by index, not by finishing order.
+    const delays: Record<string, number> = { "code-1": 120, "code-2": 150, "code-3": 30 };
+    let inFlight = 0;
+    let peak = 0;
+    const h = scripted(
+      {},
+      {
+        generation: { firstRoundCandidates: 3 },
+        execute: async (node) => {
+          const code = node.artifact!.code;
+          inFlight += 1;
+          peak = Math.max(peak, inFlight);
+          await new Promise((r) => setTimeout(r, delays[code]));
+          inFlight -= 1;
+          return code === "code-1"
+            ? { ok: false, stage: "G3", report: "code-1 failed G3", score: 2 }
+            : { ok: true, stage: "execute", report: "" };
+        },
+      },
+    );
+    const deps = makeDeps(makeGraph(), sequenceProvider().provider, new MemoryLibrary(), h.backend);
+    const t0 = Date.now();
+    await cookOne(deps, "widget");
+    const elapsed = Date.now() - t0;
+
+    expect(peak).toBe(3);
+    expect(elapsed).toBeLessThan(250); // ≈ max (150), not sum (300)
+    const node = deps.store.node("widget");
+    expect(node.artifact?.code).toBe("code-2");
+    expect(node.history[0]?.cause).toBe("generate");
+  });
+
+  it("repairs from the best-scoring candidate when none passes", async () => {
+    const h = scripted(
+      {
+        "code-1": { stage: "G1", score: 1 },
+        "code-2": { stage: "G3", score: 5 },
+        "code-3": { stage: "G3", score: 2 },
+      },
+      { generation: { firstRoundCandidates: 3 } },
+    );
+    const deps = makeDeps(makeGraph(), sequenceProvider().provider, new MemoryLibrary(), h.backend);
+    await cookOne(deps, "widget");
+
+    expect(h.repairs).toHaveLength(1);
+    expect(h.repairs[0]!.failedCode).toBe("code-2");
+    // One ledger entry per round, so classifyFailure still counts rounds.
+    expect(h.repairs[0]!.priorFailures).toEqual([]);
+    expect(deps.store.node("widget").cost.calls).toBe(4);
+  });
+
+  it("escalates generation settings from the configured round", async () => {
+    const h = scripted(
+      { "code-1": { stage: "G3", score: 1 }, "code-2": { stage: "G3", score: 2 } },
+      { generation: { effort: "medium", maxTokens: 100, escalate: { fromAttempt: 3, effort: "high", maxTokens: 200 } } },
+    );
+    const seq = sequenceProvider();
+    await cookOne(makeDeps(makeGraph(), seq.provider, new MemoryLibrary(), h.backend), "widget");
+    expect(seq.requests.map((r) => [r.effort, r.maxTokens])).toEqual([
+      ["medium", 100],
+      ["medium", 100],
+      ["high", 200],
+    ]);
+  });
+
+  it("renders only failures that built a shape", async () => {
+    const h = scripted({ "code-1": { stage: "G1", score: 1 }, "code-2": { stage: "G3", score: 2 } });
+    const deps = makeDeps(makeGraph(), sequenceProvider().provider, new MemoryLibrary(), h.backend);
+    await cookOne(deps, "widget");
+    // Repair 2 follows a G1 failure: nothing to look at. Repair 3 follows G3.
+    expect(h.renders).toEqual(["code-2"]);
+  });
+
+  it("commits the gate-passing code when a looks-wrong rewrite exhausts the budget", async () => {
+    const img = { mediaType: "image/png" as const, dataB64: "iVBORw0KGgo=" };
+    const h = scripted({ "code-2": { stage: "G1", score: 1 } }, { maxAttempts: 2, renderArtifact: async () => img });
+    let generated = 0;
+    const provider: LlmProvider = {
+      id: "stub",
+      complete: async (req) => {
+        const zero = { inputTokens: 1, outputTokens: 1, usd: 0 };
+        if (req.label.startsWith("inspect:")) {
+          const verdict = { answers: [{ question: "Does it have a leg?", answer: "no", evidence: "iso: flat" }] };
+          return { data: (req.schema as { parse: (v: unknown) => unknown }).parse(verdict), usage: zero, model: "stub" } as never;
+        }
+        generated += 1;
+        return { data: { code: `code-${generated}` }, usage: zero, model: "stub" } as never;
+      },
+    };
+    const graph = makeGraph();
+    graph.nodes.widget!.contract.payload = { visualChecks: ["Does it have a leg?"] };
+    const deps = { ...makeDeps(graph, provider, new MemoryLibrary(), h.backend), inspect: true };
+    await cookOne(deps, "widget");
+
+    const node = deps.store.node("widget");
+    expect(node.status).toBe("ready");
+    expect(node.artifact?.code).toBe("code-1");
+    expect(node.history[0]?.cause).toBe("generate-inspect-fallback");
+    // The rewrite built on the passing code, with the verdict as its failure.
+    expect(h.repairs[0]!.failedCode).toBe("code-1");
+    expect(h.repairs[0]!.failure.stage).toBe("LOOKS");
+    expect(h.repairs[0]!.failure.report).toContain("Does it have a leg? — iso: flat");
   });
 });

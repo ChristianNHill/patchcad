@@ -1,7 +1,7 @@
-import type { Contract, GraphDoc, NodeRecord } from "@patchcad/shared";
+import type { GraphDoc, NodeRecord } from "@patchcad/shared";
 import type { Exemplar } from "./backend.js";
 import type { LibraryListing, NodeLibrary } from "./library.js";
-import { contractSimilarity } from "./similarity.js";
+import { nodeSimilarity } from "./similarity.js";
 
 /**
  * Few-shot exemplars mined from the node library. Every stored entry is
@@ -34,11 +34,11 @@ const MAX_EXEMPLAR_CHARS = 4000;
  */
 const MIN_EXEMPLAR_CHARS = 200;
 
-/** Contract closeness, plus a brevity nudge: a short worked example costs
- *  fewer tokens and is easier to pattern-match than a long one. The closeness
- *  half is shared with reuse — see similarity.ts. */
-function exemplarScore(target: Contract, candidate: Contract, codeLength: number): number {
-  return contractSimilarity(target, candidate) - codeLength / 2000;
+/** Closeness, plus a brevity nudge: a short worked example costs fewer tokens
+ *  and is easier to pattern-match than a long one. The closeness half is
+ *  shared with reuse — see similarity.ts. */
+function exemplarScore(target: NodeRecord, candidate: LibraryListing): number {
+  return nodeSimilarity(target, candidate) - candidate.code.length / 2000;
 }
 
 export async function selectExemplars(opts: {
@@ -76,7 +76,7 @@ export async function selectExemplars(opts: {
   }
 
   return usable
-    .map((e) => ({ e, score: exemplarScore(node.contract, e.contract!, e.code.length) }))
+    .map((e) => ({ e, score: exemplarScore(node, e) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, opts.limit ?? DEFAULT_LIMIT)
     .map(({ e }) => ({ title: e.title, kind: e.kind, contract: e.contract!, code: e.code }));

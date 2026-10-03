@@ -16,7 +16,18 @@ const nodeTypes = { patch: PatchNode };
 
 export function Canvas({ graph }: { graph: GraphDoc }) {
   const selectNode = useStudio((s) => s.selectNode);
+  const selectedNodeId = useStudio((s) => s.selectedNodeId);
   const [nodes, setNodes] = useState<PatchNodeType[]>([]);
+
+  // Selection can start in the viewport (click a part), so the canvas follows
+  // the store rather than only the other way round.
+  useEffect(() => {
+    setNodes((prev) =>
+      prev.some((n) => !!n.selected !== (n.id === selectedNodeId))
+        ? prev.map((n) => ({ ...n, selected: n.id === selectedNodeId }))
+        : prev,
+    );
+  }, [selectedNodeId]);
 
   // Layout runs when the topology changes (not on every param tweak).
   const topologyKey = useMemo(
@@ -36,6 +47,7 @@ export function Canvas({ graph }: { graph: GraphDoc }) {
           id: p.id,
           type: "patch" as const,
           position: { x: p.x, y: p.y },
+          selected: p.id === useStudio.getState().selectedNodeId,
           data: { record: graph.nodes[p.id]! },
         })),
       );
@@ -92,7 +104,14 @@ export function Canvas({ graph }: { graph: GraphDoc }) {
       }}
       // NOT onNodeClick: React Flow's keyboard handler selects on Enter/Space
       // but never calls onClick, so the whole inspector was mouse-only.
-      onSelectionChange={({ nodes: sel }) => void selectNode(sel[0]?.id ?? null)}
+      onSelectionChange={({ nodes: sel }) => {
+        // Only a selection, never an empty one: React Flow reports an empty
+        // selection while it catches up to one the viewport just made, and
+        // acting on it cleared every 3D pick. Deselect is the pane click below.
+        const id = sel[0]?.id;
+        if (id && id !== useStudio.getState().selectedNodeId) void selectNode(id);
+      }}
+      onPaneClick={() => void selectNode(null)}
       // React Flow's own delete path is disabled — deletion is a server op with
       // edge surgery and a stale wave, so it routes through the inspector's
       // confirm instead of vanishing a node locally.

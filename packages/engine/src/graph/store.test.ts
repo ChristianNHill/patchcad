@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { GraphDoc, type NodeStatus } from "@patchcad/shared";
 import { EventBus } from "../events.js";
 import { GraphStore } from "./store.js";
+import { ASSEMBLY_STAGE, applyCheck } from "../cook.js";
 
 /** The status machine is the only path node state may change through, so a
  * state it cannot leave is a node no re-cook can rescue. */
@@ -68,5 +69,35 @@ describe("status machine", () => {
       const store = storeWith(status);
       expect(() => store.setStatus("widget", "queued")).not.toThrow();
     }
+  });
+});
+
+describe("the assembly check blocks and releases parts (applyCheck)", () => {
+  const finding = { nodeA: "widget", nodeB: "other", kind: "gap", measured: 3, expected: 0, message: "G5 gap: floats" };
+
+  it("moves an attributed ready node to error_contract, staged as the assembly", () => {
+    const store = storeWith("ready");
+    applyCheck(store, { ok: false, problems: [finding.message], findings: [finding] });
+    expect(store.node("widget").status).toBe("error_contract");
+    expect(store.node("widget").statusDetail).toMatchObject({ stage: ASSEMBLY_STAGE, message: "G5 gap: floats" });
+  });
+
+  it("releases it once the check no longer blames it", () => {
+    const store = storeWith("ready");
+    applyCheck(store, { ok: false, problems: [], findings: [finding] });
+    applyCheck(store, { ok: true, problems: [], findings: [] });
+    expect(store.node("widget").status).toBe("ready");
+  });
+
+  it("never releases a node its own cook failed", () => {
+    const store = storeWith("error_contract");
+    applyCheck(store, { ok: true, problems: [] });
+    expect(store.node("widget").status).toBe("error_contract");
+  });
+
+  it("leaves a cooking node alone", () => {
+    const store = storeWith("generating");
+    applyCheck(store, { ok: false, problems: [], findings: [finding] });
+    expect(store.node("widget").status).toBe("generating");
   });
 });

@@ -60,6 +60,17 @@ export interface LlmUsage {
   usd: number;
 }
 
+/** A failed call that still consumed tokens. Providers throw this so the cook
+ *  can bill it; a plain Error left real spend out of node.cost. */
+export class LlmCallError extends Error {
+  constructor(
+    message: string,
+    readonly usage?: LlmUsage,
+  ) {
+    super(message);
+  }
+}
+
 export interface LlmResult<T> {
   data: T;
   usage: LlmUsage;

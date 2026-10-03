@@ -18,6 +18,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 PORT = int(os.environ.get("PATCHCAD_KERNEL_PORT", "8621"))
+#: 0.0.0.0 in a container, where the server reaches the kernel by service name.
+HOST = os.environ.get("PATCHCAD_KERNEL_HOST", "127.0.0.1")
 TIMEOUT_S = float(os.environ.get("PATCHCAD_KERNEL_TIMEOUT", "20"))
 def _default_pool_size() -> int:
     """Warm workers to keep. Two left a cook wave serialising on geometry: eight
@@ -82,7 +84,30 @@ pool = None  # set at startup; parent process stays OCP-free
 # cache stores measurements, not request bodies, so nothing on disk PROVES which
 # spellings produced the nine stored boss passes. Bumping costs one
 # re-execution; reasoning wrongly here has cost four commits already.
-GATES_VERSION = 10
+# 10 -> 11: G3 probes every port and G4 runs beside it, failures reported
+# together; the mesh moved to a contract-free key so a verify pass and the
+# viewport share one build. New cache layout, so old entries cannot be read.
+# 11 -> 12: G2 fails more than one solid unless the contract declares the
+# count; the hole probe fits a circle and gates centre offset, axis tilt and
+# the narrowest diameter over several depths; G4 tests points in each
+# primitive's own rotated frame and samples edge midpoints and face points.
+# G5 (same bump): thread overlap is exempted inside the clash, per allowed
+# node pair, and each mate reports the contact gap at its port point. The
+# clash request carries both, so its cache key changes with them.
+# G3 (same bump): HOLE_PATTERN and BOSS_PATTERN are probed member by member,
+# and a port type with no probe FAILS instead of passing as "skipped". G4b
+# (same bump): contract assertions are measured, and they join the verdict key.
+# 12 -> 13: G3 probes the hardware host features (THREADED_HOLE, INSERT_POCKET,
+# NUT_TRAP, COUNTERBORE, COUNTERSINK, DOWEL_HOLE, BEARING_SEAT, BUSHING_BORE,
+# MOTOR_MOUNT, MAGNET_POCKET, HUB_BORE), each against a fit band. Under 12 these
+# failed as "no probe", so their verdicts all change.
+# 13 -> 14: G4c process DFM (dfm_process.py) for fabricate parts: CNC corner
+# radius / undercut / pocket depth, sheet-metal gauge / bend / hole-to-edge,
+# laser single profile, SLS/MJF/resin walls. `process` joins the verdict key.
+# 14 -> 15: hardware fit bands follow the process. A machined part (cnc,
+# sheet_metal, laser_cut) is held to press d-0.05..d and slip d..d+0.05, where
+# FDM keeps d-0.1..d and d+0.05..d+0.25; band edges get 0.02 of resolution slack.
+GATES_VERSION = 15
 
 
 def job_hash(*parts: Any) -> str:
@@ -96,6 +121,12 @@ class ExecuteBody(BaseModel):
     """Declared ports/envelope switch on the contract gates G3/G4 (verify pass)."""
     ports: list[dict[str, Any]] = Field(default_factory=list)
     envelope: list[dict[str, Any]] = Field(default_factory=list)
+    """How many solids the part must be; None skips the count (registry hardware)."""
+    solids: int | None = None
+    """G4b spec-derived assertions from the contract (solids, volume_range, ...)."""
+    assertions: list[dict[str, Any]] = Field(default_factory=list)
+    """G4c: the fabricate process to DFM-check ({kind, tool_radius?, allow_undercuts?})."""
+    process: dict[str, Any] | None = None
     """Directory holding imported piece meshes for load_import() node code."""
     import_dir: str = ""
 
@@ -114,8 +145,15 @@ class AssemblyPart(BaseModel):
     matrix: list[float] = Field(default_factory=list)
 
 
+class ExportPart(AssemblyPart):
+    """Named in the file (STEP label, 3MF object), so it says which node it is."""
+    name: str = ""
+    """One world matrix per placed copy; empty falls back to `matrix`."""
+    matrices: list[list[float]] = Field(default_factory=list)
+
+
 class ExportBody(BaseModel):
-    parts: list[AssemblyPart] = Field(default_factory=list)
+    parts: list[ExportPart] = Field(default_factory=list)
     format: str = "stl"
     import_dir: str = ""
 
@@ -124,8 +162,19 @@ class ImportBody(BaseModel):
     filename: str
     data_b64: str
     pieces: int = 1
-    joints: str = "none"  # none | holes | pegs
+    joints: str = "auto"  # auto | none | holes | pegs
     thread: str = "M4"
+    # Feature points already in the mesh (a re-split piece's joints): auto
+    # joint sites keep their columns clear of them.
+    avoid: list[list[float]] = Field(default_factory=list)
+
+
+class MeshFitBody(BaseModel):
+    """A generated GLB to fit into one node's envelope (Phase 6.4)."""
+    data_b64: str
+    up: str = "y"  # glTF is Y-up
+    box: dict[str, list[float]]  # {center, dims} in the node frame, mm
+    flats: list[dict[str, Any]] = Field(default_factory=list)  # {name, origin, normal, size}
 
 
 @asynccontextmanager
@@ -159,10 +208,17 @@ async def health():
 
 @app.post("/execute")
 async def execute(body: ExecuteBody):
-    digest = job_hash(GATES_VERSION, body.code, body.params, body.ports, body.envelope, body.import_dir)
+    # The mesh is keyed on what shapes it; the verdict also on the contract.
+    # Without contract gates the two keys are the same entry.
+    build_digest = job_hash(GATES_VERSION, body.code, body.params, body.import_dir)
+    has_contract = bool(body.ports or body.envelope or body.assertions or body.process) or body.solids is not None
+    digest = (job_hash(GATES_VERSION, body.code, body.params, body.ports, body.envelope, body.solids,
+                         body.assertions, body.import_dir, body.process)
+              if has_contract else build_digest)
     out_dir = CACHE_ROOT / digest
     meas_file = out_dir / "measurements.json"
-    glb_file = out_dir / "mesh.glb"
+    glb_file = CACHE_ROOT / build_digest / "mesh.glb"
+    glb_url = f"/artifact/{build_digest}/mesh.glb"
 
     if meas_file.exists() and glb_file.exists():
         return {
@@ -170,7 +226,7 @@ async def execute(body: ExecuteBody):
             "hash": digest,
             "cached": True,
             "measurements": json.loads(meas_file.read_text("utf8")),
-            "glb": f"/artifact/{digest}/mesh.glb",
+            "glb": glb_url,
         }
 
     job = {
@@ -178,8 +234,12 @@ async def execute(body: ExecuteBody):
         "params": body.params,
         "ports": body.ports,
         "envelope": body.envelope,
+        "solids": body.solids,
+        "assertions": body.assertions,
+        "process": body.process,
         "import_dir": body.import_dir,
         "out_dir": str(out_dir),
+        "glb_dir": str(CACHE_ROOT / build_digest),
     }
     result = await anyio.to_thread.run_sync(lambda: pool.execute(job, TIMEOUT_S))
 
@@ -191,7 +251,7 @@ async def execute(body: ExecuteBody):
         "cached": False,
         "measurements": result["measurements"],
         "elapsed_ms": result["elapsed_ms"],
-        "glb": f"/artifact/{digest}/mesh.glb",
+        "glb": glb_url,
     }
 
 
@@ -204,7 +264,9 @@ async def render(body: RenderBody):
     picture is a separate, rarer act, so it pays its own cost and gets its own
     content-addressed cache entry.
     """
-    digest = job_hash("render", body.code, body.params, body.import_dir, body.views)
+    # The tag versions the sheet's LOOK: a cached v1 sheet (dark, no triad or
+    # scale bar) would otherwise be served for any code rendered before.
+    digest = job_hash("render-v2", body.code, body.params, body.import_dir, body.views)
     out_dir = CACHE_ROOT / digest
     sheet_file = out_dir / "sheet.png"
     if sheet_file.exists():
@@ -271,6 +333,43 @@ async def export_artifact(digest: str, ext: str):
     return FileResponse(path, media_type="application/octet-stream", filename=f"patchcad.{ext}")
 
 
+class VendorBody(BaseModel):
+    code: str
+    params: dict[str, Any] = Field(default_factory=dict)
+    import_dir: str = ""
+    """Resolved contract ports (for hole callouts) and their G3 measurements."""
+    ports: list[dict[str, Any]] = Field(default_factory=list)
+    measured: list[dict[str, Any]] = Field(default_factory=list)
+    """G4c process ({kind, tool_radius?, allow_undercuts?}); re-checked before packaging."""
+    process: dict[str, Any] | None = None
+    """Title block + RFQ: name, title, process, material, finish, qty, date, notes."""
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+@app.post("/vendor-package")
+async def vendor_package_endpoint(body: VendorBody):
+    """STEP + DXF + PDF drawing + RFQ.md for one fabricated part, zipped.
+    Served at /artifact/<digest>/vendor.zip; not cached across requests, it is
+    rare and the date in its title block changes."""
+    digest = job_hash(GATES_VERSION, "vendor-v1", body.model_dump())
+    out_dir = CACHE_ROOT / digest
+    job = {"code": body.code, "params": body.params, "import_dir": body.import_dir, "out_dir": str(out_dir),
+           "vendor": {"ports": body.ports, "measured": body.measured, "process": body.process, "meta": body.meta}}
+    result = await anyio.to_thread.run_sync(lambda: pool.execute(job, max(TIMEOUT_S, 120)))
+    if not result.get("ok"):
+        return JSONResponse(status_code=422, content={"ok": False, "hash": digest, **result})
+    return {"ok": True, "hash": digest, "file": f"/artifact/{digest}/vendor.zip", "vendor": result["vendor"],
+            "elapsed_ms": result["elapsed_ms"]}
+
+
+@app.get("/artifact/{digest}/vendor.zip")
+async def vendor_zip(digest: str):
+    path = CACHE_ROOT / digest / "vendor.zip"
+    if not path.exists() or "/" in digest or ".." in digest:
+        return JSONResponse(status_code=404, content={"error": "no vendor package for that hash"})
+    return FileResponse(path, media_type="application/zip", filename="vendor.zip")
+
+
 class ClashPart(AssemblyPart):
     """A posed part, identified so a clash can name both sides."""
     key: str
@@ -279,6 +378,12 @@ class ClashPart(AssemblyPart):
 class ClashBody(BaseModel):
     parts: list[ClashPart] = Field(default_factory=list)
     import_dir: str = ""
+    """Node pairs designed to share material, with the volume they may share."""
+    allow: list[dict[str, Any]] = Field(default_factory=list)
+    """Mates to measure contact at: {edge, a, b, at, radius}."""
+    contacts: list[dict[str, Any]] = Field(default_factory=list)
+    """Kinematic joints whose moving parts are swept: {joint, type, origin, direction, limits, moving}."""
+    sweeps: list[dict[str, Any]] = Field(default_factory=list)
 
 
 @app.post("/clash")
@@ -290,23 +395,86 @@ async def clash_endpoint(body: ClashBody):
     no single part is at fault."""
     if len(body.parts) < 2:
         return {"ok": True, "clash": {"parts": len(body.parts), "pairs_tested": 0, "clashes": []}}
-    digest = job_hash(GATES_VERSION, "clash", [p.model_dump() for p in body.parts], body.import_dir)
+    # "clash-v2": the boolean moved off trimesh's is_volume gate, and reports
+    # cached under 12 still say "boolean failed" for pairs it now compares.
+    # "clash-v3": moving parts are swept through their joints' travel.
+    digest = job_hash(GATES_VERSION, "clash-v3", [p.model_dump() for p in body.parts], body.import_dir,
+                      body.allow, body.contacts, body.sweeps)
     out_dir = CACHE_ROOT / digest
     cached_file = out_dir / "clash.json"
     if cached_file.exists():
         with open(cached_file, encoding="utf8") as f:
             return {"ok": True, "hash": digest, "cached": True, "clash": json.load(f)}
 
-    job = {"clash": [p.model_dump() for p in body.parts], "import_dir": body.import_dir}
+    job = {"clash": [p.model_dump() for p in body.parts], "import_dir": body.import_dir,
+           "allow": body.allow, "contacts": body.contacts, "sweeps": body.sweeps}
     result = await anyio.to_thread.run_sync(lambda: pool.execute(job, max(TIMEOUT_S, 60)))
     if not result.get("ok"):
         return JSONResponse(status_code=422, content={"ok": False, "hash": digest, **result})
+    if result["clash"].get("errors"):
+        # An uncompared pair is not a verdict: caching it would pin "skipped"
+        # to this hash after whatever made it fail is fixed.
+        return {"ok": True, "hash": digest, "cached": False, "clash": result["clash"]}
     out_dir.mkdir(parents=True, exist_ok=True)
     tmp = cached_file.with_suffix(".tmp")
     with open(tmp, "w", encoding="utf8") as f:
         json.dump(result["clash"], f)
     tmp.replace(cached_file)  # atomic: a half-written file would poison this hash
     return {"ok": True, "hash": digest, "cached": False, "clash": result["clash"]}
+
+
+class ImagePrepBody(BaseModel):
+    data_b64: str
+    """auto = threshold on a plain backdrop, rembg otherwise; or force one."""
+    method: str = "auto"
+
+
+@app.post("/image/prep")
+async def image_prep(body: ImagePrepBody):
+    """A reference image, background removed, cropped and padded square, plus
+    the normalized silhouette G6 compares the assembly against. Runs in the
+    parent on a thread: no OCP, and the u2net session stays warm across calls."""
+    digest = job_hash("image-prep-v2", body.method, hashlib.sha256(body.data_b64.encode()).hexdigest())
+    cached_file = CACHE_ROOT / digest / "prep.json"
+    if cached_file.exists():
+        return {"ok": True, "hash": digest, "cached": True, **json.loads(cached_file.read_text("utf8"))}
+    from .image_prep import prep_image
+
+    try:
+        prep = await anyio.to_thread.run_sync(lambda: prep_image(body.data_b64, body.method))
+    except Exception as err:  # noqa: BLE001 — unreadable image or no subject: the caller decides
+        return JSONResponse(status_code=422, content={"ok": False, "error": str(err)})
+    cached_file.parent.mkdir(parents=True, exist_ok=True)
+    tmp = cached_file.with_suffix(".tmp")
+    tmp.write_text(json.dumps(prep), "utf8")
+    tmp.replace(cached_file)
+    return {"ok": True, "hash": digest, "cached": False, **prep}
+
+
+class SilhouetteBody(BaseModel):
+    parts: list[ClashPart] = Field(default_factory=list)
+    import_dir: str = ""
+    """One per labelled reference: {view, ref, mask_b64}."""
+    views: list[dict[str, Any]] = Field(default_factory=list)
+
+
+@app.post("/silhouette")
+async def silhouette_endpoint(body: SilhouetteBody):
+    """G6: IoU of the posed assembly's orthographic silhouette against each
+    reference mask, plus which parts account for the disagreement."""
+    digest = job_hash(GATES_VERSION, "silhouette-v1", [p.model_dump() for p in body.parts], body.import_dir, body.views)
+    cached_file = CACHE_ROOT / digest / "silhouette.json"
+    if cached_file.exists():
+        return {"ok": True, "hash": digest, "cached": True, "silhouette": json.loads(cached_file.read_text("utf8"))}
+    job = {"silhouette": [p.model_dump() for p in body.parts], "import_dir": body.import_dir, "views": body.views}
+    result = await anyio.to_thread.run_sync(lambda: pool.execute(job, max(TIMEOUT_S, 60)))
+    if not result.get("ok"):
+        return JSONResponse(status_code=422, content={"ok": False, "hash": digest, **result})
+    cached_file.parent.mkdir(parents=True, exist_ok=True)
+    tmp = cached_file.with_suffix(".tmp")
+    tmp.write_text(json.dumps(result["silhouette"]), "utf8")
+    tmp.replace(cached_file)
+    return {"ok": True, "hash": digest, "cached": False, "silhouette": result["silhouette"]}
 
 
 @app.get("/artifact/{digest}/sheet.png")
@@ -322,7 +490,7 @@ async def import_file(body: ImportBody):
     """Segment an uploaded STL/3MF/STEP into pieces + interface contracts.
     Runs in a worker (same isolation as node code); pieces land content-
     addressed like any other artifact."""
-    digest = job_hash("import", body.filename, body.data_b64[:64], len(body.data_b64), body.pieces, body.joints, body.thread)
+    digest = job_hash("import", body.filename, body.data_b64[:64], len(body.data_b64), body.pieces, body.joints, body.thread, body.avoid)
     out_dir = CACHE_ROOT / f"import-{digest}"
     job = {
         "import_job": {
@@ -331,6 +499,7 @@ async def import_file(body: ImportBody):
             "pieces": body.pieces,
             "joints": body.joints,
             "thread": body.thread,
+            "avoid": body.avoid,
         },
         "out_dir": str(out_dir),
     }
@@ -338,6 +507,25 @@ async def import_file(body: ImportBody):
     if not result.get("ok"):
         return JSONResponse(status_code=422, content={"ok": False, **result})
     return {"ok": True, "dir": str(out_dir), **{k: v for k, v in result.items() if k != "ok"}}
+
+
+@app.post("/mesh/fit")
+async def mesh_fit(body: MeshFitBody):
+    """Rotate, repair, scale and flat-cut a generated mesh into the node's
+    frame. Content-addressed on the whole request, like a build."""
+    digest = job_hash("mesh-fit-v1", body.model_dump())
+    out_dir = CACHE_ROOT / f"meshfit-{digest}"
+    report = out_dir / "fit.json"
+    if report.exists():
+        return {"dir": str(out_dir), "cached": True, **json.loads(report.read_text("utf8"))}
+    job = {"mesh_fit": body.model_dump(), "out_dir": str(out_dir)}
+    result = await anyio.to_thread.run_sync(lambda: pool.execute(job, max(TIMEOUT_S, 120)))
+    if not result.get("ok"):
+        return JSONResponse(status_code=422, content={"ok": False, **result})
+    tmp = report.with_suffix(".tmp")
+    tmp.write_text(json.dumps(result), "utf8")
+    tmp.replace(report)
+    return {"dir": str(out_dir), "cached": False, **result}
 
 
 @app.get("/artifact/{digest}/mesh.glb")
@@ -351,7 +539,7 @@ async def artifact(digest: str):
 def run() -> None:
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")
+    uvicorn.run(app, host=HOST, port=PORT, log_level="warning")
 
 
 if __name__ == "__main__":

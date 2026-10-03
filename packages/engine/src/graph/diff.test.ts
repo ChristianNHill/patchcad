@@ -52,6 +52,38 @@ describe("diffContract", () => {
   });
 });
 
+describe("diffContract — payload ports", () => {
+  const port = (name: string, d: number) => ({ name, type: "BORE", pose: { origin: [0, 0, 0] }, params: { diameter: d } });
+  const plate = (holeA: number, holeB: number, rest: Record<string, unknown> = {}) =>
+    contract({
+      provides: [
+        { key: "a", type: "BORE", description: "" },
+        { key: "b", type: "BORE", description: "" },
+      ],
+      requires: [{ key: "seat", type: "FLAT_FACE", description: "" }],
+      payload: { envelope: { clearance: 0.5 }, ports: [port("a", holeA), port("b", holeB), port("seat", 1)], ...rest },
+    });
+
+  it("a change to one provides port's entry dirties only that port", () => {
+    const d = diffContract(plate(4, 4), plate(5, 4));
+    expect(d.shapeChanged).toBe(true);
+    expect(d.shapeChangedProvides).toEqual(["a"]);
+  });
+
+  it("a requires-side entry changes the node but none of its consumers", () => {
+    const before = plate(4, 4);
+    const after = { ...before, payload: { ...(before.payload as object), ports: [port("a", 4), port("b", 4), port("seat", 2)] } };
+    const d = diffContract(before, after);
+    expect(d.shapeChanged).toBe(true);
+    expect(d.shapeChangedProvides).toEqual([]);
+  });
+
+  it("anything outside the ports still marks every provides port", () => {
+    const d = diffContract(plate(4, 4), plate(4, 4, { envelope: { clearance: 1 } }));
+    expect(d.shapeChangedProvides.sort()).toEqual(["a", "b"]);
+  });
+});
+
 describe("contractHash", () => {
   const withUi = (ui?: { group?: string; unit?: string }) =>
     contract({

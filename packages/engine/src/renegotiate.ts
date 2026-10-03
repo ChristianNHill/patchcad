@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Contract, ParamDecl, PortDecl, type GraphDoc } from "@patchcad/shared";
 import type { DomainBackend } from "./backend.js";
-import type { LlmProvider, LlmUsage } from "./llm.js";
+import type { LlmImage, LlmProvider, LlmUsage } from "./llm.js";
 import { contractHash } from "./graph/diff.js";
 
 /**
@@ -50,6 +50,8 @@ export async function renegotiateContract(opts: {
   graph: GraphDoc;
   nodeId: string;
   message: string;
+  /** Pictures the user attached to the change request. */
+  images?: LlmImage[];
   signal?: AbortSignal;
 }): Promise<RenegotiationResult> {
   const node = opts.graph.nodes[opts.nodeId];
@@ -124,7 +126,7 @@ export async function renegotiateContract(opts: {
     role: "architect",
     label: `renegotiate:${opts.nodeId}`,
     system,
-    messages: [{ role: "user", content: userMessage }],
+    messages: [{ role: "user", content: userMessage, ...(opts.images?.length ? { images: opts.images } : {}) }],
     schema,
     signal: opts.signal,
   });

@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import type { NodeRecord } from "@patchcad/shared";
 import {
   FASTENING_HARDWARE,
+  isoThreadedRodCode,
   METRIC,
   REGISTRY_HARDWARE,
   resolveDeterministic,
   resolveHardware,
+  skuOf,
 } from "./registry.js";
+import { CATALOG, skuFor, standardLengths } from "./catalog.js";
 
 /**
  * Registry hardware never reaches an LLM, so these are the only tests it gets
@@ -27,11 +30,27 @@ const node = (over: Partial<NodeRecord> = {}): NodeRecord =>
 describe("resolveHardware", () => {
   it("covers every registry class", () => {
     expect([...REGISTRY_HARDWARE].sort()).toEqual([
+      "bearing",
+      "belt",
+      "bushing",
+      "carriage",
+      "collar",
+      "dowel",
+      "eclip",
       "fastener",
       "gear",
       "insert",
+      "linear_bearing",
+      "magnet",
+      "motor",
       "nut",
+      "oring",
+      "pulley",
+      "rail",
+      "shaft",
+      "standoff",
       "threaded_rod",
+      "washer",
     ]);
   });
 
@@ -41,11 +60,53 @@ describe("resolveHardware", () => {
     for (const kind of FASTENING_HARDWARE) expect(REGISTRY_HARDWARE.has(kind), kind).toBe(true);
   });
 
-  it("emits a complete module per kind", () => {
-    for (const kind of REGISTRY_HARDWARE) {
-      const code = resolveHardware(node({ kind, params: { thread: "M4" } }));
-      expect(code, kind).toContain("def build(p)");
-      expect(code, kind).toContain("from build123d import *");
+  it("emits a complete module for every size of every catalog family", () => {
+    for (const [family, f] of Object.entries(CATALOG.families)) {
+      for (const key of Object.keys(f.dims)) {
+        const sku = skuFor(family, key, standardLengths(family, key)[0])!;
+        const code = resolveHardware(node({ kind: f.kind, params: { sku: sku.id } }));
+        expect(code, sku.id).toContain("def build(p)");
+        expect(code, sku.id).toContain("from build123d import *");
+      }
+    }
+  });
+
+  it("keeps the pre-catalog METRIC values exactly (golden)", () => {
+    expect(METRIC.M3).toEqual({ clearance: 3.4, pitch: 0.5, tap: 2.5, shcsHeadD: 5.5, shcsHeadH: 3.0, insertD: 4.0, insertL: 5.8, nutAf: 5.5, nutH: 2.4 });
+    expect(METRIC.M4).toEqual({ clearance: 4.5, pitch: 0.7, tap: 3.3, shcsHeadD: 7.0, shcsHeadH: 4.0, insertD: 5.6, insertL: 8.1, nutAf: 7.0, nutH: 3.2 });
+    expect(METRIC.M5).toEqual({ clearance: 5.5, pitch: 0.8, tap: 4.2, shcsHeadD: 8.5, shcsHeadH: 5.0, insertD: 6.4, insertL: 9.5, nutAf: 8.0, nutH: 4.7 });
+  });
+
+  it("picks the family and default length from the SKU", () => {
+    const button = resolveHardware(node({ params: { sku: "ISO7380-M3x10" } }))!;
+    expect(button).toContain("fillet(");
+    expect(button).toContain('p.get("length", 10)');
+    expect(resolveHardware(node({ params: { sku: "ISO10642-M4x16" } }))).toContain("Cone(");
+    // A bare thread is still an SHCS, so existing fastener nodes are unchanged.
+    expect(resolveHardware(node({ params: { thread: "M4", length: 12 } }))).not.toContain("fillet(");
+    expect(skuOf(node({ params: { thread: "M4" } }))?.family).toBe("shcs");
+  });
+
+  it("declines a SKU of another kind rather than reinterpreting it", () => {
+    expect(resolveHardware(node({ kind: "fastener", params: { sku: "BRG-608" } }))).toBeNull();
+    expect(resolveHardware(node({ kind: "bearing", params: { sku: "BRG-608" } }))).toContain("annulus(11, ");
+  });
+
+  it("builds a size-keyed part from `size` when there is no SKU", () => {
+    expect(resolveHardware(node({ kind: "bearing", params: { size: "608" } }))).toBe(
+      resolveHardware(node({ kind: "bearing", params: { sku: "BRG-608" } })),
+    );
+  });
+
+  it("loads a vendor STEP when the SKU has one, falling back to the parametric model", () => {
+    CATALOG.skus.push({ id: "BRG-625", family: "bearing", key: "625", stepFile: "625-2rs.step" });
+    try {
+      const code = resolveHardware(node({ kind: "bearing", params: { sku: "BRG-625" } }))!;
+      expect(code).toContain('return load_import("625-2rs.step")');
+      expect(code).toContain("except Exception:");
+      expect(code).toContain("annulus(8, "); // the fallback ring is still there
+    } finally {
+      CATALOG.skus.pop();
     }
   });
 
@@ -58,9 +119,12 @@ describe("resolveHardware", () => {
     expect(a).not.toContain("bd_warehouse");
   });
 
-  it("gives the threaded rod its ISO pitch from the table", () => {
-    expect(resolveHardware(node({ kind: "threaded_rod", params: { thread: "M4" } }))).toContain("pitch=0.7");
-    expect(resolveHardware(node({ kind: "threaded_rod", params: { thread: "M5" } }))).toContain("pitch=0.8");
+  it("builds the threaded rod as one cylinder at its ISO pitch diameter", () => {
+    // d - 0.6495·P: M4 (P 0.7) is Ø3.545, M5 (P 0.8) Ø4.48.
+    expect(resolveHardware(node({ kind: "threaded_rod", params: { thread: "M4" } }))).toContain("Cylinder(1.7725, L)");
+    expect(resolveHardware(node({ kind: "threaded_rod", params: { thread: "M5" } }))).toContain("Cylinder(2.24, L)");
+    expect(resolveHardware(node({ kind: "threaded_rod", params: { thread: "M4" } }))).not.toContain("IsoThread");
+    expect(isoThreadedRodCode("M4")).toContain("pitch=0.7");
   });
 
   it("takes the thread from live params first, contract default second", () => {
@@ -82,7 +146,7 @@ describe("resolveHardware", () => {
   });
 
   it("declines rather than guessing an unknown thread or kind", () => {
-    expect(resolveHardware(node({ kind: "nut", params: { thread: "M6" } }))).toBeNull();
+    expect(resolveHardware(node({ kind: "nut", params: { thread: "M10" } }))).toBeNull();
     expect(resolveHardware(node({ kind: "part", params: { thread: "M4" } }))).toBeNull();
   });
 
@@ -96,8 +160,12 @@ describe("resolveHardware", () => {
 
 describe("resolveDeterministic", () => {
   it("routes hardware to the registry", () => {
-    for (const kind of REGISTRY_HARDWARE) {
-      expect(resolveDeterministic(node({ kind, params: { thread: "M4" } })), kind).toContain("def build(p)");
+    // A kind's first family is its default when a node names a size, not a SKU.
+    const defaults = new Map(Object.values(CATALOG.families).reverse().map((f) => [f.kind, f]));
+    for (const f of defaults.values()) {
+      const key = Object.keys(f.dims)[0]!;
+      const params = { [f.keyedBy]: key, teeth: 20 };
+      expect(resolveDeterministic(node({ kind: f.kind, params })), f.kind).toContain("def build(p)");
     }
   });
 

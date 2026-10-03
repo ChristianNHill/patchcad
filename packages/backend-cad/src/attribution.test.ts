@@ -86,8 +86,86 @@ describe("CadBackend.classifyFailure", () => {
     expect(classify(scattered, 5)).toBe("code-invalid");
   });
 
+  // The contract gates now report every failing port at once, so one report
+  // names several. Only the first used to be read, hiding a persistent second.
+  const combined = (n: number) =>
+    Array.from({ length: n }, () => ({
+      stage: "G3",
+      report:
+        "3 gate failures — fix all of them in this attempt:\n" +
+        '1. [G3] port "a" (BORE): no hole found at the declared origin\n' +
+        '2. [G3] port "b" (BORE): expected Ø4, measured Ø6.00\n' +
+        "3. [G4] 12 mesh vertices escape the declared envelope",
+    }));
+
+  it("counts every port named in a combined report", () => {
+    const shifting = [...combined(2), ...g3(2, "b")];
+    expect(classify(shifting, 5)).toBe("contract-infeasible");
+  });
+
+  it("counts an envelope escape reported beside port failures as G4", () => {
+    expect(classify([...combined(2), ...g4(2)], 5)).toBe("contract-infeasible");
+    expect(classify(combined(2), 5)).toBe("code-invalid");
+  });
+
   it("treats unrelated gate failures as the generator's problem", () => {
     const syntax = Array.from({ length: 5 }, () => ({ stage: "G1", report: "SyntaxError" }));
     expect(classify(syntax, 5)).toBe("code-invalid");
+  });
+});
+
+describe("CadBackend.classifyFailure · G4b assertions", () => {
+  const g4b = (n: number, label: string) =>
+    Array.from({ length: n }, () => ({ stage: "G4b", report: `assertion "${label}": expected 4 holes, measured 3` }));
+
+  it("a size the model cannot reach in most rounds is the contract's problem", () => {
+    expect(classify(g4b(4, "bbox_axis x"), 5)).toBe("contract-infeasible");
+    expect(classify(g4b(4, "volume_range"), 5)).toBe("contract-infeasible");
+  });
+
+  it("finds the assertion inside a combined report staged G3", () => {
+    const combined = Array.from({ length: 4 }, (_, i) => ({
+      stage: "G3",
+      report: `2 gate failures:\n1. [G3] port "p${i}" (BORE): expected Ø4.5, measured Ø6.00\n2. [G4b] assertion "bbox_axis z": expected at most 6 mm along z, measured 9`,
+    }));
+    expect(classify(combined, 5)).toBe("contract-infeasible");
+  });
+
+  it("a hole count, symmetry or wall stays with the generator", () => {
+    expect(classify(g4b(5, "hole_count"), 5)).toBe("code-invalid");
+    expect(classify(g4b(5, "symmetry yz"), 5)).toBe("code-invalid");
+    expect(classify(g4b(5, "min_wall"), 5)).toBe("code-invalid");
+  });
+
+  it("one bad round is not persistent", () => {
+    expect(classify(g4b(1, "bbox_axis x"), 5)).toBe("code-invalid");
+  });
+});
+
+describe("CadBackend.classifyFailure · hardware host features", () => {
+  const host = (od: number, envelope: number) =>
+    ({
+      id: "hub",
+      kind: "part",
+      contract: {
+        payload: {
+          ports: [{ name: "seat", type: "BEARING_SEAT", params: { od, width: 7, fit: "press" } }],
+          envelope: { volumes: [{ kind: "box", dims: [envelope, envelope, 10] }] },
+        },
+      },
+    }) as unknown as NodeRecord;
+  const misses = (n: number) =>
+    Array.from({ length: n }, () => ({ stage: "G3", report: 'port "seat" (BEARING_SEAT): expected Ø21.90..22.00, measured Ø22.30' }));
+
+  it("a seat cut wrong every round is still the generator's to fix", () => {
+    expect(new CadBackend().classifyFailure({ node: host(22, 40), failures: misses(5), attempts: 5 })).toBe("code-invalid");
+  });
+
+  it("a seat wider than the whole envelope is the contract's", () => {
+    expect(new CadBackend().classifyFailure({ node: host(22, 20), failures: misses(4), attempts: 5 })).toBe("contract-infeasible");
+  });
+
+  it("an inert node never escalates a hardware miss", () => {
+    expect(classify(misses(5), 5)).toBe("code-invalid");
   });
 });

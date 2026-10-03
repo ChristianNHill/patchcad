@@ -3,6 +3,7 @@ import type { NodeRecord } from "@patchcad/shared";
 import { fmtTokens, STATUS_LABEL, useStudio } from "../store.js";
 import { ParamRow } from "../params.js";
 import { KindGlyph } from "./KindGlyph.js";
+import { isFabricate, VendorBadge } from "../BomPanel.js";
 
 export type PatchNodeData = {
   record: NodeRecord;
@@ -79,6 +80,7 @@ export function PatchNode({ data, selected }: NodeProps<PatchNodeType>) {
             · {fmtTokens(record.cost.inputTokens + record.cost.outputTokens)} tok
           </span>
         )}
+        {isFabricate(record) && <VendorBadge />}
       </div>
 
       {visibleParams.length > 0 && (

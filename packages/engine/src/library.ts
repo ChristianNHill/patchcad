@@ -1,4 +1,4 @@
-import type { Contract } from "@patchcad/shared";
+import { hashValue, type Contract } from "@patchcad/shared";
 
 /**
  * Node library: contract-as-query reuse. v1 policy is exact contract-hash
@@ -31,6 +31,28 @@ export interface LibraryEntry {
    * this field existed — such entries still serve the fast path.
    */
   contract?: Contract;
+  /** Generation rounds the code took to pass its gates (1 = first try). */
+  attemptsToPass?: number;
+  /** Times a later cook committed this entry instead of generating. */
+  reused?: number;
+}
+
+/** A gate failure and the edit that cleared it, from a repair that passed. */
+export interface RepairFix {
+  stage: string;
+  report: string;
+  /** Lines the repair removed (`- `) and added (`+ `). */
+  diff: string;
+}
+
+/** A pitfall mined from repeated fixes — the shape a backend's table merges. */
+export interface LearnedPitfall {
+  id: string;
+  stage: string;
+  /** RegExp source matching the failure's normalized first line. */
+  pattern: string;
+  fix: string;
+  occurrences: number;
 }
 
 /** An entry plus the key it is stored under. */
@@ -51,4 +73,68 @@ export interface NodeLibrary {
    * testable place instead of in every NodeLibrary implementation.
    */
   list?(backendId: string, opts?: { kind?: string }): Promise<LibraryListing[]>;
+  /** Outcome stats, all optional and best-effort: a cook never waits on them. */
+  recordReuse?(backendId: string, contractHash: string): Promise<void>;
+  recordFix?(backendId: string, fix: RepairFix): Promise<void>;
+}
+
+/** Line-level edit from `before` to `after`: what a repair changed, without
+ *  the lines it kept. Capped — a rewrite is not a fix worth learning. */
+export function codeDiff(before: string, after: string, maxLines = 12): string {
+  const was = before.split("\n").map((l) => l.trim()).filter(Boolean);
+  const now = after.split("\n").map((l) => l.trim()).filter(Boolean);
+  const wasSet = new Set(was);
+  const nowSet = new Set(now);
+  return [
+    ...was.filter((l) => !nowSet.has(l)).map((l) => `- ${l}`),
+    ...now.filter((l) => !wasSet.has(l)).map((l) => `+ ${l}`),
+  ]
+    .slice(0, maxLines)
+    .join("\n");
+}
+
+/** A failure report reduced to what recurs across parts: its first line with
+ *  numbers and quoted names blanked. "port \"bolt\" (BORE): expected Ø4.5,
+ *  measured Ø9.00" and the same miss on another part share a signature. */
+export function failureSignature(report: string): string {
+  return (report.split("\n")[0] ?? "")
+    .replace(/"[^"]*"|'[^']*'/g, '"_"')
+    .replace(/-?\d+(?:\.\d+)?/g, "#")
+    .trim();
+}
+
+/** Learned pitfalls need this many separate fixes for one signature: one or
+ *  two can be coincidence, and a wrong fix would ride every matching repair. */
+export const MIN_PITFALL_OCCURRENCES = 3;
+
+/**
+ * Frequent (failure → fix) pairs as candidate pitfalls. Grouped by stage and
+ * signature; the fix shown is the most recent diff, since later code reflects
+ * the current prompts. Domain-agnostic: the backend decides whether to use it.
+ */
+export function minePitfalls(fixes: RepairFix[]): LearnedPitfall[] {
+  const groups = new Map<string, RepairFix[]>();
+  for (const f of fixes) {
+    const sig = failureSignature(f.report);
+    if (!sig || !f.diff) continue;
+    const key = `${f.stage}\u0000${sig}`;
+    groups.set(key, [...(groups.get(key) ?? []), f]);
+  }
+  const out: LearnedPitfall[] = [];
+  for (const [key, group] of groups) {
+    if (group.length < MIN_PITFALL_OCCURRENCES) continue;
+    const [stage, sig] = key.split("\u0000") as [string, string];
+    const pattern = sig
+      .split("#")
+      .map((part) => part.split('"_"').map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(`(?:"[^"]*"|'[^']*')`))
+      .join("-?\\d+(?:\\.\\d+)?");
+    out.push({
+      id: `learned-${stage}-${hashValue(sig).slice(0, 8)}`,
+      stage,
+      pattern,
+      fix: `A repair that cleared this failure ${group.length} times changed:\n${group.at(-1)!.diff}`,
+      occurrences: group.length,
+    });
+  }
+  return out.sort((a, b) => b.occurrences - a.occurrences);
 }

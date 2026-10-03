@@ -1,0 +1,30 @@
+# docker compose up --build, then open http://localhost:4100
+services:
+  kernel:
+    build: { context: ., target: kernel }
+    volumes:
+      # Same path as the server's: imported meshes are passed by absolute path.
+      - projects:/app/projects
+      - kernel-cache:/root/.patchcad/kernel-cache
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8621/health')"]
+      interval: 5s
+      retries: 30
+
+  server:
+    build: { context: ., target: server }
+    ports: ["4100:4100"]
+    environment:
+      # One of these, or a ~/.patchcad/config.json in the patchcad-home volume.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    volumes:
+      - projects:/app/projects
+      - patchcad-home:/root/.patchcad
+    depends_on:
+      kernel: { condition: service_healthy }
+
+volumes:
+  projects:
+  kernel-cache:
+  patchcad-home:

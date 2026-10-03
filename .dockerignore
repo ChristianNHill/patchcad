@@ -1,0 +1,13 @@
+.git
+**/node_modules
+**/.venv
+**/dist
+**/__pycache__
+projects
+evals/results
+.hallmark
+.claude
+.agents
+*.log
+.env
+.env.*

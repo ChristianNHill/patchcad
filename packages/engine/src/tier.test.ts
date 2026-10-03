@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { NodeRecord } from "@patchcad/shared";
 import { classifyReprompt } from "./tier.js";
 import type { LlmProvider } from "./llm.js";
+import type { TierHints } from "./backend.js";
 
 const node = {
   id: "data-fetcher",
@@ -66,5 +67,61 @@ describe("classifyReprompt rule tiers", () => {
     };
     const r = await classifyReprompt(broken, node, "accept an optional callback prop for clicks");
     expect(r.tier).toBe("T2");
+  });
+});
+
+describe("classifyReprompt with backend tier hints", () => {
+  const part = {
+    id: "bracket",
+    kind: "part",
+    title: "Bracket",
+    contract: {
+      name: "Bracket",
+      summary: "",
+      params: [{ type: "number", name: "thickness", description: "", default: 4 }],
+      provides: [{ key: "mount_hole", type: "CLEARANCE_HOLE", description: "" }],
+      requires: [],
+      payload: { ports: [{ name: "mount_hole" }, { name: "base_face" }] },
+      hash: "x",
+    },
+  } as unknown as NodeRecord;
+
+  const hints: TierHints = {
+    addsInterface: /\badd (?:a |an )?(?:hole|port|mount)/i,
+    sizeWords: /\b(?:hole|thick\w*|bigger|size)\b|\d\s*mm\b/i,
+    classifierGuide: "T2 — reshape inside the ports. T3 — move a port.",
+  };
+
+  const table: [message: string, tier: "T2" | "T3"][] = [
+    ["make the mount hole 5mm", "T3"],
+    ["make the mountHole bigger", "T3"],
+    ["set thickness to 6mm", "T3"],
+    ["add a hole for a cable", "T3"],
+    ["make the base face bigger", "T3"],
+    // The port's own name supplies no size word.
+    ["add a fillet around the mount hole", "T2"],
+    ["make it rounder", "T2"],
+    ["make it 5mm bigger", "T2"], // no port or param named
+    ["smoother edges on the base face", "T2"],
+  ];
+
+  for (const [message, tier] of table) {
+    it(`${tier}: "${message}"`, async () => {
+      expect((await classifyReprompt(mustNotCall, part, message, hints)).tier).toBe(tier);
+    });
+  }
+
+  it("hands the classifier the backend's vocabulary", async () => {
+    let system = "";
+    const provider: LlmProvider = {
+      id: "stub",
+      complete: async (req) => {
+        system = req.system;
+        return { data: { tier: "T2", reason: "stub" }, usage: { inputTokens: 0, outputTokens: 0, usd: 0 }, model: "stub" } as never;
+      },
+    };
+    await classifyReprompt(provider, part, "change the param defaults", hints);
+    expect(system).toContain("T3 — move a port.");
+    expect(system).not.toContain("exports");
   });
 });

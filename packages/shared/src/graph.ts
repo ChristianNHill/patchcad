@@ -120,6 +120,8 @@ export const ChatMessage = z.object({
   role: z.enum(["user", "assistant", "system"]),
   content: z.string(),
   at: z.number(),
+  /** Hashes of images attached to this message, stored as refs/<hash>.png. */
+  refs: z.array(z.string()).optional(),
 });
 export type ChatMessage = z.infer<typeof ChatMessage>;
 
@@ -204,6 +206,22 @@ export const NodeCost = z.object({
 });
 export type NodeCost = z.infer<typeof NodeCost>;
 
+const ZERO_COST = { calls: 0, inputTokens: 0, outputTokens: 0, usd: 0 };
+
+/** Spend that belongs to the project rather than to any one node: the plan
+ *  that created it, tier classifications, T3 renegotiations, and the cost of
+ *  nodes since deleted or split away, so the total never shrinks when a node
+ *  does. Visual checks have no bucket: they only run inside a cook, and bill
+ *  the part they looked at. */
+export const ProjectLedger = z.object({
+  planning: NodeCost.default(ZERO_COST),
+  classifier: NodeCost.default(ZERO_COST),
+  renegotiate: NodeCost.default(ZERO_COST),
+  nodes: NodeCost.default(ZERO_COST),
+});
+export type ProjectLedger = z.infer<typeof ProjectLedger>;
+export type LedgerBucket = keyof ProjectLedger;
+
 export const NodeRecord = z.object({
   id: z.string(),
   /** Domain-defined kind: shell|component|state|style|data|logic (code),
@@ -226,7 +244,7 @@ export const NodeRecord = z.object({
   measurements: NodeMeasurements.nullable().default(null),
   version: z.number().default(0),
   history: z.array(NodeVersionMeta).default([]),
-  cost: NodeCost.default({ calls: 0, inputTokens: 0, outputTokens: 0, usd: 0 }),
+  cost: NodeCost.default(ZERO_COST),
 });
 export type NodeRecord = z.infer<typeof NodeRecord>;
 
@@ -241,7 +259,35 @@ export const Edge = z.object({
 });
 export type Edge = z.infer<typeof Edge>;
 
+// ---------- Joints ----------
+
+/** A joint the architect declared between two parts' ports: what it must DO,
+ *  never what hardware does it. A domain expands it into hardware nodes at plan
+ *  time (DomainBackend.planning.expandPlan), so the fields past the two ends
+ *  are the domain's and pass through untouched. */
+export const JointDecl = z
+  .object({
+    id: z.string(),
+    a: z.object({ node: z.string(), port: z.string() }),
+    b: z.object({ node: z.string(), port: z.string() }),
+  })
+  .passthrough();
+export type JointDecl = z.infer<typeof JointDecl>;
+
 // ---------- GraphDoc ----------
+
+export const RefView = z.enum(["front", "side", "back", "top"]);
+export type RefView = z.infer<typeof RefView>;
+
+export const RefImage = z.object({
+  hash: z.string(),
+  view: RefView.optional(),
+  /** Subject bbox width / height in the source image. */
+  aspect: z.number().optional(),
+  /** A normalized silhouette exists at refs/<hash>.mask.png (G6 compares it). */
+  mask: z.boolean().default(false),
+});
+export type RefImage = z.infer<typeof RefImage>;
 
 export const GraphDoc = z.object({
   schemaVersion: z.literal(1),
@@ -256,12 +302,23 @@ export const GraphDoc = z.object({
      *  own styling and the assembly looks like several projects. Architect
      *  output, not neighbour code, so the invariant holds. */
     design: z.string().default(""),
+    /** Reference images the user planned from (Phase 6), stored as
+     *  `refs/<hash>.png` in the project dir with the normalized silhouette
+     *  beside it as `refs/<hash>.mask.png`. Part of the user's SPEC, so the
+     *  architect sees them; generators never do. */
+    refs: z.array(RefImage).default([]),
+    /** Target overall height in mm the plan was scaled to, when given. */
+    sizeMm: z.number().positive().optional(),
+    symmetric: z.boolean().optional(),
   }),
   nodes: z.record(NodeRecord),
   edges: z.array(Edge),
   assembly: z.object({ entryNodeId: z.string() }),
+  /** Declared joints, kept so a changed intent or wall can be re-expanded. */
+  joints: z.array(JointDecl).default([]),
   /** Bumped on every applyOp — optimistic-concurrency + persistence stamp. */
   rev: z.number().default(0),
+  ledger: ProjectLedger.default({}),
 });
 export type GraphDoc = z.infer<typeof GraphDoc>;
 

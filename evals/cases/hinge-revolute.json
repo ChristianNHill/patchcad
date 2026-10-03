@@ -1,0 +1,14 @@
+{
+  "id": "hinge-revolute",
+  "prompt": "a printed butt hinge: two 40x30x3mm leaves with interlocking knuckles that turn on a separate 3mm pin through 3.2mm knuckle bores",
+  "why": "The revolute joint. Each knuckle bore is a BORE that G3 measures, and G5's shaft/bore fit check compares the pin's measured diameter with the bore it sits in, so a pin as wide as its bore (no running clearance) or knuckles that overlap each other along the pin axis fail.",
+  "expect": {
+    "nodes": { "min": 2, "max": 4 },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "ports": [
+      { "anyType": ["BORE", "CLEARANCE_HOLE"], "minCount": 2, "diameter": 3.2, "tol": 0.25, "through": true }
+    ],
+    "assemblyProblems": 0
+  }
+}

@@ -1,5 +1,5 @@
 /**
- * Engineering facts derived from the METRIC table, in one place, so the
+ * Engineering facts derived from the hardware catalog, in one place, so the
  * architect, the lints and the prompts all read the same numbers.
  *
  * WHY THIS EXISTS: every one of these numbers was already in the codebase, and
@@ -15,6 +15,7 @@
  * they would be numbers I cannot check, and a grounding table nobody verified
  * is worse than an honest gap because the model would trust it.
  */
+import { dim, familyDims, threadSpec } from "./catalog.js";
 import { METRIC } from "./registry.js";
 
 /** Nominal major diameter, from the designation. M4 -> 4. */
@@ -24,12 +25,19 @@ export function majorDiameter(thread: string): number {
   return d;
 }
 
+/** Catalog dim for a kind's default family at a thread, if the row exists. */
+const rowDim = (family: string, field: string) => (thread: string) => {
+  const row = familyDims(family, thread);
+  return row ? dim(row, field) : undefined;
+};
+
 /** The face a hardware kind bears on, by outer diameter. A screw bears on its
- *  head, a nut on its across-flats, an insert on its flange. */
-export const BEARING_DIAMETER: Record<string, (m: (typeof METRIC)[string]) => number> = {
-  fastener: (m) => m.shcsHeadD,
-  nut: (m) => m.nutAf,
-  insert: (m) => m.insertD,
+ *  head, a nut on its across-flats, an insert on its flange, a washer on its OD. */
+export const BEARING_DIAMETER: Record<string, (thread: string) => number | undefined> = {
+  fastener: rowDim("shcs", "headD"),
+  nut: rowDim("hex_nut", "af"),
+  insert: rowDim("heatset_std", "holeD"),
+  washer: rowDim("washer", "od"),
 };
 
 /**
@@ -43,11 +51,9 @@ export const BEARING_DIAMETER: Record<string, (m: (typeof METRIC)[string]) => nu
  * rim is where tessellation decides, so `recommended` is the midpoint.
  */
 export function seatBand(kind: string, thread: string): { min: number; max: number; recommended: number } | null {
-  const m = METRIC[thread];
-  const outer = BEARING_DIAMETER[kind];
-  if (!m || !outer) return null;
+  const max = threadSpec(thread) && BEARING_DIAMETER[kind]?.(thread);
+  if (!max) return null;
   const min = majorDiameter(thread);
-  const max = outer(m);
   return { min, max, recommended: Math.round(((min + max) / 2) * 10) / 10 };
 }
 
@@ -76,18 +82,16 @@ export const SEAT_POSE = { origin: [0, 0, 0], zAxis: [0, 0, -1], xAxis: [1, 0, 0
  * on every bolted design in the domain.
  */
 export function threadEngagementVolume(thread: string, engagementLength: number): number {
-  const m = METRIC[thread];
-  if (!m) throw new Error(`unknown thread "${thread}"`);
+  const spec = threadSpec(thread);
+  if (!spec) throw new Error(`unknown thread "${thread}"`);
   const major = majorDiameter(thread);
-  return (Math.PI / 4) * (major ** 2 - m.tap ** 2) * engagementLength;
+  return (Math.PI / 4) * (major ** 2 - spec.tapDrill ** 2) * engagementLength;
 }
 
-/** Engagement length for a screw into each mating kind, from the table. */
+/** Engagement length for a screw into each mating kind, from the catalog. */
 export function engagementLength(kind: string, thread: string): number | null {
-  const m = METRIC[thread];
-  if (!m) return null;
-  if (kind === "nut") return m.nutH;
-  if (kind === "insert") return m.insertL;
+  if (kind === "nut") return rowDim("hex_nut", "height")(thread) ?? null;
+  if (kind === "insert") return rowDim("heatset_std", "length")(thread) ?? null;
   return null;
 }
 
@@ -101,6 +105,62 @@ export function engagementLength(kind: string, thread: string): number | null {
  * larger than its hole does not assemble.
  */
 export const FDM_SLIP_FIT_MM = 0.3;
+
+/**
+ * What to CUT, on FDM, for a bought part's host feature, as an offset on the
+ * nominal size the port declares. The port says the part (an 8 mm dowel); the
+ * G3 probe owns the tolerance band; these are the band midpoints, so a print
+ * that lands a little off either way still passes. Bands (kernel probes):
+ * press [d−0.1, d], slip [d+0.05, d+0.25], magnet [d+0.05, d+0.2], nut trap
+ * across-flats [af, af+0.4]. Never add these to a port param: the probe would
+ * count the fit twice.
+ */
+export const FDM_FIT_CUT_MM = { press: -0.05, slip: 0.15, magnet: 0.125, nutTrapAf: 0.2 } as const;
+
+/** The same, for a machined part (cnc, sheet_metal, laser_cut), whose G3 bands
+ *  are press [d−0.05, d], slip [d, d+0.05], magnet [d, d+0.1]. SLS, MJF and
+ *  resin print to the FDM bands. */
+export const MACHINED_FIT_CUT_MM = { press: -0.025, slip: 0.025, magnet: 0.05, nutTrapAf: 0.2 } as const;
+
+/** Port type → the param that carries the nominal size, and which cut applies.
+ *  DOWEL_HOLE and BEARING_SEAT take theirs from the port's own `fit`. */
+const FITTED_PORTS: Record<string, { param: string; cut: keyof typeof FDM_FIT_CUT_MM | "fit" }> = {
+  DOWEL_HOLE: { param: "diameter", cut: "fit" },
+  BEARING_SEAT: { param: "od", cut: "fit" },
+  BUSHING_BORE: { param: "od", cut: "press" },
+  HUB_BORE: { param: "diameter", cut: "slip" },
+  MOTOR_MOUNT: { param: "pilot_diameter", cut: "slip" },
+  MAGNET_POCKET: { param: "diameter", cut: "magnet" },
+  NUT_TRAP: { param: "af", cut: "nutTrapAf" },
+};
+
+/**
+ * The generator's annotation for one of its own ports: the size to cut on FDM,
+ * worked out from the nominal the port declares, plus the shape rules the
+ * probes enforce beyond Ø. `num` resolves a port param (it may be a T1
+ * expression); an unresolvable one gets the rule instead. null = no fit.
+ */
+export function fitCut(
+  port: { type: string; params: Record<string, number | string> },
+  num: (v: number | string) => number | undefined,
+  machined = false,
+): string | null {
+  if (port.type === "INSERT_POCKET") return "cut at the declared diameter, at least depth + 0.3 deep, 1.2 mm wall around it";
+  const spec = FITTED_PORTS[port.type];
+  if (!spec) return null;
+  const cut = spec.cut === "fit" ? (port.params.fit === "slip" ? "slip" : "press") : spec.cut;
+  const offset = (machined ? MACHINED_FIT_CUT_MM : FDM_FIT_CUT_MM)[cut];
+  const raw = port.params[spec.param];
+  const nominal = raw === undefined ? undefined : num(raw);
+  const sign = offset < 0 ? "−" : "+";
+  const size =
+    nominal === undefined
+      ? `${spec.param} ${sign} ${Math.abs(offset)}`
+      : `${Math.round((nominal + offset) * 1000) / 1000} (${spec.param} ${nominal} ${sign} ${Math.abs(offset)}, ${cut})`;
+  const what = port.type === "NUT_TRAP" ? "across the flats" : "Ø";
+  const shoulder = port.type === "BEARING_SEAT" ? "; pocket ≥ width deep on a shoulder lip ≥ 1 mm (bore below ≤ od − 2)" : "";
+  return `cut ${what} ${size}${shoulder}`;
+}
 
 /** Rendered for the architect, because a number it cannot read is a number it
  *  will guess. Kept to the facts above, in the units the contract uses. */

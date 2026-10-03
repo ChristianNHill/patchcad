@@ -1,8 +1,10 @@
 import type { z } from "zod";
 import type { LlmImage } from "./llm.js";
+import type { ArchitectOutput } from "./architect.js";
 import type {
   Contract,
   GraphDoc,
+  JointDecl,
   NodeRecord,
   ParamValue,
   ChatMessage,
@@ -52,6 +54,18 @@ export interface GenerateCtx<P = unknown> {
   /** Verified worked examples mined from the node library — never from this
    *  graph. Empty when no library is configured or nothing suitable is stored. */
   exemplars?: Exemplar[];
+  /** Set on a FRESH START: repairs stopped improving, so the cook asks for a
+   *  new part from scratch rather than another patch on the same code. Every
+   *  failure so far, oldest first — the approaches already tried, so the fresh
+   *  attempt does not walk back into one. Absent on a first generate. */
+  priorFailures?: { stage: string; report: string }[];
+  /** Every node's current param values, defaults filled in. Values, never
+   *  code: they let a backend print contract expressions such as a pose
+   *  component "param(plate.thickness) / 2" as the numbers its gates check. */
+  paramValues?: Record<string, Record<string, ParamValue>>;
+  /** Images the user attached to THIS node's thread (a reprompt with a
+   *  picture). The user's spec for this part, never a neighbour's anything. */
+  refImages?: LlmImage[];
 }
 
 /** A library entry rendered as a worked example: the interface that was asked
@@ -66,6 +80,10 @@ export interface Exemplar {
 export interface RepairCtx<P = unknown> extends GenerateCtx<P> {
   failedCode: string;
   failure: { stage: string; report: string };
+  /** Which round `failedCode` came from. Repairs build on the best-scoring
+   *  attempt so far, which is not always the latest — a repair that made
+   *  things worse is dropped rather than patched again. */
+  basedOnAttempt?: number;
   attempt: number;
   /** Total generation rounds this cook is allowed, so a prompt can say
    *  "attempt 3 of 5" — a last round reads differently from a first. */
@@ -100,20 +118,57 @@ export interface ExecuteResult {
   ok: boolean;
   stage: string;
   report: string;
+  /** How close a failure came to passing: higher = closer to passing; backends
+   *  that omit it are treated as equal. Repairs build on the best score. */
+  score?: number;
 }
 
 export interface VerifyResult {
   ok: boolean;
   stage: string;
   report: string;
+  /** How close a failure came to passing: higher = closer to passing; backends
+   *  that omit it are treated as equal. Repairs build on the best score. */
+  score?: number;
   /** What the checks measured on a PASS, for the user rather than the model.
    *  Domain-shaped, so the engine only persists it — see NodeMeasurements. */
   measurements?: unknown;
 }
 
+/** An assembly-level failure pinned on the parts that produce it. Every
+ *  finding is also one of `problems`; this is the structured copy. */
+export interface CheckFinding {
+  nodeA: string;
+  nodeB: string;
+  /** Domain-named. CAD: clash | gap | fit. */
+  kind: string;
+  measured: number;
+  expected: number;
+  message: string;
+}
+
 export interface CheckResult {
   ok: boolean;
   problems: string[];
+  /** Attributed failures. The engine blocks the named nodes (applyCheck), so a
+   *  backend lists here only what a user should act on part by part. */
+  findings?: CheckFinding[];
+  /** Reported, never blocking: also in `problems`, but applyCheck ignores
+   *  them, so no node changes status. For checks with no calibrated
+   *  threshold yet (CAD: silhouette IoU against a reference image). */
+  advisories?: CheckAdvisory[];
+}
+
+/** A non-blocking assembly finding, with the nodes most responsible. */
+export interface CheckAdvisory {
+  /** Domain-named. CAD: silhouette. */
+  kind: string;
+  nodes: string[];
+  measured: number;
+  expected: number;
+  message: string;
+  view?: string;
+  ref?: string;
 }
 
 /** Filesystem root the backend materializes into (project/.preview etc.). */
@@ -137,6 +192,19 @@ export interface NodeKindSpec {
 }
 
 export type GraphLint = { run(graph: GraphDoc): string[] };
+
+/** What a request to change a pinned interface sounds like in one domain. The
+ *  engine's own rules know only web vocabulary (exports, props, callbacks). */
+export interface TierHints {
+  /** Always an interface change, e.g. "add a hole": routes T3 with no LLM. */
+  addsInterface: RegExp;
+  /** Words that move a measured interface dimension. Together with one of the
+   *  node's contract ports or params named in the same message, T3 with no
+   *  LLM call: "make the mount hole 5mm" changes a pinned diameter. */
+  sizeWords: RegExp;
+  /** The classifier's T2/T3 definitions, in this domain's terms. */
+  classifierGuide: string;
+}
 
 export type FailureClass = "code-invalid" | "contract-infeasible" | "unknown";
 
@@ -172,6 +240,19 @@ export interface DomainBackend<P = unknown> {
   generation?: {
     effort?: "low" | "medium" | "high";
     maxTokens?: number;
+    /** Parallel drafts on round 1; the gates pick (first pass wins, otherwise
+     *  the best score becomes the repair base). Omit for one. */
+    firstRoundCandidates?: number;
+    /** Nodes cooked at once. Omit for 4. */
+    concurrency?: number;
+    /** From round `fromAttempt` on, generate under these settings instead.
+     *  Raise `maxTokens` with `effort`: more thinking under the same ceiling
+     *  is how a round returns no code at all. */
+    escalate?: {
+      fromAttempt: number;
+      effort?: "low" | "medium" | "high";
+      maxTokens?: number;
+    };
   };
 
   planning: {
@@ -188,12 +269,46 @@ export interface DomainBackend<P = unknown> {
     paramUnit?: string;
     /** Domain-specific fragment merged into the architect system prompt. */
     architectGuidance: string;
+    /** Replaces the architect's generic decomposition rules (param and
+     *  granularity advice), which are written for web components — "prefer
+     *  boundaries like header, grid, theme" contradicts a domain where one
+     *  part is a complete answer. The structural rules (ids, edges, contracts,
+     *  `design`) stay. Omit to keep the generic ones. */
+    architectRules?: string[];
+    /** Reprompt routing in this domain's words (tier.ts). */
+    tierHints?: TierHints;
+    /** Joints the architect may declare: what a joint must do, never its
+     *  hardware. Travels as one JSON string on the wire, like the payload. Omit
+     *  for a domain without joints. */
+    jointSchema?: z.ZodType<JointDecl, z.ZodTypeDef, unknown>;
+    /** Deterministic expansion of an emission, run right after
+     *  normalizeArchitectOutput on every round and before the lints: joints
+     *  become hardware nodes, host ports and edges. Hermetic by construction,
+     *  since it runs before any cook and writes only contracts. On a live
+     *  graph (reexpandGraph) `live` carries each node's current param values,
+     *  so a decision reads the walls the user actually has. */
+    expandPlan?(out: ArchitectOutput, live?: Record<string, Record<string, ParamValue>>): ArchitectOutput;
   };
 
   /** Nodes the domain resolves deterministically (registry fasteners, stock
    * parts): return code and the cook commits it — verified, zero LLM calls —
    * with cause "registry". Return null to fall through to library/generator. */
   deterministicArtifact?(node: NodeRecord): { code: string; testCode?: string } | null;
+
+  /**
+   * Work a node needs done before its deterministic artifact can build, such
+   * as generating the mesh a CAD mesh node loads. Return null (synchronously)
+   * when there is nothing to do; otherwise the promise resolves to what the
+   * work cost, billed to the node, or null when it cost nothing. A throw lands
+   * the node in error_code.
+   */
+  prepareArtifact?(
+    node: NodeRecord,
+    ws: Workspace,
+    graph: GraphDoc,
+    signal?: AbortSignal,
+    log?: (line: string) => void,
+  ): Promise<{ usd: number } | null> | null;
 
   /**
    * A picture of the node's current artifact, for a model to look at.
@@ -212,8 +327,10 @@ export interface DomainBackend<P = unknown> {
   buildGeneratePrompt(ctx: GenerateCtx<P>): PromptSpec;
   buildRepairPrompt(ctx: RepairCtx<P>): PromptSpec;
 
-  /** Compile/execute the node's artifact (esbuild for code, kernel for CAD). */
-  execute(node: NodeRecord, ws: Workspace): Promise<ExecuteResult>;
+  /** Compile/execute the node's artifact (esbuild for code, kernel for CAD).
+   *  `graph` is passed by the cook so a backend can run its verify checks in
+   *  the same build; callers without one (T0 re-execution) may omit it. */
+  execute(node: NodeRecord, ws: Workspace, graph?: GraphDoc): Promise<ExecuteResult>;
   /** Check the contract's postconditions against the executed artifact. */
   verify(node: NodeRecord, graph: GraphDoc, ws: Workspace): Promise<VerifyResult>;
 

@@ -3,11 +3,12 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import {
   Edge,
   GraphDoc,
+  JointDecl,
   ParamDeclNoUi,
   PortDecl,
 } from "@patchcad/shared";
 import type { DomainBackend } from "./backend.js";
-import type { LlmProvider, LlmUsage } from "./llm.js";
+import type { LlmImage, LlmProvider, LlmUsage } from "./llm.js";
 import { contractHash } from "./graph/diff.js";
 
 /**
@@ -60,7 +61,9 @@ const ARCHITECT_EFFORT = "high" as const;
  */
 const ARCHITECT_REPAIR_EFFORT = "low" as const;
 
-const SLUG = /^[a-z][a-z0-9-]{1,40}$/;
+/** Underscores never come out of normalizeArchitectOutput's slugger, so they
+ *  mark ids a domain's expansion minted (`j1_screw`), which may run longer. */
+const SLUG = /^[a-z][a-z0-9_-]{1,60}$/;
 
 /** The validation schema accepts payload as its real object OR a JSON string
  *  encoding one, because the WIRE schema (below) types it as a string: the CAD
@@ -88,8 +91,8 @@ function stringOr<P>(payloadSchema: z.ZodType<P>): z.ZodType<P, z.ZodTypeDef, un
 /** The wire-side twin of makeArchitectSchema: same graph shape, payload as a
  *  JSON string. Measured: the full schema is grammar-rejected ("too large") on
  *  every call, and stubbing payload alone to a string compiles. */
-export function makeArchitectWireSchema(kinds?: string[]) {
-  return makeArchitectSchema(
+export function makeArchitectWireSchema(kinds?: string[], joints = false) {
+  const wire = makeArchitectSchema(
     z
       .string()
       .describe(
@@ -97,9 +100,27 @@ export function makeArchitectWireSchema(kinds?: string[]) {
       ),
     kinds,
   );
+  // Joints ride as one string for the same reason the payload does, and a
+  // domain without joints keeps the grammar it had.
+  return joints
+    ? wire.extend({
+        joints: z.string().describe('STRICT JSON string encoding the array of joints, "[]" for none. JSON, not prose.'),
+      })
+    : wire.omit({ joints: true });
 }
 
-export function makeArchitectSchema<P>(payloadSchema: z.ZodType<P>, kinds?: string[]) {
+/** The validation side of the joints field: the domain's schema, accepted as
+ *  an array or the JSON string the wire carries, absent meaning none. */
+function jointsField(jointSchema?: z.ZodType<JointDecl, z.ZodTypeDef, unknown>) {
+  if (!jointSchema) return z.array(JointDecl).default([]);
+  return z.preprocess((v) => (v === undefined || v === "" ? [] : v), stringOr(z.array(jointSchema)));
+}
+
+export function makeArchitectSchema<P>(
+  payloadSchema: z.ZodType<P>,
+  kinds?: string[],
+  jointSchema?: z.ZodType<JointDecl, z.ZodTypeDef, unknown>,
+) {
   // Constraining kind to the backend's taxonomy makes invented kinds
   // unrepresentable at decode time (grammar-constrained samplers included).
   const kindSchema =
@@ -140,9 +161,19 @@ export function makeArchitectSchema<P>(payloadSchema: z.ZodType<P>, kinds?: stri
       .describe(
         "2-3 sentences of NON-STRUCTURAL shared intent every generator will see: proportion, edge treatment (fillet vs chamfer and roughly what radius), wall feel, how the whole thing should read. No dimensions, no per-part instructions — those belong in contracts."
       ),
+    joints: jointsField(jointSchema) as z.ZodType<JointDecl[], z.ZodTypeDef, unknown>,
   });
 }
 export type ArchitectOutput = z.infer<ReturnType<typeof makeArchitectSchema<unknown>>>;
+
+/** Decomposition advice for a domain that does not bring its own. Written for
+ *  web components, which is why a backend may replace it. */
+const GENERIC_RULES = [
+  "- Declare live-tunable parameters generously: sizes, counts, colors,",
+  "  labels — anything a user might want to slide without regenerating.",
+  "- Prefer boundaries a user thinks in (header, grid, theme), not",
+  "  per-function granularity.",
+];
 
 function architectSystem(backend: DomainBackend<unknown>): string {
   const kinds = backend.planning.nodeKinds
@@ -165,10 +196,7 @@ function architectSystem(backend: DomainBackend<unknown>): string {
     "  neighbor's `provides` port of the same type.",
     "- Contracts are the ONLY interface between nodes. Anything a neighbor",
     "  needs must be expressed in the contract, never assumed.",
-    "- Declare live-tunable parameters generously: sizes, counts, colors,",
-    "  labels — anything a user might want to slide without regenerating.",
-    "- Prefer boundaries a user thinks in (header, grid, theme), not",
-    "  per-function granularity.",
+    ...(backend.planning.architectRules ?? GENERIC_RULES),
     "- Write the `design` paragraph. Generators are hermetic: they see their own",
     "  contract and their neighbours' contracts, and nothing else. That means",
     "  they have NO way to agree on anything a contract does not pin, so unless",
@@ -262,11 +290,12 @@ export function normalizeArchitectOutput(
         edge = { from: e.to, fromPort: flipped.key, to: e.from, toPort: flipped.key };
         providerPort = flipped;
       } else {
-        // Last resort: a single-provides provider means the intent is clear.
-        const sole = from.contract.provides.length === 1 ? from.contract.provides[0] : undefined;
-        if (!sole) continue; // unresolvable — drop
-        edge = { ...e, fromPort: sole.key };
-        providerPort = sole;
+        // A provider with ONE port used to have the edge silently rewired to
+        // it. In CAD a port is a pose, so that guess can mate a part on a
+        // face nobody chose. Keep the edge as written: genericLints names the
+        // bad port (and the sole candidate) and the architect repairs it.
+        if (from.contract.provides.length === 1) reconciled.push(e);
+        continue; // otherwise unresolvable — drop
       }
     }
 
@@ -302,7 +331,15 @@ export function normalizeArchitectOutput(
     );
   }
 
-  return { ...out, nodes, edges: reconciled, entryNodeId: entryNode?.id ?? entryId };
+  // Joints name nodes too, so they follow the same id repair.
+  const joints = (out.joints ?? []).map((j) => ({
+    ...j,
+    id: slug(j.id),
+    a: { ...j.a, node: endpoint(j.a.node) },
+    b: { ...j.b, node: endpoint(j.b.node) },
+  }));
+
+  return { ...out, nodes, edges: reconciled, entryNodeId: entryNode?.id ?? entryId, joints };
 }
 
 function genericLints(out: ArchitectOutput): string[] {
@@ -321,7 +358,12 @@ function genericLints(out: ArchitectOutput): string[] {
     if (!from) problems.push(`edge from unknown node "${e.from}"`);
     if (!to) problems.push(`edge to unknown node "${e.to}"`);
     if (from && !from.contract.provides.some((p) => p.key === e.fromPort))
-      problems.push(`edge ${e.from}.${e.fromPort} → ${e.to}: "${e.fromPort}" is not a provides port of ${e.from}`);
+      problems.push(
+        `edge ${e.from}.${e.fromPort} → ${e.to}: "${e.fromPort}" is not a provides port of ${e.from}` +
+          (from.contract.provides.length === 1
+            ? ` (its only provides port is "${from.contract.provides[0]!.key}" — name it if that is the mate you meant)`
+            : ""),
+      );
     if (to && !to.contract.requires.some((p) => p.key === e.toPort))
       problems.push(`edge ${e.from} → ${e.to}.${e.toPort}: "${e.toPort}" is not a requires port of ${e.to}`);
     const fromType = from?.contract.provides.find((p) => p.key === e.fromPort)?.type;
@@ -386,8 +428,32 @@ export function architectOutputToGraph(
     nodes,
     edges,
     assembly: { entryNodeId: out.entryNodeId },
+    joints: out.joints ?? [],
     rev: 0,
   });
+}
+
+/** What the goal message says about the attached images and the size field. */
+export function referenceLines(opts: {
+  references?: { view?: string; aspect?: number }[];
+  sizeMm?: number;
+  symmetric?: boolean;
+}): string[] {
+  const refs = opts.references ?? [];
+  const lines: string[] = [];
+  if (refs.length > 0) {
+    lines.push(
+      `Reference images: ${refs.length}, attached in this order. Background removed, cropped to the subject.`,
+      ...refs.map(
+        (r, i) =>
+          `  image ${i + 1}: ${r.view ? `${r.view} view` : "view unlabelled"}` +
+          (r.aspect ? `, subject width/height ${r.aspect.toFixed(2)}` : ""),
+      ),
+    );
+  }
+  if (opts.sizeMm) lines.push(`Target overall height: ${opts.sizeMm} mm. Scale every dimension from this.`);
+  if (opts.symmetric) lines.push("The object is left/right symmetric: keep the design mirror-symmetric.");
+  return lines;
 }
 
 export interface PlanResult {
@@ -413,12 +479,20 @@ export async function planGraph(opts: {
    *  lint-repair rounds, and none of that was visible to the user. */
   onPhase?: (phase: "drafting" | "checking" | "repairing", detail?: string) => void;
   signal?: AbortSignal;
+  /** Reference images (Phase 6): part of the user's spec, so the architect
+   *  sees them, in every round. `view` = where the camera stood. */
+  references?: { image: LlmImage; view?: string; aspect?: number }[];
+  /** Target overall height, mm: dimensions are scaled from it. */
+  sizeMm?: number;
+  symmetric?: boolean;
 }): Promise<PlanResult> {
   const kinds = opts.backend.planning.nodeKinds.map((k) => k.kind);
-  const wireSchema = makeArchitectWireSchema(kinds);
+  const { jointSchema } = opts.backend.planning;
+  const wireSchema = makeArchitectWireSchema(kinds, !!jointSchema);
   const schema = makeArchitectSchema(
     opts.backend.planning.payloadSchema,
     kinds,
+    jointSchema,
   );
   const enforceShell = opts.backend.planning.nodeKinds.some((k) => k.kind === "shell");
   // THE PAYLOAD SPEC, in the prompt, because the grammar can no longer carry
@@ -438,8 +512,18 @@ export async function planGraph(opts: {
     `
 
 Each node's contract.payload is a STRICT JSON string. The object it encodes MUST match this JSON schema exactly:
-${payloadDoc}`;
-  const goalMessage = { role: "user" as const, content: `Goal: ${opts.goal}` };
+${payloadDoc}` +
+    (jointSchema
+      ? `
+
+\`joints\` is a STRICT JSON string. The array it encodes MUST match this JSON schema exactly:
+${JSON.stringify(zodToJsonSchema(z.array(jointSchema), { target: "jsonSchema7", $refStrategy: "none" }))}`
+      : "");
+  const goalMessage = {
+    role: "user" as const,
+    content: [`Goal: ${opts.goal}`, ...referenceLines(opts)].join("\n"),
+    ...(opts.references?.length ? { images: opts.references.map((r) => r.image) } : {}),
+  };
 
   opts.onPhase?.("drafting");
   const first = await opts.provider.complete({
@@ -455,7 +539,12 @@ ${payloadDoc}`;
   });
 
   const usage: LlmUsage = { ...first.usage };
-  let out = normalizeArchitectOutput(first.data, { enforceShell });
+  // The domain's expansion runs on every emission, before the lints judge it.
+  // A repair is shown the model's OWN emission: the expanded one carries
+  // minted hardware it never wrote and would echo back as its own nodes.
+  const expand = (o: ArchitectOutput) => opts.backend.planning.expandPlan?.(o) ?? o;
+  let drafted = normalizeArchitectOutput(first.data, { enforceShell });
+  let out = expand(drafted);
   let repaired = false;
   const lintRounds: string[][] = [];
 
@@ -482,7 +571,7 @@ ${payloadDoc}`;
       system,
       messages: [
         goalMessage,
-        { role: "assistant", content: JSON.stringify(out) },
+        { role: "assistant", content: JSON.stringify(drafted) },
         {
           role: "user",
           content: [
@@ -505,7 +594,8 @@ ${payloadDoc}`;
     usage.inputTokens += repair.usage.inputTokens;
     usage.outputTokens += repair.usage.outputTokens;
     usage.usd += repair.usage.usd;
-    out = normalizeArchitectOutput(repair.data, { enforceShell });
+    drafted = normalizeArchitectOutput(repair.data, { enforceShell });
+    out = expand(drafted);
     problems = lint(out);
   }
   if (problems.length > 0) {

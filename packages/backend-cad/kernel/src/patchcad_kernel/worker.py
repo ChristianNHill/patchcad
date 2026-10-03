@@ -3,14 +3,19 @@ process never imports OCP — a segfault here kills this process only, and the
 pool respawns it.
 
 Protocol over the Pipe:
-  parent → worker: {"code", "params", "out_dir"}
+  parent → worker: {"code", "params", "out_dir", "glb_dir", "trace_after_s"}
   worker → parent: {"ok": True, "measurements", "elapsed_ms"}
-                 | {"ok": False, "stage", "error", "hint"}
+                 | {"ok": False, "stage", "error", "hint", "failures", "measurements"?}
   worker → parent at boot: {"ready": True}
+
+`trace_path` is a file the parent can read after it kills this worker on a
+timeout: faulthandler dumps the stack there just before the deadline, so the
+report can name the node line that was still running.
 """
 
 from __future__ import annotations
 
+import faulthandler
 import json
 import os
 import time
@@ -53,13 +58,15 @@ def _registry_namespace() -> dict[str, object]:
 
 def _namespace(job: dict) -> dict[str, object]:
     """Exec namespace for every part in this job: the registry classes, plus
-    `load_import` bound to the job's import directory when it has one."""
+    `load_import` bound to the job's import directory (and `cut_joints`, which
+    cuts joint features into what it loads) when it has one."""
     ns: dict[str, object] = _registry_namespace()
     import_dir = job.get("import_dir")
     if import_dir:
-        from .meshpart import load_import_part
+        from .meshpart import cut_joints, load_import_part
 
         ns["load_import"] = lambda name, scale=1.0: load_import_part(import_dir, name, scale)
+        ns["cut_joints"] = cut_joints
     return ns
 
 
@@ -67,11 +74,17 @@ def _build(part: dict, ns: dict[str, object]):
     """G0 then G1: the only way a shape is ever produced here."""
     from . import gates
 
-    return gates.g1_execute(gates.g0_scan(part["code"]), part.get("params", {}), ns)
+    return gates.g1_execute(gates.g0_scan(part["code"]), part.get("params", {}), ns, part["code"])
 
 
-def worker_main(conn: Connection) -> None:
+def _write_json(path: str, data: object) -> None:
+    with open(path, "w", encoding="utf8") as f:
+        json.dump(data, f, indent=1)
+
+
+def worker_main(conn: Connection, trace_path: str) -> None:
     _apply_rlimits()
+    trace = open(trace_path, "w", encoding="utf8")  # noqa: SIM115 — lives as long as the worker
 
     # Pay the heavy OCP import once, at spawn — requests then run warm.
     from . import gates  # noqa: F401 — also pulls build123d via export path lazily
@@ -88,6 +101,11 @@ def worker_main(conn: Connection) -> None:
             return
 
         started = time.monotonic()
+        measurements = None
+        trace.seek(0)
+        trace.truncate()
+        if job.get("trace_after_s"):
+            faulthandler.dump_traceback_later(job["trace_after_s"], file=trace)
         try:
             if "import_job" in job:
                 from .meshpart import run_import
@@ -95,12 +113,22 @@ def worker_main(conn: Connection) -> None:
                 conn.send(run_import(job["import_job"] | {"out_dir": job["out_dir"]}))
                 continue
 
+            if "mesh_fit" in job:
+                from .meshpart import run_mesh_fit
+
+                conn.send(run_mesh_fit(job["mesh_fit"] | {"out_dir": job["out_dir"]}))
+                continue
+
             if "export" in job:
                 from .exporters import export_parts
 
                 spec = job["export"]
                 ns = _namespace(job)
-                shapes = [(_build(part, ns), part.get("matrix", [])) for part in spec["parts"]]
+                shapes = [
+                    {"shape": _build(part, ns), "name": part.get("name") or f"part-{i + 1}",
+                     "matrices": part.get("matrices") or [part.get("matrix", [])]}
+                    for i, part in enumerate(spec["parts"])
+                ]
                 os.makedirs(job["out_dir"], exist_ok=True)
                 out = os.path.join(job["out_dir"], f"export.{spec['format']}")
                 info = export_parts(shapes, out, spec["format"])
@@ -110,21 +138,55 @@ def worker_main(conn: Connection) -> None:
                            "elapsed_ms": int((time.monotonic() - started) * 1000)})
                 continue
 
+            if "vendor" in job:
+                from .dfm_process import g4c_process
+                from .vendor import vendor_package
+
+                spec = job["vendor"]
+                shape = _build(job, _namespace(job))
+                dfm = None
+                if spec.get("process"):
+                    dfm, dfm_failures = g4c_process(shape, spec["process"])
+                    if dfm_failures:  # the package exists only for a part that passes
+                        f = dfm_failures[0]
+                        raise gates.GateError(f["stage"], f["error"], f["hint"], failures=dfm_failures)
+                info = vendor_package(shape, spec.get("ports") or [], spec.get("meta") or {}, job["out_dir"],
+                                      spec.get("measured"), dfm)
+                conn.send({"ok": True, "vendor": info, "elapsed_ms": int((time.monotonic() - started) * 1000)})
+                continue
+
             if "clash" in job:
                 ns = _namespace(job)
-                posed = [(part.get("key", "?"), _build(part, ns), part.get("matrix", []))
-                         for part in job["clash"]]
-                conn.send({"ok": True, "clash": gates.g5_clash(posed),
+                # Placed copies of one node share code and params: build once.
+                built: dict[str, object] = {}
+                posed = []
+                for part in job["clash"]:
+                    spec = json.dumps([part.get("code"), part.get("params")], sort_keys=True, default=str)
+                    if spec not in built:
+                        built[spec] = _build(part, ns)
+                    posed.append((part.get("key", "?"), built[spec], part.get("matrix", [])))
+                report = gates.g5_clash(posed, job.get("allow"), job.get("contacts"), job.get("sweeps"))
+                conn.send({"ok": True, "clash": report,
+                           "elapsed_ms": int((time.monotonic() - started) * 1000)})
+                continue
+
+            if "silhouette" in job:
+                from .silhouette import silhouette_report
+
+                ns = _namespace(job)
+                built = {}
+                posed = []
+                for part in job["silhouette"]:
+                    spec = json.dumps([part.get("code"), part.get("params")], sort_keys=True, default=str)
+                    if spec not in built:
+                        built[spec] = _build(part, ns)
+                    posed.append((part.get("key", "?"), built[spec], part.get("matrix", [])))
+                conn.send({"ok": True, "silhouette": silhouette_report(posed, job.get("views") or []),
                            "elapsed_ms": int((time.monotonic() - started) * 1000)})
                 continue
 
             shape = _build(job, _namespace(job))
             measurements = gates.g2_validity(shape)
-            # Contract gates run only when declarations are supplied (verify pass).
-            if job.get("ports"):
-                measurements["ports"] = gates.g3_ports(shape, job["ports"])
-            if job.get("envelope"):
-                measurements["envelope"] = gates.g4_envelope(shape, job["envelope"])
             # advisory DfAM signal (CADClamp-derived) — never a gate
             try:
                 from .printability import measure_printability
@@ -133,25 +195,41 @@ def worker_main(conn: Connection) -> None:
             except Exception:  # noqa: BLE001
                 pass
             out_dir = job["out_dir"]
-            os.makedirs(out_dir, exist_ok=True)
             # A render request wants the picture, not the gate report.
             if job.get("render_views"):
                 from .render import render_sheet
 
+                os.makedirs(out_dir, exist_ok=True)
                 render_info = render_sheet(shape, os.path.join(out_dir, "sheet.png"), job["render_views"])
                 conn.send({"ok": True, "render": render_info, "measurements": measurements,
                            "elapsed_ms": int((time.monotonic() - started) * 1000)})
                 continue
-            gates.export_glb(shape, os.path.join(out_dir, "mesh.glb"))
-            with open(os.path.join(out_dir, "measurements.json"), "w", encoding="utf8") as f:
-                json.dump(measurements, f, indent=1)
+            # The mesh depends on code+params only, so it is written under the
+            # contract-free key BEFORE the contract gates: the viewport asks
+            # without ports and must find it, even for a part whose ports fail.
+            glb_dir = job.get("glb_dir") or out_dir
+            os.makedirs(glb_dir, exist_ok=True)
+            gates.export_glb(shape, os.path.join(glb_dir, "mesh.glb"))
+            _write_json(os.path.join(glb_dir, "measurements.json"), measurements)
+            # Contract gates run only when declarations are supplied (verify pass).
+            if (job.get("ports") or job.get("envelope") or job.get("assertions") or job.get("process")
+                    or job.get("solids") is not None):
+                measurements |= gates.contract_gates(shape, job.get("ports") or [], job.get("envelope") or [],
+                                                     job.get("assertions") or [], solids=job.get("solids"),
+                                                     process=job.get("process"))
+                os.makedirs(out_dir, exist_ok=True)
+                _write_json(os.path.join(out_dir, "measurements.json"), measurements)
             conn.send({
                 "ok": True,
                 "measurements": measurements,
                 "elapsed_ms": round((time.monotonic() - started) * 1000),
             })
         except gates.GateError as err:
-            conn.send({"ok": False, "stage": err.stage, "error": err.error, "hint": err.hint})
+            reply = {"ok": False, "stage": err.stage, "error": err.error, "hint": err.hint,
+                     "failures": err.failures}
+            if measurements is not None:  # G0–G2 passed; only the contract failed
+                reply["measurements"] = measurements
+            conn.send(reply)
         except Exception as err:  # noqa: BLE001 — unexpected, still a structured reply
             conn.send({
                 "ok": False,
@@ -159,3 +237,5 @@ def worker_main(conn: Connection) -> None:
                 "error": f"unexpected kernel error: {type(err).__name__}: {err}",
                 "hint": "",
             })
+        finally:
+            faulthandler.cancel_dump_traceback_later()

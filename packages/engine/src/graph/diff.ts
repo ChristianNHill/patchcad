@@ -44,6 +44,22 @@ export function contractHash(c: Contract): string {
   return hashValue({ ...rest, params });
 }
 
+/** A payload's named `ports` entries apart from everything else in it. Any
+ *  payload without a well-formed `ports` array is all `rest`. */
+function splitPorts(payload: unknown): { ports: Map<string, unknown>; rest: unknown } {
+  const ports = new Map<string, unknown>();
+  if (!payload || typeof payload !== "object" || !Array.isArray((payload as { ports?: unknown }).ports)) {
+    return { ports, rest: payload };
+  }
+  const { ports: list, ...rest } = payload as { ports: unknown[] };
+  for (const p of list) {
+    const name = (p as { name?: unknown } | null)?.name;
+    if (typeof name !== "string" || ports.has(name)) return { ports: new Map(), rest: payload };
+    ports.set(name, p);
+  }
+  return { ports, rest };
+}
+
 export function diffContract(before: Contract, after: Contract): ContractDiff {
   const notes: string[] = [];
   const beforeShape = shapeOf(before);
@@ -70,13 +86,24 @@ export function diffContract(before: Contract, after: Contract): ContractDiff {
       notes.push(`port removed: ${key}`);
     }
   }
-  // Payload shape changes (e.g. exports/propsType for code) can break
-  // consumers of ANY port — treat as all provides changed.
-  if (hashValue(beforeShape.payload) !== hashValue(afterShape.payload)) {
+  // Payload changes outside its per-port entries (e.g. exports/propsType for
+  // code) can break consumers of ANY port — treat as all provides changed. A
+  // payload that declares `ports` (CAD poses and diameters) is diffed entry by
+  // entry, so resizing one hole dirties that hole's consumers only.
+  const was = splitPorts(beforeShape.payload);
+  const now = splitPorts(afterShape.payload);
+  const touched = (p: string) => {
+    if (!shapeChangedProvides.includes(p)) shapeChangedProvides.push(p);
+  };
+  if (hashValue(was.rest) !== hashValue(now.rest)) {
     notes.push("payload changed");
-    for (const p of afterProvides.keys()) {
-      if (!shapeChangedProvides.includes(p)) shapeChangedProvides.push(p);
-    }
+    for (const p of afterProvides.keys()) touched(p);
+  }
+  for (const name of new Set([...was.ports.keys(), ...now.ports.keys()])) {
+    if (hashValue(was.ports.get(name) ?? null) === hashValue(now.ports.get(name) ?? null)) continue;
+    notes.push(`port geometry changed: ${name}`);
+    // A requires-side entry moves only this node's own mating feature.
+    if (afterProvides.has(name)) touched(name);
   }
 
   return { changed: valueChanged, shapeChanged, shapeChangedProvides, notes };

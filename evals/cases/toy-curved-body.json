@@ -1,0 +1,14 @@
+{
+  "id": "toy-curved-body",
+  "prompt": "a chunky toy car about 120mm long with a smooth lofted curved body and four identical separate wheels that press onto two 5mm axles",
+  "why": "Curved geometry plus instancing. A lofted body is where the 20s build budget dies (the helicopter's collapsed body timed out 5/5), so allReady is the assertion with teeth here. The wheels should be ONE node placed four times, which nodes.max catches when they are not. G3 measures the wheel bores against the axle; G5 clashes the posed wheels against the body. Nothing measures that the body is curved rather than boxy: that needs G6.",
+  "expect": {
+    "nodes": { "min": 3, "max": 6 },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "ports": [
+      { "anyType": ["BORE", "SHAFT", "CLEARANCE_HOLE"], "minCount": 1, "diameter": 5.0, "tol": 0.5 }
+    ],
+    "assemblyProblems": 0
+  }
+}

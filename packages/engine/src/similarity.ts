@@ -36,6 +36,75 @@ export function contractSimilarity(target: Contract, candidate: Contract): numbe
   return shared * 10 - paramGap;
 }
 
+const STOPWORDS = new Set([
+  "the", "and", "with", "for", "from", "into", "onto", "that", "this", "its", "one", "two",
+  "part", "node", "each", "has", "are", "mm",
+]);
+
+/** Content words of a title or spec, crudely singular: "holes" meets "hole". */
+export function keywords(text: string | undefined): Set<string> {
+  const out = new Set<string>();
+  for (const w of (text ?? "").toLowerCase().split(/[^a-z0-9]+/)) {
+    if (w.length < 3 || STOPWORDS.has(w) || /^\d/.test(w)) continue;
+    out.add(w.length > 3 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w);
+  }
+  return out;
+}
+
+/** Modelling techniques a part's code uses, or its spec asks for. Two plates
+ *  with the same ports and nothing else alike are not near: a lofted pod and
+ *  a flat bracket can share every port type. */
+const FEATURES: [tag: string, re: RegExp][] = [
+  ["loft", /\bloft/i],
+  ["revolve", /\brevolv/i],
+  ["sweep", /\bsweep|\bswept/i],
+  ["shell", /\bshell|\boffset\(|\bhollow/i],
+  ["fillet", /\bfillet/i],
+  ["threads", /\bthread|IsoThread/i],
+];
+
+export function featureTags(text: string | undefined): Set<string> {
+  return new Set(FEATURES.filter(([, re]) => re.test(text ?? "")).map(([tag]) => tag));
+}
+
+const overlap = (a: Set<string>, b: Set<string>) => [...a].filter((x) => b.has(x)).length;
+
+/** The node a library entry is being matched against. */
+export interface SimilarityTarget {
+  contract: Contract;
+  title?: string;
+  spec?: string;
+}
+
+/**
+ * How much a stored node looks like the one being cooked. What the part IS
+ * leads — shared words between titles and summaries, then shared modelling
+ * techniques — and a first-try pass breaks near-ties toward code that is easy
+ * to get right. Port multisets come last: for CAD nearly every part has a
+ * hole and a face, so ports alone rank almost arbitrarily.
+ */
+export function nodeSimilarity(target: SimilarityTarget, candidate: LibraryListing): number {
+  const want = `${target.title ?? ""} ${target.contract.summary} ${target.spec ?? ""}`;
+  const have = `${candidate.title} ${candidate.contract?.summary ?? ""}`;
+  const words = overlap(keywords(want), keywords(have));
+  const features = overlap(featureTags(want), featureTags(candidate.code));
+  const firstPass = candidate.attemptsToPass === 1 ? 1 : 0;
+  const ports = candidate.contract ? contractSimilarity(target.contract, candidate.contract) : 0;
+  return words * 10 + features * 5 + firstPass * 3 + ports / 10;
+}
+
+/** Below this share of the shorter title's words in common, a stored node is
+ *  a different part, whatever its ports say. */
+export const NEAR_TITLE_MIN = 0.5;
+
+/** Overlap of two titles' keywords, as a share of the shorter one. */
+export function titleSimilarity(a: string, b: string): number {
+  const ka = keywords(a);
+  const kb = keywords(b);
+  const shorter = Math.min(ka.size, kb.size);
+  return shorter === 0 ? 0 : overlap(ka, kb) / shorter;
+}
+
 const numeric = (p: ParamDecl): p is Extract<ParamDecl, { type: "number" }> => p.type === "number";
 
 /**
@@ -91,11 +160,14 @@ export async function findReusable(opts: {
   backendId: string;
   contract: Contract;
   kind: string;
+  /** The cooking node's title: a candidate must read as the same part. */
+  title: string;
+  spec?: string;
   /** Contract hashes to skip — the exact-hash path has already tried its own. */
   exclude: Set<string>;
   limit?: number;
 }): Promise<ReuseCandidate[]> {
-  const { library, backendId, contract, kind, exclude } = opts;
+  const { library, backendId, contract, kind, title, exclude } = opts;
   if (!library.list) return [];
 
   let listing: LibraryListing[];
@@ -110,13 +182,17 @@ export async function findReusable(opts: {
       (e) =>
         e.contract !== undefined &&
         e.code.length > 0 &&
+        e.kind === kind &&
         !exclude.has(e.contractHash) &&
+        // Gates measure ports, not purpose: a stored lid passes a box's
+        // contract well enough to commit as the wrong object.
+        titleSimilarity(title, e.title) >= NEAR_TITLE_MIN &&
         paramsCompatible(contract, e.contract) &&
         paramsInRange(contract, e.contract),
     )
-    .map((e) => ({ entry: e, score: contractSimilarity(contract, e.contract!) }))
     // Nothing in common is not a near miss, it is a different part.
-    .filter((c) => c.score > 0)
+    .filter((e) => contractSimilarity(contract, e.contract!) > 0)
+    .map((e) => ({ entry: e, score: nodeSimilarity({ contract, title, spec: opts.spec }, e) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, opts.limit ?? 2);
 }

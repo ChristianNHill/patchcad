@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { NodeStatus, CookFailure, GraphDoc } from "./graph.js";
+import { NodeStatus, CookFailure, GraphDoc, NodeRecord, ProjectLedger } from "./graph.js";
 
 /**
  * Engine → UI event stream (relayed over WebSocket by the server).
@@ -35,6 +35,13 @@ export const EngineEvent = z.discriminatedUnion("type", [
     version: z.number(),
   }),
   z.object({
+    /** The whole record after a change the UI would otherwise miss: a commit's
+     *  version/history/measurements, or params a T1 binding rewrote. */
+    type: z.literal("node:updated"),
+    projectId: z.string(),
+    node: NodeRecord,
+  }),
+  z.object({
     type: z.literal("job:log"),
     projectId: z.string(),
     nodeId: z.string(),
@@ -45,11 +52,27 @@ export const EngineEvent = z.discriminatedUnion("type", [
     projectId: z.string(),
     status: z.enum(["clean", "checking", "failing"]),
     problems: z.array(z.string()).default([]),
+    /** The attributed subset of `problems`: which two parts, what kind, and
+     *  the number measured against the one expected. */
+    findings: z
+      .array(
+        z.object({
+          nodeA: z.string(),
+          nodeB: z.string(),
+          kind: z.string(),
+          measured: z.number(),
+          expected: z.number(),
+          message: z.string(),
+        }),
+      )
+      .optional(),
   }),
   z.object({
     type: z.literal("cost:update"),
     projectId: z.string(),
     nodeId: z.string().optional(),
+    /** Set instead of nodeId when the spend is the project's, not a node's. */
+    bucket: ProjectLedger.keyof().optional(),
     inputTokens: z.number(),
     outputTokens: z.number(),
     usd: z.number(),

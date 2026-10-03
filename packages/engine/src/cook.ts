@@ -1,10 +1,18 @@
 import { hashValue } from "@patchcad/shared";
-import type { DomainBackend, GenerateCtx, RepairCtx, Workspace } from "./backend.js";
+import type {
+  CheckResult,
+  DomainBackend,
+  GenerateCtx,
+  PromptSpec,
+  RepairCtx,
+  VerifyResult,
+  Workspace,
+} from "./backend.js";
 import { selectExemplars } from "./exemplars.js";
 import { findReusable } from "./similarity.js";
-import { inspectNode } from "./inspect.js";
-import type { LlmImage, LlmProvider } from "./llm.js";
-import type { NodeLibrary } from "./library.js";
+import { inspectFeedback, inspectNode } from "./inspect.js";
+import { LlmCallError, type LlmImage, type LlmProvider, type LlmUsage } from "./llm.js";
+import { codeDiff, type NodeLibrary } from "./library.js";
 import type { GraphStore } from "./graph/store.js";
 
 /**
@@ -21,6 +29,24 @@ import type { GraphStore } from "./graph/store.js";
  *  repairs. Backends override via `DomainBackend.maxAttempts`. */
 const DEFAULT_MAX_ATTEMPTS = 3;
 
+/** Repair rounds in a row that fail to beat the best score before the next
+ *  round starts over from a fresh generate. */
+const STALE_REPAIRS = 2;
+
+/** Failure stages where the part built a shape worth showing the repair. Stage
+ *  names are backend-defined: CAD's port probes (G3) and envelope (G4), plus
+ *  the engine's own looks-wrong verdict. A backend whose stages never match
+ *  simply repairs text-only. */
+const RENDER_STAGES = new Set(["G3", "G4", "LOOKS"]);
+
+type Failure = { stage: string; report: string };
+type Draft = { code: string; testCode: string };
+/** One generation round that did not commit. */
+type Attempt = Draft & { attempt: number; failure: Failure; score?: number };
+
+/** Unscored attempts rank equal, so ties go to the latest. */
+const rank = (a: Attempt) => a.score ?? 0;
+
 export interface CookDeps {
   store: GraphStore;
   backend: DomainBackend<unknown>;
@@ -30,11 +56,15 @@ export interface CookDeps {
   library?: NodeLibrary;
   signal?: AbortSignal;
   /**
-   * Look at each node after it passes its gates, and allow ONE rewrite if it
-   * is plainly the wrong object. Off by default: it costs a render plus a
-   * vision call per node, and the gates already catch everything measurable.
+   * Look at each node after it passes its gates, asking its contract's
+   * `visualChecks`, and allow ONE rewrite if any answers no. Off by default: it
+   * costs a render plus a vision call per node, and the gates already catch
+   * everything measurable.
    */
   inspect?: boolean;
+  /** Reads an image a user attached to a node's thread (ChatMessage.refs),
+   *  so the generator sees it. Absent = such images are not sent. */
+  loadRef?: (name: string) => Promise<LlmImage | null>;
 }
 
 export interface CookSummary {
@@ -67,7 +97,7 @@ export async function cookNodes(deps: CookDeps, nodeIds: string[]): Promise<Cook
   const needsModel: string[] = [];
   for (const id of nodeIds) (isDeterministic(id) ? noModel : needsModel).push(id);
   const queue = [...noModel, ...needsModel];
-  const workers = Math.max(1, Math.min(4, queue.length));
+  const workers = Math.max(1, Math.min(deps.backend.generation?.concurrency ?? 4, queue.length));
 
   for (const id of queue) deps.store.setStatus(id, "queued");
 
@@ -95,14 +125,46 @@ export async function cookNodes(deps: CookDeps, nodeIds: string[]): Promise<Cook
   await deps.backend.assemble(graph, deps.workspace);
   deps.store.emit({ type: "checker:status", projectId: graph.id, status: "checking", problems: [] });
   const check = await deps.backend.globalCheck(graph, deps.workspace);
+  applyCheck(deps.store, check);
   deps.store.emit({
     type: "checker:status",
     projectId: graph.id,
     status: check.ok ? "clean" : "failing",
     problems: check.problems,
+    findings: check.findings ?? [],
   });
 
   return summary;
+}
+
+/** statusDetail.stage of a node blocked by the assembly check, not its own gates. */
+export const ASSEMBLY_STAGE = "assembly";
+
+/**
+ * An assembly failure BLOCKS the parts it is attributed to. Before this a
+ * clash was a line in the problem bar while both parts sat green, so nothing
+ * said which part to open, and an export shipped the overlap. Each attributed
+ * ready node goes to error_contract — the fault is a pose or a mate, which is
+ * the contract's business, not the code's — and one the check no longer blames
+ * goes back to ready. Nothing is re-cooked: the user decides whether that is a
+ * T0 nudge, a reprompt or a contract edit, so no model is spent unasked.
+ * Only nodes this function blocked are released; a node its own cook failed
+ * keeps its status.
+ */
+export function applyCheck(store: GraphStore, check: CheckResult): void {
+  const blamed = new Map<string, string[]>();
+  for (const f of check.findings ?? []) {
+    for (const id of new Set([f.nodeA, f.nodeB])) blamed.set(id, [...(blamed.get(id) ?? []), f.message]);
+  }
+  for (const n of Object.values(store.doc.nodes)) {
+    const message = blamed.get(n.id)?.join("\n");
+    const blockedHere = n.status === "error_contract" && n.statusDetail?.stage === ASSEMBLY_STAGE;
+    if (message && (n.status === "ready" || (blockedHere && n.statusDetail?.message !== message))) {
+      store.setStatus(n.id, "error_contract", { stage: ASSEMBLY_STAGE, message, attribution: "contract-infeasible" });
+    } else if (!message && blockedHere) {
+      store.setStatus(n.id, "ready");
+    }
+  }
 }
 
 export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void> {
@@ -139,21 +201,14 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
     }
   };
 
-  /** Keep what a passing verify measured. Everything here is advisory display
-   *  data — it never feeds cooking, so it lives on the node, well clear of the
-   *  contract hash. Stamped with the params in force so a later slider drag
-   *  (which re-executes but does not re-probe) cannot pass stale numbers off
-   *  as current. */
-  const storeMeasurements = (measurements: unknown) => {
-    if (measurements === undefined || measurements === null) return;
-    const node = store.node(nodeIdValue);
-    const paramsHash = hashValue(node.params);
-    store.applyOp((g) => {
-      g.nodes[nodeIdValue]!.measurements = { version: node.version, paramsHash, data: measurements };
-    });
-  };
-
-  const commit = (cause: string) => {
+  /** Bump the version and record why. `measurements` is what a passing verify
+   *  measured: advisory display data that never feeds cooking, so it lives on
+   *  the node, well clear of the contract hash. It is stamped with the new
+   *  version and the params in force, so a later slider drag (which
+   *  re-executes but does not re-probe) cannot pass stale numbers off as
+   *  current. Written in the same op as the version, BEFORE `node:committed`:
+   *  the server reads the record on that event. */
+  const commit = (cause: string, measurements: unknown) => {
     const node = store.node(nodeIdValue);
     if (node.contract.hash !== baseContractHash || node.version !== baseVersion) {
       throw new Error("superseded: contract or version changed mid-cook");
@@ -169,6 +224,9 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
           cause,
           at: Date.now(),
         });
+        if (measurements !== undefined && measurements !== null) {
+          n.measurements = { version: n.version, paramsHash: hashValue(n.params), data: measurements };
+        }
       },
       { immediate: true },
     );
@@ -181,35 +239,108 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
     });
   };
 
+  const bill = (usage: LlmUsage) => {
+    store.applyOp((g) => {
+      const n = g.nodes[nodeIdValue]!;
+      n.cost.calls += 1;
+      n.cost.inputTokens += usage.inputTokens;
+      n.cost.outputTokens += usage.outputTokens;
+      n.cost.usd += usage.usd;
+    });
+    store.emit({
+      type: "cost:update",
+      projectId,
+      nodeId: nodeIdValue,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      usd: usage.usd,
+    });
+  };
+
+  /** The failed visual checks, or null for anything else — including every
+   *  failure mode of looking itself, since a render or vision hiccup must not
+   *  cost a part that already verified. A contract with no `visualChecks` is
+   *  not looked at: with no question there is nothing to judge against but
+   *  the judge's taste, and no render is spent finding that out. */
+  const inspectArtifact = async () => {
+    try {
+      const node = store.node(nodeIdValue);
+      const checks = (node.contract.payload as { visualChecks?: unknown } | undefined)?.visualChecks;
+      const questions = Array.isArray(checks) ? checks.filter((q): q is string => typeof q === "string" && q.trim() !== "") : [];
+      if (questions.length === 0) return null;
+      const image = await backend.renderArtifact!(node, workspace);
+      if (!image) return null;
+      const result = await inspectNode({
+        provider,
+        node: { title: node.title, spec: node.spec, kind: node.kind },
+        questions,
+        image,
+        signal: deps.signal,
+      });
+      bill(result.usage);
+      return result.failed.length > 0 ? result.failed : null;
+    } catch {
+      return null;
+    }
+  };
+
   /** Shared no-LLM commit path: registry and library artifacts still run the
    * full execute+verify gauntlet before committing. Returns the failure
-   * report on a gate miss, null on success. */
-  const tryPrebuilt = async (code: string, testCode: string, cause: string, dts?: string): Promise<string | null> => {
+   * report on a gate miss, null on success. `look` adds the visual checks
+   * before the commit, for code written for some OTHER part. */
+  const tryPrebuilt = async (
+    code: string,
+    testCode: string,
+    cause: string,
+    dts?: string,
+    look = false,
+  ): Promise<string | null> => {
+    // After an earlier prebuilt missed (repairing), building is reached via
+    // queued: repairing → building is not a legal transition.
+    if (store.node(nodeIdValue).status === "repairing") store.setStatus(nodeIdValue, "queued");
     store.setStatus(nodeIdValue, "building");
     store.applyOp((g) => {
       const n = g.nodes[nodeIdValue]!;
       n.artifact = { code, testCode, dts, hash: hashValue(code) };
     });
-    const exec = await backend.execute(store.node(nodeIdValue), workspace);
+    const exec = await backend.execute(store.node(nodeIdValue), workspace, graph);
     let failure: { stage: string; report: string } | null = exec.ok ? null : exec;
     if (exec.ok) {
       store.setStatus(nodeIdValue, "verifying");
       const verify = await backend.verify(store.node(nodeIdValue), graph, workspace);
-      if (verify.ok) {
+      const verdict = verify.ok && look && deps.inspect && backend.renderArtifact ? await inspectArtifact() : null;
+      if (verify.ok && !verdict) {
         await storeInterface();
-        commit(cause);
-        storeMeasurements(verify.measurements);
+        commit(cause, verify.measurements);
         await backend.previewAdapter?.hotSwap(store.doc, workspace, [nodeIdValue]);
         log(`ready (v${store.node(nodeIdValue).version}, ${cause})`);
         return null;
       }
-      failure = verify;
+      failure = verdict ? { stage: "LOOKS", report: inspectFeedback(verdict) } : (verify as Failure);
     }
     log(`${cause} artifact failed ${failure!.stage}: ${failure!.report.slice(0, 200)}`);
     // Fall through to generation (repairing → generating is legal).
     store.setStatus(nodeIdValue, "repairing");
     return `${failure!.stage}: ${failure!.report}`;
   };
+
+  // -- preparation: e.g. a generated mesh the deterministic artifact loads --
+  const preparing = backend.prepareArtifact?.(store.node(nodeIdValue), workspace, graph, deps.signal, log);
+  if (preparing) {
+    store.setStatus(nodeIdValue, "generating");
+    try {
+      const cost = await preparing;
+      if (cost) bill({ inputTokens: 0, outputTokens: 0, usd: cost.usd });
+    } catch (err) {
+      if (deps.signal?.aborted) store.setStatus(nodeIdValue, "cancelled");
+      else store.setStatus(nodeIdValue, "error_code", {
+        stage: "prepare",
+        message: (err as Error).message.slice(0, 1800),
+        attribution: "unknown",
+      });
+      throw err;
+    }
+  }
 
   // -- registry fast path: domain-deterministic parts never touch an LLM --
   const prebuilt = backend.deterministicArtifact?.(store.node(nodeIdValue));
@@ -226,13 +357,30 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
     throw new Error(`${nodeIdValue}: registry artifact failed gates`);
   }
 
+  // -- regate: a dirty wave re-checks what the node already has --
+  // A neighbor's contract moved, or this node's own did without a word from
+  // the user. The part in hand may still satisfy every gate against the
+  // contract as it is now — then it commits and no model is asked. Skipped
+  // when the artifact is not the committed one (a failed draft) or the user
+  // has asked for something since that commit (a reprompt wants new code).
+  const held = store.node(nodeIdValue);
+  const lastCommit = held.history.at(-1);
+  const lastAsk = held.thread.filter((m) => m.role === "user").at(-1)?.at ?? 0;
+  if (held.artifact && lastCommit?.artifactHash === held.artifact.hash && lastAsk <= lastCommit.at) {
+    log("re-checking the existing part against the current contract — no LLM call");
+    const { code, testCode, dts } = held.artifact;
+    if ((await tryPrebuilt(code, testCode, "regate", dts)) === null) return;
+  }
+
+  const reused = (hash: string) => void deps.library?.recordReuse?.(backend.id, hash).catch(() => {});
+
   // -- library fast path: exact contract-hash hit skips the generator --
   const unspecialized = store.node(nodeIdValue).thread.length === 0;
   if (deps.library && unspecialized) {
     const hit = await deps.library.lookup(backend.id, baseContractHash);
     if (hit) {
       log("library hit — reusing verified code, no LLM call");
-      if ((await tryPrebuilt(hit.code, hit.testCode, "library", hit.dts)) === null) return;
+      if ((await tryPrebuilt(hit.code, hit.testCode, "library", hit.dts)) === null) return reused(baseContractHash);
       log("library entry failed re-verification — regenerating");
     }
 
@@ -248,11 +396,15 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
       backendId: backend.id,
       contract: store.node(nodeIdValue).contract,
       kind: store.node(nodeIdValue).kind,
+      title: store.node(nodeIdValue).title,
+      spec: store.node(nodeIdValue).spec,
       exclude: tried,
     })) {
       log(`trying a near-match from the library: "${cand.entry.title}" — no LLM call`);
-      const failed = await tryPrebuilt(cand.entry.code, cand.entry.testCode, "library-near", cand.entry.dts);
-      if (failed === null) return;
+      // Always looked at when looking is on: these gates were passed by code
+      // written for a different part, and only a picture says it is this one.
+      const failed = await tryPrebuilt(cand.entry.code, cand.entry.testCode, "library-near", cand.entry.dts, true);
+      if (failed === null) return reused(cand.entry.contractHash);
       log(`"${cand.entry.title}" did not satisfy this contract (${failed.slice(0, 120)})`);
     }
   }
@@ -273,6 +425,11 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
     log(`${exemplars.length} library exemplar(s): ${exemplars.map((e) => e.title).join(", ")}`);
   }
 
+  const refNames = store.node(nodeIdValue).thread.flatMap((m) => m.refs ?? []);
+  const refImages = deps.loadRef
+    ? (await Promise.all(refNames.map((r) => deps.loadRef!(r).catch(() => null)))).filter((i): i is LlmImage => i !== null)
+    : [];
+
   const makeCtx = (): GenerateCtx<unknown> => {
     const node = store.node(nodeIdValue);
     const views = store.contractViews(nodeIdValue);
@@ -290,130 +447,73 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
         thread: node.thread,
         currentCode: node.artifact?.code,
       },
+      ...(refImages.length ? { refImages } : {}),
       upstream: views.upstream,
       downstream: views.downstream,
+      paramValues: Object.fromEntries(
+        Object.values(store.doc.nodes).map((n) => [
+          n.id,
+          { ...Object.fromEntries(n.contract.params.map((p) => [p.name, p.default])), ...n.params },
+        ]),
+      ),
     };
   };
 
-  const failures: { stage: string; report: string }[] = [];
-  let code = "";
-  let testCode = "";
+  const failures: Failure[] = [];
   /** Appearance buys ONE rewrite, never more: a model judging a picture is not
    *  an oracle, and the code in hand already passes every gate. */
   let inspectRetries = 0;
 
-  /** Blocking verdict, or null for anything else — including every failure
-   *  mode of looking itself, since a render or vision hiccup must not cost a
-   *  part that already verified. */
-  const inspectArtifact = async () => {
-    try {
-      const image = await backend.renderArtifact!(store.node(nodeIdValue), workspace);
-      if (!image) return null;
-      const node = store.node(nodeIdValue);
-      const verdict = await inspectNode({
-        provider,
-        node: { title: node.title, spec: node.spec, kind: node.kind },
-        contractSummary: node.contract.summary,
-        image,
-        signal: deps.signal,
-      });
-      return !verdict.looksRight && verdict.severity === "blocking" ? verdict : null;
-    } catch {
-      return null;
-    }
-  };
-
+  const gen = backend.generation;
   const maxAttempts = backend.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    if (deps.signal?.aborted) throw new Error("cancelled");
-
-    // -- generate (or repair) --
-    // Two hops, deliberately: building/verifying → generating is NOT a legal
-    // transition, so a repair has to route through "repairing" to get back to
-    // "generating". Collapsing these throws "illegal status transition".
-    store.setStatus(nodeIdValue, attempt === 1 ? "generating" : "repairing");
-    if (attempt > 1) store.setStatus(nodeIdValue, "generating");
-    // Show the model what it actually built. Only worth doing on a repair,
-    // and only when the artifact got far enough to have a shape — a part that
-    // failed to execute has nothing to look at. Best-effort throughout:
-    // a render failure must never cost the repair round itself.
-    let render: LlmImage | undefined;
-    if (attempt > 1 && backend.renderArtifact) {
-      try {
-        render = (await backend.renderArtifact(store.node(nodeIdValue), workspace)) ?? undefined;
-        if (render) log("attached a render of the failed part to the repair");
-      } catch {
-        /* advisory */
-      }
+  /** `n` parallel completions of one prompt. Every call that returns is billed;
+   *  the round fails only if NONE of them yields code — one rate-limited draft
+   *  out of three is not a reason to give up the other two. */
+  const draft = async (prompt: PromptSpec, attempt: number, n: number): Promise<Draft[]> => {
+    // Owned by the backend: what a part costs to write is a fact about the
+    // domain, and a number picked here against one adapter's default is a
+    // reduction against another's. Repairs get the SAME tier as the first
+    // attempt unless the backend asks to escalate — raising effort against an
+    // unchanged output ceiling is how a repair spends its whole budget thinking
+    // and returns no text at all (`stop: max_tokens`), so an escalation carries
+    // its own ceiling. Depth on a repair comes from the failure report and the
+    // render.
+    const tier = gen?.escalate && attempt >= gen.escalate.fromAttempt ? gen.escalate : gen;
+    const settled = await Promise.allSettled(
+      Array.from({ length: n }, () =>
+        provider.complete({
+          role: prompt.role,
+          label: `${prompt.role}:${nodeIdValue}`,
+          system: prompt.system,
+          messages: prompt.messages,
+          schema: prompt.schema,
+          effort: tier?.effort,
+          maxTokens: tier?.maxTokens,
+          signal: deps.signal,
+        }),
+      ),
+    );
+    const results = settled.flatMap((s) => (s.status === "fulfilled" ? [s.value] : []));
+    for (const r of results) bill(r.usage);
+    for (const s of settled) {
+      if (s.status === "rejected" && s.reason instanceof LlmCallError && s.reason.usage) bill(s.reason.usage);
     }
-
-    const prompt =
-      attempt === 1
-        ? backend.buildGeneratePrompt(makeCtx())
-        : backend.buildRepairPrompt({
-            ...makeCtx(),
-            failedCode: code,
-            failure: failures.at(-1)!,
-            // Everything before the latest, so the model can see which
-            // approaches are already spent rather than rediscovering them.
-            priorFailures: failures.slice(0, -1),
-            attempt,
-            maxAttempts,
-            render,
-          } as RepairCtx<unknown>);
-
-    log(attempt === 1 ? "generating…" : `repair attempt ${attempt}…`);
-    let result;
-    try {
-      result = await provider.complete({
-        role: prompt.role,
-        label: `${prompt.role}:${nodeIdValue}`,
-        system: prompt.system,
-        messages: prompt.messages,
-        schema: prompt.schema,
-        // Owned by the backend: what a part costs to write is a fact about the
-        // domain, and a number picked here against one adapter's default is a
-        // reduction against another's. Repairs deliberately get the SAME tier as
-        // the first attempt — raising effort against an unchanged output ceiling
-        // is how a repair spends its whole budget thinking and returns no text
-        // at all (`stop: max_tokens`), costing a full call for nothing. Depth on
-        // a repair comes from the failure report and the render.
-        effort: backend.generation?.effort,
-        maxTokens: backend.generation?.maxTokens,
-        signal: deps.signal,
-      });
-    } catch (err) {
+    if (results.length === 0) {
       // Provider failures (quota, rate limit, network) must land the node in
       // a resumable error state — never leave it stuck mid-transition.
-      const message = (err as Error).message;
-      log(`llm call failed: ${message.slice(0, 200)}`);
+      const err = (settled[0] as PromiseRejectedResult).reason as Error;
+      log(`llm call failed: ${err.message.slice(0, 200)}`);
       store.setStatus(nodeIdValue, "error_code", {
         stage: "llm",
-        message: message.slice(0, 2000),
+        message: err.message.slice(0, 2000),
         attribution: "unknown",
       });
       throw err;
     }
-    code = result.data.code;
-    testCode = result.data.testCode ?? "";
-
-    store.applyOp((g) => {
-      const n = g.nodes[nodeIdValue]!;
-      n.artifact = { code, testCode, hash: hashValue(code) };
-      n.cost.calls += 1;
-      n.cost.inputTokens += result.usage.inputTokens;
-      n.cost.outputTokens += result.usage.outputTokens;
-      n.cost.usd += result.usage.usd;
-    });
-    store.emit({
-      type: "cost:update",
-      projectId,
-      nodeId: nodeIdValue,
-      inputTokens: result.usage.inputTokens,
-      outputTokens: result.usage.outputTokens,
-      usd: result.usage.usd,
-    });
+    const drafts = results
+      .map((r) => ({ code: r.data.code, testCode: r.data.testCode ?? "" }))
+      .filter((d) => d.code.trim() !== "");
 
     // A completion carrying NO CODE AT ALL is a provider failure, not a gate
     // failure, and retrying the same prompt against the same budget reproduces
@@ -423,7 +523,7 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
     // cost.calls: 5. Land it in error_code instead, which cook-dirty resumes.
     // (Emptiness is the only domain-agnostic check available here; what counts
     // as *valid* code is the backend's business, and the gates ask that.)
-    if (code.trim() === "") {
+    if (drafts.length === 0) {
       log("provider returned no code — not retrying, the prompt and budget are unchanged");
       store.setStatus(nodeIdValue, "error_code", {
         stage: "llm",
@@ -435,67 +535,220 @@ export async function cookOne(deps: CookDeps, nodeIdValue: string): Promise<void
       });
       throw new Error(`${nodeIdValue}: provider returned an empty completion`);
     }
+    return drafts;
+  };
 
-    // -- execute --
+  type Gated = { ok: true; verify: VerifyResult } | { ok: false; failure: Failure; score?: number };
+
+  /** Run drafts through execute + verify side by side. Each sees a shallow
+   *  copy of the node carrying its own artifact, so candidates never share
+   *  `node.artifact`; a kernel with a fixed pool just queues what it cannot
+   *  run at once. Self-sufficient on status: building/verifying → building is
+   *  not a legal transition, so a re-run routes via repairing. */
+  const gate = async (ds: Draft[]): Promise<Gated[]> => {
+    if (store.node(nodeIdValue).status !== "generating") {
+      store.setStatus(nodeIdValue, "repairing");
+      store.setStatus(nodeIdValue, "generating");
+    }
     store.setStatus(nodeIdValue, "building");
-    const exec = await backend.execute(store.node(nodeIdValue), workspace);
-    if (!exec.ok) {
-      failures.push({ stage: exec.stage, report: exec.report });
-      log(`execute failed: ${exec.report.slice(0, 200)}`);
-      continue;
-    }
-
-    // -- verify --
+    const tag = (i: number) => (ds.length > 1 ? `candidate ${i + 1}: ` : "");
+    const results = await Promise.all(
+      ds.map(async (d, i): Promise<Gated> => {
+        const node = { ...store.node(nodeIdValue), artifact: { code: d.code, testCode: d.testCode, hash: hashValue(d.code) } };
+        const exec = await backend.execute(node, workspace, graph);
+        if (!exec.ok) {
+          log(`${tag(i)}execute failed: ${exec.report.slice(0, 200)}`);
+          return { ok: false, failure: { stage: exec.stage, report: exec.report }, score: exec.score };
+        }
+        const verify = await backend.verify(node, graph, workspace);
+        if (!verify.ok) {
+          log(`${tag(i)}verify failed: ${verify.report.slice(0, 200)}`);
+          return { ok: false, failure: { stage: verify.stage, report: verify.report }, score: verify.score };
+        }
+        return { ok: true, verify };
+      }),
+    );
     store.setStatus(nodeIdValue, "verifying");
-    const verify = await backend.verify(store.node(nodeIdValue), graph, workspace);
-    if (!verify.ok) {
-      failures.push({ stage: verify.stage, report: verify.report });
-      log(`verify failed: ${verify.report.slice(0, 200)}`);
-      continue;
-    }
+    return results;
+  };
 
-    // -- inspect: does it LOOK like the part that was asked for? --
-    // Gates prove measurements; only a picture catches "measurably correct and
-    // completely the wrong object". Worth at most one rewrite, and never on the
-    // last attempt — committing something that passes beats committing nothing.
-    if (
-      deps.inspect &&
-      backend.renderArtifact &&
-      inspectRetries < 1 &&
-      attempt < maxAttempts
-    ) {
-      const verdict = await inspectArtifact();
-      if (verdict) {
-        inspectRetries += 1;
-        failures.push({ stage: "LOOKS", report: `${verdict.issue}\nsuggested fix: ${verdict.fix}` });
-        log(`looks wrong: ${verdict.issue}`);
-        continue; // spend one round on it; the gates still guard the result
-      }
-    }
+  /** Make a gated draft the node's artifact: what inspect renders, what the
+   *  commit records, and what a failed node shows. */
+  const install = (d: Draft) =>
+    store.applyOp((g) => {
+      g.nodes[nodeIdValue]!.artifact = { code: d.code, testCode: d.testCode, hash: hashValue(d.code) };
+    });
 
-    // -- commit (guarded: superseded cooks are discarded) --
+  /** Commit the artifact `gate` just verified (guarded: superseded cooks are
+   *  discarded). */
+  const finish = async (cause: string, d: Draft, verify: VerifyResult, capture: boolean, attempts?: number) => {
     await storeInterface();
-    commit(attempt === 1 ? "generate" : `repair-${attempt}`);
-    storeMeasurements(verify.measurements);
+    commit(cause, verify.measurements);
     // Freshly verified, unspecialized code joins the library for future briefs.
-    if (deps.library && unspecialized) {
+    if (capture && deps.library && unspecialized) {
       const n = store.node(nodeIdValue);
       void deps.library
         .capture(backend.id, n.contract.hash, {
-          code,
-          testCode,
+          code: d.code,
+          testCode: d.testCode,
           kind: n.kind,
           title: n.title,
           dts: n.artifact?.dts,
           // Stored so this entry can later serve as a worked example — the
           // hash is one-way, so code without its contract teaches only style.
           contract: n.contract,
+          attemptsToPass: attempts,
         })
         .catch(() => {});
     }
     await backend.previewAdapter?.hotSwap(store.doc, workspace, [nodeIdValue]);
-    log(`ready (v${store.node(nodeIdValue).version}, attempt ${attempt})`);
-    return;
+    log(`ready (v${store.node(nodeIdValue).version}, ${cause})`);
+  };
+
+  /** Show the model what it actually built. Only when the failure says the
+   *  part got far enough to have a shape worth looking at — a part that failed
+   *  to execute has nothing to show, and a render is a kernel round trip plus
+   *  image tokens. Best-effort: a render failure must never cost the round. */
+  const renderFailed = async (a: Attempt): Promise<LlmImage | undefined> => {
+    if (!backend.renderArtifact || !RENDER_STAGES.has(a.failure.stage)) return undefined;
+    try {
+      const node = store.node(nodeIdValue);
+      const shown = { ...node, artifact: { code: a.code, testCode: a.testCode, hash: hashValue(a.code) } };
+      const render = (await backend.renderArtifact(shown, workspace)) ?? undefined;
+      if (render) log("attached a render of the failed part to the repair");
+      return render;
+    } catch {
+      return undefined; /* advisory */
+    }
+  };
+
+  // Captured before any draft overwrites the artifact: a fresh start must
+  // modify what the user had, never the code that just failed.
+  const startingCode = store.node(nodeIdValue).artifact?.code;
+  const candidates = Math.max(1, gen?.firstRoundCandidates ?? 1);
+  /** The repair base: best score so far, ties to the latest. */
+  let best: Attempt | undefined;
+  /** Gate-passing code a looks-wrong verdict sent back for a rewrite. */
+  let bestPassing: (Draft & { verify: VerifyResult }) | undefined;
+  /** Consecutive repair rounds that did not beat `best`. */
+  let stale = 0;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (deps.signal?.aborted) throw new Error("cancelled");
+
+    // -- generate (or repair) --
+    // Two hops, deliberately: building/verifying → generating is NOT a legal
+    // transition, so a repair has to route through "repairing" to get back to
+    // "generating". Collapsing these throws "illegal status transition".
+    store.setStatus(nodeIdValue, attempt === 1 ? "generating" : "repairing");
+    if (attempt > 1) store.setStatus(nodeIdValue, "generating");
+
+    // Patching the same code again after it stopped improving keeps refining
+    // an approach that is not converging. Start over instead, carrying the
+    // ledger so the new attempt knows which approaches are spent.
+    const fresh = stale >= STALE_REPAIRS;
+    if (fresh) stale = 0;
+
+    let prompt: PromptSpec;
+    let repairedFrom: Attempt | undefined;
+    if (attempt === 1 || fresh) {
+      const ctx = makeCtx();
+      prompt = backend.buildGeneratePrompt({
+        ...ctx,
+        node: { ...ctx.node, currentCode: startingCode },
+        priorFailures: fresh ? [...failures] : undefined,
+      });
+    } else {
+      const base = best!;
+      repairedFrom = base;
+      prompt = backend.buildRepairPrompt({
+        ...makeCtx(),
+        failedCode: base.code,
+        failure: base.failure,
+        basedOnAttempt: base.attempt,
+        // Everything but the failure being repaired, so the model can see which
+        // approaches are already spent rather than rediscovering them.
+        priorFailures: failures.filter((f) => f !== base.failure),
+        attempt,
+        maxAttempts,
+        render: await renderFailed(base),
+      } as RepairCtx<unknown>);
+    }
+
+    const n = attempt === 1 ? candidates : 1;
+    log(
+      attempt === 1
+        ? n > 1 ? `generating ${n} candidates…` : "generating…"
+        : fresh
+          ? `fresh start, attempt ${attempt} — ${STALE_REPAIRS} repairs did not improve`
+          : `repair attempt ${attempt} (from attempt ${best!.attempt})…`,
+    );
+    const drafts = await draft(prompt, attempt, n);
+
+    // The gates pick among drafts: first pass wins, otherwise the best score
+    // (first on a tie) represents the round. One ledger entry per ROUND, so
+    // classifyFailure still reads failures against the round budget.
+    let round: Attempt | undefined;
+    const results = await gate(drafts);
+    for (const [i, d] of drafts.entries()) {
+      const gated = results[i]!;
+      if (gated.ok) {
+        install(d);
+        // -- inspect: does it LOOK like the part that was asked for? --
+        // Gates prove measurements; only a picture catches "measurably correct
+        // and completely the wrong object". Worth at most one rewrite, and
+        // never on the last attempt — committing something that passes beats
+        // committing nothing.
+        const verdict =
+          deps.inspect && backend.renderArtifact && inspectRetries < 1 && attempt < maxAttempts
+            ? await inspectArtifact()
+            : null;
+        if (!verdict) {
+          // What the repair changed to clear a gate, for the pitfall miner.
+          if (repairedFrom && repairedFrom.failure.stage !== "LOOKS") {
+            const { stage, report } = repairedFrom.failure;
+            void deps.library?.recordFix?.(backend.id, { stage, report, diff: codeDiff(repairedFrom.code, d.code) }).catch(() => {});
+          }
+          await finish(attempt === 1 ? "generate" : `repair-${attempt}`, d, gated.verify, true, attempt);
+          return;
+        }
+        inspectRetries += 1;
+        bestPassing = { ...d, verify: gated.verify };
+        log(`looks wrong: ${verdict.map((a) => a.question).join(" / ")}`);
+        // Passing code outranks every gate failure, so the rewrite builds on it.
+        round = {
+          ...d,
+          attempt,
+          failure: { stage: "LOOKS", report: inspectFeedback(verdict) },
+          score: Number.POSITIVE_INFINITY,
+        };
+        break; // spend one round on it; the gates still guard the result
+      }
+      const a: Attempt = { ...d, attempt, failure: gated.failure, score: gated.score };
+      if (!round || rank(a) > rank(round)) round = a;
+    }
+
+    install(round!);
+    failures.push(round!.failure);
+    // Staleness is only measurable when the backend scores; without scores
+    // every round ties and the loop chains repairs exactly as it always did.
+    if (attempt > 1 && !fresh && round!.score !== undefined && best?.score !== undefined) {
+      stale = rank(round!) > rank(best) ? 0 : stale + 1;
+    }
+    if (!best || rank(round!) >= rank(best)) best = round;
+  }
+
+  // A looks-wrong verdict sent passing code back, and nothing since passed.
+  // Appearance never fails a node: re-run the gates on that code (so the
+  // backend's materialized artifact is that code, not the last failure) and
+  // ship it. Not captured — a model said it looks wrong.
+  if (bestPassing) {
+    const [gated] = await gate([bestPassing]);
+    if (gated?.ok) {
+      install(bestPassing);
+      await finish("generate-inspect-fallback", bestPassing, gated.verify, false);
+      return;
+    }
   }
 
   // Budget exhausted — attribute and surface.

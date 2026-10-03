@@ -12,6 +12,13 @@ import {
   cadMateConnectivityLint,
   threadEngagementVolume,
   OUTER_DIAMETER_KEYS,
+  PROBED_PORT_TYPES,
+  CadPortType,
+  CadContractPayload,
+  CadBackend,
+  cadAssertionsCoherentLint,
+  envelopeAabb,
+  kernelEnvelope,
 } from "./index.js";
 
 /** Plan-time lint: pure graph → problems. No kernel, no LLM, no I/O. */
@@ -91,6 +98,13 @@ describe("cad-fastener-justified lint", () => {
   it("leaves fastener-free designs alone", () => {
     expect(cadFastenerJustifiedLint.run(graph([plateNoHole()], []))).toEqual([]);
   });
+
+  it("counts the hardware host features a joint cuts as holes to fasten into", () => {
+    for (const type of ["INSERT_POCKET", "NUT_TRAP", "COUNTERBORE", "COUNTERSINK", "THREADED_HOLE", "DOWEL_HOLE"]) {
+      const g = graph([node("plate", "part", [{ name: "h", type }]), screw()], [{ from: "plate", fromPort: "h", to: "screw", toPort: "head_seat" }]);
+      expect(cadFastenerJustifiedLint.run(g), type).toEqual([]);
+    }
+  });
 });
 
 /** A part with an explicit envelope and ports, for the geometry-coherence lints.
@@ -160,6 +174,51 @@ describe("cad-envelope-coherent lint", () => {
     n.kind = "fastener";
     expect(cadEnvelopeCoherentLint.run(graph([n], []))).toEqual([]);
   });
+
+  // A rod lying along x: the lint used to size every cylinder as if upright,
+  // so the rod's end port sat "outside" and two collinear halves "did not meet".
+  const lying = (x: number, d: number, h: number) => ({
+    kind: "cylinder",
+    pose: { origin: [x, 0, 0], zAxis: [1, 0, 0], xAxis: [0, 1, 0] },
+    d,
+    h,
+  });
+
+  it("sizes a horizontal cylinder along its own axis", () => {
+    const g = graph([envNode("rod", [lying(0, 6, 40)], [{ name: "end", type: "FLAT_FACE", origin: [20, 0, 0] }])], []);
+    expect(cadEnvelopeCoherentLint.run(g)).toEqual([]);
+  });
+
+  it("joins collinear horizontal cylinders and still flags a port off the side", () => {
+    const g = graph([
+      envNode("rod", [lying(-10, 6, 20), lying(10, 6, 20)], [{ name: "side", type: "FLAT_FACE", origin: [0, 0, 5] }]),
+    ], []);
+    expect(cadEnvelopeCoherentLint.run(g)).toEqual([
+      expect.stringContaining('port "side"'),
+    ]);
+  });
+
+  it("bounds a box rotated 45 degrees by its corners", () => {
+    const diamond = { kind: "box", pose: { ...pose, xAxis: [1, 1, 0] }, dims: [10, 10, 4] };
+    const box = envelopeAabb(graph([envNode("d", [diamond])], []), diamond as never);
+    expect(box.max[0]).toBeCloseTo(5 * Math.SQRT2);
+    expect(box.max[2]).toBeCloseTo(2);
+  });
+});
+
+describe("kernelEnvelope", () => {
+  it("sends each primitive's full resolved pose", () => {
+    const n = envNode("rod", [
+      { kind: "cylinder", pose: { origin: [0, 0, "param(rod.h) / 2"], zAxis: [1, 0, 0], xAxis: [0, 1, 0] }, d: 6, h: 40 },
+      { kind: "box", pose, dims: [10, 10, "param(rod.h)"] },
+    ]);
+    n.contract.params = [{ name: "h", type: "number", default: 8, description: "" }] as never;
+    const g = graph([n], []);
+    expect(kernelEnvelope(g, g.nodes.rod!.contract.payload as CadContractPayload)).toEqual([
+      { kind: "cylinder", center: [0, 0, 4], zAxis: [1, 0, 0], xAxis: [0, 1, 0], radius: 3, height: 40 },
+      { kind: "box", center: [0, 0, 0], zAxis: [0, 0, 1], xAxis: [1, 0, 0], size: [10, 10, 8] },
+    ]);
+  });
 });
 
 describe("cad-port-params lint", () => {
@@ -225,8 +284,8 @@ describe("cadProbedPortsLint", () => {
   // This set is a claim about gates.py. If a type is listed here with no probe
   // behind it, a node built from it passes verify as a featureless block.
   it("lists exactly the types gates.py dispatches a probe for", () => {
-    const probed = ["BORE", "CLEARANCE_HOLE", "FLAT_FACE", "GROOVE", "SCREW_BOSS", "SCREW_SEAT", "SHAFT", "SLOT"];
-    const rejected = ["SNAP_HOOK", "SNAP_RECESS", "LIP", "HOLE_PATTERN", "BOSS_PATTERN"];
+    const probed = ["BORE", "BOSS_PATTERN", "CLEARANCE_HOLE", "FLAT_FACE", "GROOVE", "HOLE_PATTERN", "SCREW_BOSS", "SCREW_SEAT", "SHAFT", "SLOT"];
+    const rejected = ["SNAP_HOOK", "SNAP_RECESS", "LIP"];
     for (const type of probed) {
       expect(cadProbedPortsLint.run(graph([node("p", "part", [{ name: "i", type }])], [])), type).toEqual([]);
     }
@@ -341,6 +400,10 @@ describe("alias lists agree with the kernel", () => {
 
   it("SCREW_BOSS outer-diameter keys match gates.py exactly", () => {
     expect([...OUTER_DIAMETER_KEYS].sort()).toEqual(pyTuple("OUTER_D_KEYS"));
+  });
+
+  it("PROBED_PORT_TYPES matches gates.py exactly", () => {
+    expect([...PROBED_PORT_TYPES].sort()).toEqual(pyTuple("PROBED_PORT_TYPES"));
   });
 
   it("neither list accepts a bare `diameter` on a boss", () => {
@@ -827,5 +890,129 @@ describe("cadFaceHoleConflictLint", () => {
       at("f", "FLAT_FACE", [0, 0, 0]), at("h", "BORE", [0, 0, 0]),
     ])], []);
     expect(cadFaceHoleConflictLint.run(g)).toEqual([]);
+  });
+});
+
+describe("port types are derived from PROBED_PORT_TYPES", () => {
+  const guidance = new CadBackend().planning.architectGuidance;
+
+  it("the schema enum is exactly the probed list", () => {
+    expect([...CadPortType.options]).toEqual([...PROBED_PORT_TYPES]);
+    expect(CadPortType.safeParse("LIP").success).toBe(false);
+  });
+
+  it("the architect's allowed list names every probed type, SHAFT included", () => {
+    const line = guidance.split("\n").find((l) => l.startsWith("ONLY THESE PORT TYPES MAY BE USED"))!;
+    for (const t of PROBED_PORT_TYPES) expect(line, t).toContain(t);
+    expect(line).not.toContain("LIP");
+  });
+});
+
+describe("cadFlatFaceSizeLint · patterns", () => {
+  const pat = (type: string, params: Record<string, unknown>) =>
+    graph([envNode("p", [cyl(0, 80, 10)], [{ name: "h", type, params }])], []);
+
+  it("accepts a polar and a grid hole pattern", () => {
+    expect(cadFlatFaceSizeLint.run(pat("HOLE_PATTERN", { diameter: 4.5, count: 4, pcd: 50 }))).toEqual([]);
+    expect(
+      cadFlatFaceSizeLint.run(pat("HOLE_PATTERN", { diameter: 4.5, nx: 2, ny: 2, pitch_x: 40, pitch_y: 40 })),
+    ).toEqual([]);
+  });
+
+  it("names the missing layout keys", () => {
+    const out = cadFlatFaceSizeLint.run(pat("HOLE_PATTERN", { diameter: 4.5, nx: 2 }));
+    expect(out).toHaveLength(1);
+    expect(out[0]).toContain("ny, pitch_x, pitch_y");
+  });
+
+  it("demands an outer diameter on a boss pattern", () => {
+    const out = cadFlatFaceSizeLint.run(pat("BOSS_PATTERN", { count: 3, pcd: 40 }));
+    expect(out[0]).toContain("BOSS_PATTERN");
+    expect(out[0]).toContain("outer diameter");
+  });
+});
+
+describe("contract assertions", () => {
+  const base = {
+    units: "mm",
+    process: { kind: "FDM" },
+    ports: [],
+    envelope: { volumes: [{ kind: "box", pose, dims: [80, 40, 10] }] },
+  };
+
+  it("parses every kind and rejects an unknown one", () => {
+    const parsed = CadContractPayload.parse({
+      ...base,
+      assertions: [
+        { kind: "solids", count: 1 },
+        { kind: "volume_range", min: 1000, max: 2000 },
+        { kind: "bbox_axis", axis: "x", min: 79, max: 81 },
+        { kind: "hole_count", min: 4 },
+        { kind: "symmetry", plane: "yz", tol: 0.05 },
+        { kind: "min_wall", mm: 2 },
+      ],
+    });
+    expect(parsed.assertions).toHaveLength(6);
+    expect(CadContractPayload.safeParse({ ...base, assertions: [{ kind: "colour", value: "red" }] }).success).toBe(false);
+  });
+
+  // The contract hash keys the library and the dirty set. A default here would
+  // add `assertions: []` to every parsed payload and re-hash every contract.
+  it("leaves a payload without assertions exactly as it was", () => {
+    expect("assertions" in CadContractPayload.parse(base)).toBe(false);
+  });
+
+  const withAssertions = (assertions: unknown[]) => {
+    const n = node("p", "part", []);
+    (n.contract as { payload: unknown }).payload = { ...payloadBase, envelope: base.envelope, assertions };
+    return graph([n], []);
+  };
+
+  it("passes assertions that fit the envelope", () => {
+    expect(
+      cadAssertionsCoherentLint.run(
+        withAssertions([
+          { kind: "bbox_axis", axis: "x", min: 79.5, max: 80.5 },
+          { kind: "hole_count", min: 4, max: 4 },
+          { kind: "volume_range", min: 10000, max: 30000 },
+        ]),
+      ),
+    ).toEqual([]);
+  });
+
+  it("rejects contradictions", () => {
+    const out = cadAssertionsCoherentLint.run(
+      withAssertions([
+        { kind: "volume_range", min: 3000, max: 2000 },
+        { kind: "volume_range", min: 40000, max: 50000 },
+        { kind: "bbox_axis", axis: "z", min: 25 },
+        { kind: "bbox_axis", axis: "y", min: 5, max: 3 },
+        { kind: "hole_count", min: 4, max: 2 },
+      ]),
+    );
+    expect(out).toHaveLength(5);
+    expect(out[1]).toContain("exceeds the whole envelope");
+    expect(out[2]).toContain("larger than the envelope");
+  });
+
+  it("rejects a hole_count its own hole-like ports already meet, naming them", () => {
+    const rotor = (assertions: unknown[], ports: unknown[]) => {
+      const g = withAssertions(assertions);
+      (g.nodes.p!.contract.payload as { ports: unknown[] }).ports = ports;
+      return g;
+    };
+    const hub = { name: "spin_hub", type: "HUB_BORE", pose, params: { diameter: 5, flat: 2 } };
+    const out = cadAssertionsCoherentLint.run(rotor([{ kind: "hole_count", min: 1 }], [hub]));
+    expect(out).toHaveLength(1);
+    expect(out[0]).toContain("spin_hub HUB_BORE");
+    const grid = { name: "mount", type: "HOLE_PATTERN", pose, params: { diameter: 4.5, nx: 2, ny: 2, pitch_x: 40, pitch_y: 40 } };
+    expect(cadAssertionsCoherentLint.run(rotor([{ kind: "hole_count", min: 4, max: 4 }], [grid]))[0]).toContain("mount HOLE_PATTERN");
+    // Two drain holes beyond the hub: the ports alone do not reach the count.
+    expect(cadAssertionsCoherentLint.run(rotor([{ kind: "hole_count", min: 3 }], [hub]))).toEqual([]);
+    expect(cadAssertionsCoherentLint.run(rotor([{ kind: "hole_count", min: 0, max: 0 }], []))).toEqual([]);
+  });
+
+  it("does not call a loose max a contradiction", () => {
+    expect(cadAssertionsCoherentLint.run(withAssertions([{ kind: "bbox_axis", axis: "x", max: 200 }]))).toEqual([]);
   });
 });

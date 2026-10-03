@@ -1,0 +1,1315 @@
+{
+  "schemaVersion": 1,
+  "id": "cad-rotor",
+  "backend": "cad",
+  "brief": {
+    "goal": "a rotor that spins freely on a base",
+    "design": "Chunky printed parts, flat faces, edges left sharp.",
+    "refs": []
+  },
+  "nodes": {
+    "base": {
+      "id": "base",
+      "kind": "part",
+      "title": "Base",
+      "spec": "A round plate on three legs with a central tower that houses the rotor's bearings, one in each face.",
+      "contract": {
+        "name": "Base",
+        "summary": "Ø90 plate on legs, Ø28 tower, rotor axis up its middle.",
+        "params": [
+          {
+            "type": "number",
+            "name": "housing_height",
+            "description": "how tall the bearing tower is",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 14,
+            "min": 12,
+            "max": 30
+          },
+          {
+            "type": "number",
+            "name": "plate_diameter",
+            "description": "plate width",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 90,
+            "min": 60,
+            "max": 160
+          },
+          {
+            "type": "number",
+            "name": "plate_thickness",
+            "description": "plate thickness",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 4,
+            "min": 3,
+            "max": 8
+          },
+          {
+            "type": "number",
+            "name": "tower_diameter",
+            "description": "tower width around the bearings",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 28,
+            "min": 24,
+            "max": 40
+          },
+          {
+            "type": "number",
+            "name": "leg_height",
+            "description": "how far the legs lift the plate",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 10,
+            "min": 8,
+            "max": 30
+          },
+          {
+            "type": "number",
+            "name": "j1_seat_od",
+            "description": "bearing OD for j1",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 16
+          },
+          {
+            "type": "number",
+            "name": "j1_seat_w",
+            "description": "seat depth for j1",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 5
+          }
+        ],
+        "provides": [
+          {
+            "key": "rotor_face",
+            "type": "FLAT_FACE",
+            "description": "top of the tower, where the rotor turns"
+          },
+          {
+            "key": "j1_seat_a",
+            "type": "BEARING_SEAT",
+            "description": ""
+          },
+          {
+            "key": "j1_seat_b",
+            "type": "BEARING_SEAT",
+            "description": ""
+          }
+        ],
+        "requires": [],
+        "payload": {
+          "units": "mm",
+          "process": {
+            "kind": "FDM",
+            "minWall": 1.2,
+            "nozzle": 0.4
+          },
+          "paramBindings": {
+            "j1_seat_od": "hw:bearingSeatD:param:j1_bearing_a.sku",
+            "j1_seat_w": "hw:bearingWidth:param:j1_bearing_a.sku"
+          },
+          "ports": [
+            {
+              "name": "rotor_face",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  "param(base.housing_height)"
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "size": 28,
+                "ring_diameter": "(param(base.j1_seat_od)) + 2.4"
+              }
+            },
+            {
+              "name": "j1_seat_a",
+              "type": "BEARING_SEAT",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  "(param(base.housing_height))"
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "od": "param(base.j1_seat_od)",
+                "width": "param(base.j1_seat_w)",
+                "fit": "press"
+              }
+            },
+            {
+              "name": "j1_seat_b",
+              "type": "BEARING_SEAT",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  "(param(base.housing_height)) + (-(param(base.housing_height)))"
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  -1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "od": "param(base.j1_seat_od)",
+                "width": "param(base.j1_seat_w)",
+                "fit": "press"
+              }
+            }
+          ],
+          "envelope": {
+            "volumes": [
+              {
+                "kind": "cylinder",
+                "pose": {
+                  "origin": [
+                    0,
+                    0,
+                    "(param(base.housing_height) - param(base.leg_height)) / 2"
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "d": "param(base.plate_diameter) + 2",
+                "h": "param(base.housing_height) + param(base.leg_height) + 1"
+              }
+            ],
+            "clearance": 0.4
+          }
+        },
+        "hash": "46977842c3089b32"
+      },
+      "params": {},
+      "hidden": false,
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "c10a9052cb5bb955"
+      },
+      "thread": [],
+      "status": "ready",
+      "measurements": null,
+      "version": 1,
+      "history": [
+        {
+          "version": 1,
+          "contractHash": "46977842c3089b32",
+          "artifactHash": "c10a9052cb5bb955",
+          "cause": "handwritten",
+          "at": 1759363200000
+        }
+      ],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "rotor": {
+      "id": "rotor",
+      "kind": "part",
+      "title": "Rotor",
+      "spec": "A hub with two flat blades, fixed to the shaft through a D-bore.",
+      "contract": {
+        "name": "Rotor",
+        "summary": "Ø20 hub, two blades to Ø116.",
+        "params": [
+          {
+            "type": "number",
+            "name": "hub_diameter",
+            "description": "hub width",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 20,
+            "min": 14,
+            "max": 30
+          },
+          {
+            "type": "number",
+            "name": "hub_height",
+            "description": "hub height, the shaft's grip on it",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 8,
+            "min": 6,
+            "max": 20
+          },
+          {
+            "type": "number",
+            "name": "rotor_diameter",
+            "description": "tip to tip",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 116,
+            "min": 60,
+            "max": 200
+          },
+          {
+            "type": "number",
+            "name": "blade_count",
+            "description": "number of blades",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 2,
+            "min": 2,
+            "max": 6
+          },
+          {
+            "type": "number",
+            "name": "blade_width",
+            "description": "blade chord",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 10,
+            "min": 5,
+            "max": 20
+          },
+          {
+            "type": "number",
+            "name": "blade_thickness",
+            "description": "blade thickness",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 2,
+            "min": 1.2,
+            "max": 5
+          },
+          {
+            "type": "number",
+            "name": "j1_shaft_d",
+            "description": "shaft Ø for j1",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 5
+          },
+          {
+            "type": "number",
+            "name": "j1_flat",
+            "description": "D-flat distance from the axis for j1",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 2
+          }
+        ],
+        "provides": [
+          {
+            "key": "base_face",
+            "type": "FLAT_FACE",
+            "description": "underside of the hub"
+          }
+        ],
+        "requires": [
+          {
+            "key": "j1_hub",
+            "type": "HUB_BORE",
+            "description": ""
+          }
+        ],
+        "payload": {
+          "units": "mm",
+          "process": {
+            "kind": "FDM",
+            "minWall": 1.2,
+            "nozzle": 0.4
+          },
+          "paramBindings": {
+            "j1_shaft_d": "hw:shaftD:param:j1_shaft.sku",
+            "j1_flat": "hw:hubFlat:param:j1_shaft.sku"
+          },
+          "ports": [
+            {
+              "name": "base_face",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  0
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  -1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "size": 20,
+                "ring_diameter": "(param(rotor.j1_shaft_d)) + 2.4"
+              }
+            },
+            {
+              "name": "j1_hub",
+              "type": "HUB_BORE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  0
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  -1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "diameter": "param(rotor.j1_shaft_d)",
+                "flat": "param(rotor.j1_flat)"
+              }
+            }
+          ],
+          "envelope": {
+            "volumes": [
+              {
+                "kind": "cylinder",
+                "pose": {
+                  "origin": [
+                    0,
+                    0,
+                    "param(rotor.hub_height) / 2"
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "d": "param(rotor.rotor_diameter) + 2",
+                "h": "param(rotor.hub_height) + 1"
+              }
+            ],
+            "clearance": 0.4
+          }
+        },
+        "hash": "c87ba423d0fe873f"
+      },
+      "params": {},
+      "hidden": false,
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "c7c7a2148a3a7c7c"
+      },
+      "thread": [],
+      "status": "ready",
+      "measurements": null,
+      "version": 1,
+      "history": [
+        {
+          "version": 1,
+          "contractHash": "c87ba423d0fe873f",
+          "artifactHash": "c7c7a2148a3a7c7c",
+          "cause": "handwritten",
+          "at": 1759363200000
+        }
+      ],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "j1_bearing_a": {
+      "id": "j1_bearing_a",
+      "kind": "bearing",
+      "title": "j1 bearing a",
+      "spec": "Ø5 shaft on 2×625 bearings. Catalog ISO 15 boundary dimensions (deep groove 6xx, 68xx, 69xx) 625, built by the registry, never generated.",
+      "contract": {
+        "name": "j1_bearing_a",
+        "summary": "BRG-625",
+        "params": [
+          {
+            "type": "string",
+            "name": "sku",
+            "description": "catalog part",
+            "default": "BRG-625"
+          }
+        ],
+        "provides": [
+          {
+            "key": "bore",
+            "type": "FLAT_FACE",
+            "description": ""
+          }
+        ],
+        "requires": [
+          {
+            "key": "seat",
+            "type": "BEARING_SEAT",
+            "description": ""
+          }
+        ],
+        "payload": {
+          "units": "mm",
+          "process": {
+            "kind": "FDM",
+            "minWall": 1.2,
+            "nozzle": 0.4
+          },
+          "ports": [
+            {
+              "name": "seat",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  0
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "ring_diameter": 15
+              }
+            },
+            {
+              "name": "bore",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  0
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  -1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "ring_diameter": 6
+              }
+            }
+          ],
+          "envelope": {
+            "volumes": [
+              {
+                "kind": "cylinder",
+                "pose": {
+                  "origin": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "d": 19.2,
+                "h": 10
+              }
+            ],
+            "clearance": 0.4
+          },
+          "paramBindings": {}
+        },
+        "hash": "f4c631c063484266"
+      },
+      "params": {},
+      "hidden": false,
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "71b1630b089af9cd"
+      },
+      "thread": [],
+      "status": "ready",
+      "measurements": {
+        "version": 1,
+        "paramsHash": "08f44b07b5901a25",
+        "data": {
+          "volume_mm3": 878.106562604883,
+          "area_mm2": 719.1105584067035,
+          "solids": 1,
+          "shells": [
+            1
+          ],
+          "bbox": {
+            "min": [
+              -8,
+              -8,
+              0
+            ],
+            "max": [
+              8,
+              8,
+              5
+            ],
+            "size": [
+              16,
+              16,
+              5
+            ]
+          },
+          "printability": {
+            "min_wall": {
+              "thin_wall_p2_mm": 1.649,
+              "index": 1,
+              "recommended_mm": 0.8
+            },
+            "overhang": {
+              "warn_area_fraction": 0,
+              "fail_area_fraction": 0.1009,
+              "index": 0.899
+            },
+            "composite": 0.948
+          }
+        }
+      },
+      "version": 1,
+      "history": [
+        {
+          "version": 1,
+          "contractHash": "f4c631c063484266",
+          "artifactHash": "71b1630b089af9cd",
+          "cause": "registry",
+          "at": 1790980490426
+        }
+      ],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "j1_bearing_b": {
+      "id": "j1_bearing_b",
+      "kind": "bearing",
+      "title": "j1 bearing b",
+      "spec": "Ø5 shaft on 2×625 bearings. Catalog ISO 15 boundary dimensions (deep groove 6xx, 68xx, 69xx) 625, built by the registry, never generated.",
+      "contract": {
+        "name": "j1_bearing_b",
+        "summary": "BRG-625",
+        "params": [
+          {
+            "type": "string",
+            "name": "sku",
+            "description": "catalog part",
+            "default": "BRG-625"
+          }
+        ],
+        "provides": [
+          {
+            "key": "bore",
+            "type": "FLAT_FACE",
+            "description": ""
+          }
+        ],
+        "requires": [
+          {
+            "key": "seat",
+            "type": "BEARING_SEAT",
+            "description": ""
+          }
+        ],
+        "payload": {
+          "units": "mm",
+          "process": {
+            "kind": "FDM",
+            "minWall": 1.2,
+            "nozzle": 0.4
+          },
+          "ports": [
+            {
+              "name": "seat",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  0
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "ring_diameter": 15
+              }
+            },
+            {
+              "name": "bore",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  0
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  -1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "ring_diameter": 6
+              }
+            }
+          ],
+          "envelope": {
+            "volumes": [
+              {
+                "kind": "cylinder",
+                "pose": {
+                  "origin": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "d": 19.2,
+                "h": 10
+              }
+            ],
+            "clearance": 0.4
+          },
+          "paramBindings": {}
+        },
+        "hash": "6eed0fde0be64b3d"
+      },
+      "params": {},
+      "hidden": false,
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "71b1630b089af9cd"
+      },
+      "thread": [],
+      "status": "ready",
+      "measurements": {
+        "version": 1,
+        "paramsHash": "08f44b07b5901a25",
+        "data": {
+          "volume_mm3": 878.106562604883,
+          "area_mm2": 719.1105584067035,
+          "solids": 1,
+          "shells": [
+            1
+          ],
+          "bbox": {
+            "min": [
+              -8,
+              -8,
+              0
+            ],
+            "max": [
+              8,
+              8,
+              5
+            ],
+            "size": [
+              16,
+              16,
+              5
+            ]
+          },
+          "printability": {
+            "min_wall": {
+              "thin_wall_p2_mm": 1.649,
+              "index": 1,
+              "recommended_mm": 0.8
+            },
+            "overhang": {
+              "warn_area_fraction": 0,
+              "fail_area_fraction": 0.1009,
+              "index": 0.899
+            },
+            "composite": 0.948
+          }
+        }
+      },
+      "version": 1,
+      "history": [
+        {
+          "version": 1,
+          "contractHash": "6eed0fde0be64b3d",
+          "artifactHash": "71b1630b089af9cd",
+          "cause": "registry",
+          "at": 1790980490430
+        }
+      ],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "j1_collar": {
+      "id": "j1_collar",
+      "kind": "collar",
+      "title": "j1 collar",
+      "spec": "Ø5 shaft on 2×625 bearings. Catalog part 5, built by the registry, never generated.",
+      "contract": {
+        "name": "j1_collar",
+        "summary": "COLLAR-5",
+        "params": [
+          {
+            "type": "string",
+            "name": "sku",
+            "description": "catalog part",
+            "default": "COLLAR-5"
+          }
+        ],
+        "provides": [],
+        "requires": [
+          {
+            "key": "seat",
+            "type": "FLAT_FACE",
+            "description": ""
+          }
+        ],
+        "payload": {
+          "units": "mm",
+          "process": {
+            "kind": "FDM",
+            "minWall": 1.2,
+            "nozzle": 0.4
+          },
+          "ports": [
+            {
+              "name": "seat",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  0
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  -1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "ring_diameter": 6
+              }
+            }
+          ],
+          "envelope": {
+            "volumes": [
+              {
+                "kind": "cylinder",
+                "pose": {
+                  "origin": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "d": 12,
+                "h": 12
+              }
+            ],
+            "clearance": 0.4
+          },
+          "paramBindings": {}
+        },
+        "hash": "3ca7fac096a660fa"
+      },
+      "params": {},
+      "hidden": false,
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "02347a1900080e84"
+      },
+      "thread": [],
+      "status": "ready",
+      "measurements": {
+        "version": 1,
+        "paramsHash": "08f44b07b5901a25",
+        "data": {
+          "volume_mm3": 340.95664409349706,
+          "area_mm2": 410.8333398055132,
+          "solids": 1,
+          "shells": [
+            1
+          ],
+          "bbox": {
+            "min": [
+              -5.0000001,
+              -5.0000001,
+              -1e-7
+            ],
+            "max": [
+              5.0000001,
+              5.0000001,
+              6.0000001
+            ],
+            "size": [
+              10.0000002,
+              10.0000002,
+              6.000000200000001
+            ]
+          },
+          "printability": {
+            "min_wall": {
+              "thin_wall_p2_mm": 1.746,
+              "index": 1,
+              "recommended_mm": 0.8
+            },
+            "overhang": {
+              "warn_area_fraction": 0.0041,
+              "fail_area_fraction": 0.008,
+              "index": 0.991
+            },
+            "composite": 0.995
+          }
+        }
+      },
+      "version": 1,
+      "history": [
+        {
+          "version": 1,
+          "contractHash": "3ca7fac096a660fa",
+          "artifactHash": "02347a1900080e84",
+          "cause": "registry",
+          "at": 1790980490665
+        }
+      ],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    },
+    "j1_shaft": {
+      "id": "j1_shaft",
+      "kind": "shaft",
+      "title": "j1 shaft",
+      "spec": "Ø5 shaft on 2×625 bearings. Catalog part 5, built by the registry, never generated.",
+      "contract": {
+        "name": "j1_shaft",
+        "summary": "DSHAFT-5",
+        "params": [
+          {
+            "type": "string",
+            "name": "sku",
+            "description": "catalog part",
+            "default": "DSHAFT-5"
+          },
+          {
+            "type": "number",
+            "name": "length",
+            "description": "length, mm",
+            "ui": {
+              "unit": "mm"
+            },
+            "default": 34
+          }
+        ],
+        "provides": [
+          {
+            "key": "hub",
+            "type": "HUB_BORE",
+            "description": ""
+          }
+        ],
+        "requires": [
+          {
+            "key": "end",
+            "type": "FLAT_FACE",
+            "description": ""
+          }
+        ],
+        "payload": {
+          "units": "mm",
+          "process": {
+            "kind": "FDM",
+            "minWall": 1.2,
+            "nozzle": 0.4
+          },
+          "ports": [
+            {
+              "name": "end",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  6
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "ring_diameter": 2.5
+              }
+            },
+            {
+              "name": "hub",
+              "type": "FLAT_FACE",
+              "pose": {
+                "origin": [
+                  0,
+                  0,
+                  "(param(base.housing_height)) + 12"
+                ],
+                "zAxis": [
+                  0,
+                  0,
+                  1
+                ],
+                "xAxis": [
+                  1,
+                  0,
+                  0
+                ]
+              },
+              "params": {
+                "ring_diameter": 2.5
+              }
+            }
+          ],
+          "envelope": {
+            "volumes": [
+              {
+                "kind": "cylinder",
+                "pose": {
+                  "origin": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "zAxis": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "xAxis": [
+                    1,
+                    0,
+                    0
+                  ]
+                },
+                "d": 6,
+                "h": 2
+              }
+            ],
+            "clearance": 0.4
+          },
+          "paramBindings": {
+            "length": "expr: ((param(base.housing_height)) + 12) + (param(rotor.hub_height))"
+          }
+        },
+        "hash": "50a1195283419f61"
+      },
+      "params": {},
+      "hidden": false,
+      "artifact": {
+        "code": "",
+        "testCode": "",
+        "hash": "4886b93f4fb32dd9"
+      },
+      "thread": [],
+      "status": "ready",
+      "measurements": {
+        "version": 1,
+        "paramsHash": "08f44b07b5901a25",
+        "data": {
+          "volume_mm3": 632.8444532692581,
+          "area_mm2": 563.901706925363,
+          "solids": 1,
+          "shells": [
+            1
+          ],
+          "bbox": {
+            "min": [
+              -2.5,
+              -2.5,
+              0
+            ],
+            "max": [
+              2,
+              2.5,
+              34
+            ],
+            "size": [
+              4.5,
+              5,
+              34
+            ]
+          },
+          "printability": {
+            "min_wall": {
+              "thin_wall_p2_mm": 4.161,
+              "index": 1,
+              "recommended_mm": 0.8
+            },
+            "overhang": {
+              "warn_area_fraction": 0,
+              "fail_area_fraction": 0,
+              "index": 1
+            },
+            "composite": 1
+          }
+        }
+      },
+      "version": 1,
+      "history": [
+        {
+          "version": 1,
+          "contractHash": "50a1195283419f61",
+          "artifactHash": "4886b93f4fb32dd9",
+          "cause": "registry",
+          "at": 1790980490608
+        }
+      ],
+      "cost": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "usd": 0
+      }
+    }
+  },
+  "edges": [
+    {
+      "id": "e0-base-j1_bearing_a",
+      "from": "base",
+      "fromPort": "j1_seat_a",
+      "to": "j1_bearing_a",
+      "toPort": "seat"
+    },
+    {
+      "id": "e1-base-j1_bearing_b",
+      "from": "base",
+      "fromPort": "j1_seat_b",
+      "to": "j1_bearing_b",
+      "toPort": "seat"
+    },
+    {
+      "id": "e2-j1_bearing_a-j1_collar",
+      "from": "j1_bearing_a",
+      "fromPort": "bore",
+      "to": "j1_collar",
+      "toPort": "seat"
+    },
+    {
+      "id": "e3-j1_bearing_b-j1_collar",
+      "from": "j1_bearing_b",
+      "fromPort": "bore",
+      "to": "j1_collar",
+      "toPort": "seat"
+    },
+    {
+      "id": "e4-j1_bearing_b-j1_shaft",
+      "from": "j1_bearing_b",
+      "fromPort": "bore",
+      "to": "j1_shaft",
+      "toPort": "end"
+    },
+    {
+      "id": "e5-j1_shaft-rotor",
+      "from": "j1_shaft",
+      "fromPort": "hub",
+      "to": "rotor",
+      "toPort": "j1_hub"
+    }
+  ],
+  "assembly": {
+    "entryNodeId": "base"
+  },
+  "joints": [
+    {
+      "id": "j1",
+      "a": {
+        "node": "base",
+        "port": "rotor_face"
+      },
+      "b": {
+        "node": "rotor",
+        "port": "base_face"
+      },
+      "intent": "permanent",
+      "motion": "revolute",
+      "duty": "continuous",
+      "load": "light",
+      "access": "both_sides",
+      "count": 1,
+      "wallA": "param(base.housing_height)",
+      "wallB": "param(rotor.hub_height)",
+      "expanded": "M1|bearing_a=bearing:625|bearing_b=bearing:625|shaft=d_shaft:5|collar=collar:5"
+    }
+  ],
+  "rev": 26,
+  "ledger": {
+    "planning": {
+      "calls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "usd": 0
+    },
+    "classifier": {
+      "calls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "usd": 0
+    },
+    "inspect": {
+      "calls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "usd": 0
+    },
+    "renegotiate": {
+      "calls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "usd": 0
+    },
+    "nodes": {
+      "calls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "usd": 0
+    }
+  }
+}

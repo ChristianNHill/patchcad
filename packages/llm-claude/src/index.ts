@@ -9,12 +9,73 @@ import type { LlmProvider, LlmRequest, LlmResult, LlmRole, LlmUsage} from "@patc
  * schema — one repair reprompt on mismatch.
  */
 
-/** List prices per MTok (input, output) for cost attribution. */
-export const PRICES: Record<string, { in: number; out: number }> = {
+/** List prices per MTok (input, output, cache read) for cost attribution.
+ *  `cacheRead` is listed only where it is not the usual 0.1× of input. */
+export const PRICES: Record<string, { in: number; out: number; cacheRead?: number }> = {
+  "claude-opus-5-5": { in: 4, out: 20, cacheRead: 0.2 },
   "claude-opus-5": { in: 5, out: 25 },
-  "claude-sonnet-5": { in: 3, out: 15 },
+  "claude-sonnet-5-5": { in: 2, out: 10 },
+  "claude-sonnet-5": { in: 2, out: 10 },
   "claude-haiku-4-5": { in: 1, out: 5 },
 };
+
+/** A 5-minute cache write bills 1.25× input; a read bills `cacheRead`, else 0.1×. */
+const CACHE_WRITE = 1.25;
+const CACHE_READ = 0.1;
+
+type BilledUsage = Pick<
+  Anthropic.Usage,
+  "input_tokens" | "output_tokens" | "cache_creation_input_tokens" | "cache_read_input_tokens"
+>;
+
+export function costUsd(price: (typeof PRICES)[string], u: BilledUsage): number {
+  const written = u.cache_creation_input_tokens ?? 0;
+  const read = u.cache_read_input_tokens ?? 0;
+  return (
+    (u.input_tokens * price.in +
+      written * price.in * CACHE_WRITE +
+      read * (price.cacheRead ?? price.in * CACHE_READ) +
+      u.output_tokens * price.out) /
+    1_000_000
+  );
+}
+
+/** What a Claude call billed, with the cached share broken out. `inputTokens`
+ *  stays the WHOLE prompt (uncached + written + read) so token counts keep
+ *  meaning prompt size; the discount shows up in `usd`. */
+export interface ClaudeUsage extends LlmUsage {
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+const EPHEMERAL = { type: "ephemeral" } as const;
+
+/**
+ * Two cache breakpoints. The system block is byte-identical across every node
+ * in a cook wave (per-node material rides the user turn for exactly this). The
+ * FIRST message is the part every multi-turn caller repeats verbatim: a repair
+ * round is [task, failed code, failure] and an architect lint round is [goal,
+ * plan, problems], and only the code/plan and the failure change between
+ * rounds. A marker on the pre-final message would key the cache to the failed
+ * code, which the next round replaces, so it would be written at 1.25× and
+ * never read. Marking the first message on a single-turn call too means the
+ * first repair round reads what the generate call wrote.
+ */
+export function withCacheBreakpoints(
+  system: string,
+  messages: Anthropic.MessageParam[],
+): { system: Anthropic.TextBlockParam[]; messages: Anthropic.MessageParam[] } {
+  const [first, ...rest] = messages;
+  if (!first) return { system: [{ type: "text", text: system, cache_control: EPHEMERAL }], messages };
+  const blocks: Anthropic.ContentBlockParam[] =
+    typeof first.content === "string" ? [{ type: "text", text: first.content }] : [...first.content];
+  const last = blocks.length - 1;
+  blocks[last] = { ...blocks[last], cache_control: EPHEMERAL } as Anthropic.ContentBlockParam;
+  return {
+    system: [{ type: "text", text: system, cache_control: EPHEMERAL }],
+    messages: [{ ...first, content: blocks }, ...rest],
+  };
+}
 
 export interface ClaudeProviderOptions {
   apiKey?: string;
@@ -94,7 +155,7 @@ export function sanitizeSchema(schema: unknown): unknown {
 export class LlmCallError extends Error {
   constructor(
     message: string,
-    readonly usage: { inputTokens: number; outputTokens: number; usd: number },
+    readonly usage: LlmUsage & Partial<ClaudeUsage>,
     options?: { cause?: unknown },
   ) {
     // `cause` keeps the original error reachable. Wrapping otherwise destroys
@@ -130,7 +191,7 @@ export class ClaudeProvider implements LlmProvider {
    *  once is smaller than choosing per site and removes the asymmetry.
    */
   async complete<T>(req: LlmRequest<T>): Promise<LlmResult<T>> {
-    const usage: LlmUsage = { inputTokens: 0, outputTokens: 0, usd: 0 };
+    const usage: ClaudeUsage = { inputTokens: 0, outputTokens: 0, usd: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
     try {
       return await this.attemptComplete(req, usage);
     } catch (err) {
@@ -141,7 +202,7 @@ export class ClaudeProvider implements LlmProvider {
     }
   }
 
-  private async attemptComplete<T>(req: LlmRequest<T>, usage: LlmUsage): Promise<LlmResult<T>> {
+  private async attemptComplete<T>(req: LlmRequest<T>, usage: ClaudeUsage): Promise<LlmResult<T>> {
     const model = this.models[req.role];
     // `$refStrategy: "none"` inlines every repeated subschema. Without it,
     // zod-to-json-schema emits internal refs pointing at `#/properties/...`,
@@ -163,7 +224,8 @@ export class ClaudeProvider implements LlmProvider {
       extra?: { assistant: string; user: string },
     ): Promise<{ text: string; stop: string | null }> => {
       // A message with images becomes a content array; without, it stays a
-      // plain string so every existing call is byte-identical on the wire.
+      // plain string. (The first message becomes a block array regardless, to
+      // carry its cache marker.)
       const toContent = (m: (typeof req.messages)[number]) =>
         m.images?.length
           ? [
@@ -174,42 +236,43 @@ export class ClaudeProvider implements LlmProvider {
               { type: "text" as const, text: m.content },
             ]
           : m.content;
-      const messages = [
-        ...req.messages.map((m) => ({ role: m.role, content: toContent(m) })),
+      // GRAMMAR FALLBACK. Structured outputs compiles the schema into a
+      // sampling grammar, and rejects one that gets too large: "The compiled
+      // grammar is too large". The whole-graph architect schema is exactly
+      // that, and it cannot be deduplicated out of the problem, because the
+      // compiler expands refs, so hoisting repeats into `$defs` shrinks the
+      // document and not the grammar (tried, measured, reverted).
+      //
+      // So where the grammar will not compile, the schema goes in the prompt
+      // and zod validates the reply instead. That is precisely what the
+      // OpenAI-compat adapter always does, and how the architect has been
+      // running all along, so it costs nothing that was previously working.
+      // What it buys is the direct path for the largest call in the system:
+      // effort, streaming, and a real price.
+      // The PROMPT path gets the unsanitized schema. sanitizeSchema strips
+      // minimum/maximum/pattern/minItems/maxItems because structured outputs
+      // rejects them, and zod still enforces every one of them client-side.
+      // Showing the model the stripped copy hides the constraints it is about
+      // to be judged against: the architect caps nodes at .max(15) and the
+      // model never saw the 15, so a violation costs a repair round on the
+      // most expensive call in the system. Costs ~240 input tokens.
+      const system = promptSchema
+        ? `${req.system}\n\nRespond with ONLY a JSON object matching this schema. No prose, no code fence.\n${JSON.stringify(rawSchema)}`
+        : req.system;
+      const cached = withCacheBreakpoints(system, [
+        ...req.messages.map((m): Anthropic.MessageParam => ({ role: m.role, content: toContent(m) })),
         ...(extra
           ? [
               { role: "assistant" as const, content: extra.assistant },
               { role: "user" as const, content: extra.user },
             ]
           : []),
-      ];
+      ]);
       const params: Anthropic.MessageCreateParamsStreaming = {
         model,
         max_tokens: req.maxTokens ?? 16000,
-        // GRAMMAR FALLBACK. Structured outputs compiles the schema into a
-        // sampling grammar, and rejects one that gets too large: "The compiled
-        // grammar is too large". The whole-graph architect schema is exactly
-        // that, and it cannot be deduplicated out of the problem, because the
-        // compiler expands refs, so hoisting repeats into `$defs` shrinks the
-        // document and not the grammar (tried, measured, reverted).
-        //
-        // So where the grammar will not compile, the schema goes in the prompt
-        // and zod validates the reply instead. That is precisely what the
-        // OpenAI-compat adapter always does, and how the architect has been
-        // running all along, so it costs nothing that was previously working.
-        // What it buys is the direct path for the largest call in the system:
-        // effort, streaming, and a real price.
-        // The PROMPT path gets the unsanitized schema. sanitizeSchema strips
-        // minimum/maximum/pattern/minItems/maxItems because structured outputs
-        // rejects them, and zod still enforces every one of them client-side.
-        // Showing the model the stripped copy hides the constraints it is about
-        // to be judged against: the architect caps nodes at .max(15) and the
-        // model never saw the 15, so a violation costs a repair round on the
-        // most expensive call in the system. Costs ~240 input tokens.
-        system: promptSchema
-          ? `${req.system}\n\nRespond with ONLY a JSON object matching this schema. No prose, no code fence.\n${JSON.stringify(rawSchema)}`
-          : req.system,
-        messages,
+        system: cached.system,
+        messages: cached.messages,
         stream: true,
         // Omitted entirely when there is nothing to put in it, rather than sent
         // as an empty object.
@@ -232,11 +295,13 @@ export class ClaudeProvider implements LlmProvider {
       const response = await stream.finalMessage();
       // Account BEFORE any throw: the API bills a refusal, and returning zero
       // for it puts spend in the ledger that nobody can see.
-      usage.inputTokens += response.usage.input_tokens;
+      const read = response.usage.cache_read_input_tokens ?? 0;
+      const written = response.usage.cache_creation_input_tokens ?? 0;
+      usage.inputTokens += response.usage.input_tokens + read + written;
       usage.outputTokens += response.usage.output_tokens;
-      usage.usd +=
-        (response.usage.input_tokens * price.in + response.usage.output_tokens * price.out) /
-        1_000_000;
+      usage.cacheReadTokens += read;
+      usage.cacheWriteTokens += written;
+      usage.usd += costUsd(price, response.usage);
       if (response.stop_reason === "refusal") {
         throw new Error(`model refused request "${req.label}"`);
       }

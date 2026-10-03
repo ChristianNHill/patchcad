@@ -2,6 +2,7 @@
  *  cook finished.
  *
  *    pnpm exec tsx src/eval.ts --dry-run           # validate cases, zero LLM calls
+ *    pnpm exec tsx src/eval.ts --dry --only hinge  # plan only: the architect call, no cook
  *    pnpm exec tsx src/eval.ts --case single-plate --max-usd 0.50
  *    pnpm exec tsx src/eval.ts --max-usd 2.00      # the whole ladder
  *
@@ -116,13 +117,16 @@ const { values: argv } = parseArgs({
     "self-test": { type: "boolean" },
     "score-projects": { type: "boolean" },
     "dry-run": { type: "boolean" },
+    /** Plan each case and stop: one architect call, no cook. */
+    dry: { type: "boolean" },
     case: { type: "string" },
+    only: { type: "string" },
     "max-usd": { type: "string" },
     repeat: { type: "string" },
   },
 });
-const flag = (name: "self-test" | "score-projects" | "dry-run") => argv[name] === true;
-const opt = (name: "case" | "max-usd" | "repeat") => argv[name] as string | undefined;
+const flag = (name: "self-test" | "score-projects" | "dry-run" | "dry") => argv[name] === true;
+const opt = (name: "case" | "only" | "max-usd" | "repeat") => argv[name] as string | undefined;
 
 /** A failed expectation, phrased so the line alone says what went wrong. */
 type Miss = string;
@@ -612,9 +616,21 @@ function scoreProjects(): void {
   );
 }
 
+/** What a plan-only run records: the architect's output, before any cook. */
+type DryResult = {
+  id: string; pass: boolean; dry: true; misses: string[]; usd: number; calls: number;
+  nodes: number; planMs: number; wallMs: number; lintProblems: string[]; planned: { id: string; kind: string }[];
+};
+
 async function runCase(c: EvalCase) {
   const backend = new CadBackend();
   const bus = new EventBus();
+  // Generation rounds per node: every attempt passes through "generating"
+  // once, and a node's calls alone cannot say that (round 1 drafts several).
+  const attempts: Record<string, number> = {};
+  bus.subscribe((e) => {
+    if (e.type === "node:status" && e.status === "generating") attempts[e.nodeId] = (attempts[e.nodeId] ?? 0) + 1;
+  });
   const provider = (await resolveProvider())?.provider;
   if (!provider) throw new Error("no LLM provider configured");
 
@@ -623,6 +639,19 @@ async function runCase(c: EvalCase) {
     provider, backend, projectId: `eval-${c.id}`, goal: c.prompt,
   });
   const planMs = Date.now() - t0;
+
+  if (flag("dry")) {
+    const planned = Object.values(plan.graph.nodes).map((n) => ({ id: n.id, kind: n.kind }));
+    const { min = 0, max = Infinity } = c.expect.nodes ?? {};
+    // The only expectation a plan alone can answer.
+    const misses = planned.length < min || planned.length > max
+      ? [`planned ${planned.length} nodes, expected ${min}..${max}`] : [];
+    return {
+      id: c.id, pass: misses.length === 0, dry: true, misses,
+      usd: plan.usage.usd, calls: plan.repaired ? 2 : 1, nodes: planned.length,
+      planMs, wallMs: planMs, lintProblems: plan.lintRounds.flat(), planned,
+    } satisfies DryResult;
+  }
 
   const store = new GraphStore(plan.graph, bus, async () => {});
   const workspace = { root: path.join(repoRoot, "evals", "results", ".work", c.id) };
@@ -685,7 +714,7 @@ async function runCase(c: EvalCase) {
       lintProblems: plan.lintRounds.flat(),
     },
     globalProblems: global,
-    planMs, cookMs, probes: probes.length,
+    planMs, cookMs, wallMs: planMs + cookMs, probes: probes.length,
     skipped: probes.filter((p) => p.skipped).length,
     // A FAIL THAT CANNOT BE DIAGNOSED COSTS A SECOND FULL RUN, which is the
     // "pay twice" this harness exists to avoid. The first real run landed a node
@@ -693,7 +722,8 @@ async function runCase(c: EvalCase) {
     // read the failure without calling a model again is captured here: the gate
     // verdict, the attribution, what each attempt was blamed on, and the code.
     perNode: nodes.map((n) => ({
-      id: n.id, kind: n.kind, status: n.status, calls: n.cost.calls, usd: n.cost.usd,
+      id: n.id, kind: n.kind, status: n.status, pass: n.status === "ready",
+      attempts: attempts[n.id] ?? 0, calls: n.cost.calls, usd: n.cost.usd,
       version: n.version,
       detail: n.statusDetail ?? null,
       causes: n.history.map((h) => h.cause),
@@ -707,12 +737,69 @@ async function runCase(c: EvalCase) {
   };
 }
 
+/** The fields the summary table reads; every result kind carries some. */
+type RunRow = {
+  id: string; pass: boolean; usd: number; error?: string; nodes?: number; calls?: number;
+  wallMs?: number; globalProblems?: string[];
+  perNode?: { pass: boolean; attempts: number }[];
+};
+
+/** The newest earlier result of the same kind (dry vs cooked), to diff against.
+ *  Results predating the dry flag were all cooked. */
+function latestResult(dry: boolean): { file: string; results: RunRow[] } | null {
+  if (!fs.existsSync(resultsDir)) return null;
+  for (const f of fs.readdirSync(resultsDir).filter((n) => n.endsWith(".json")).sort().reverse()) {
+    try {
+      const doc = JSON.parse(fs.readFileSync(path.join(resultsDir, f), "utf8")) as { dry?: boolean; results?: RunRow[] };
+      if (Boolean(doc.dry) === dry && doc.results?.length) return { file: f, results: doc.results };
+    } catch {
+      // a half-written result from a killed run is not a baseline
+    }
+  }
+  return null;
+}
+
+/** One screen: a row per run, and what moved since the previous result. */
+function summaryTable(rows: RunRow[], previous: ReturnType<typeof latestResult>): void {
+  const cells = (r: RunRow) => {
+    const nodes = r.perNode ?? [];
+    return {
+      verdict: r.error ? "THREW" : r.pass ? "pass" : "FAIL",
+      nodes: nodes.length ? `${nodes.filter((n) => n.pass).length}/${nodes.length}` : String(r.nodes ?? "-"),
+      attempts: nodes.length ? String(nodes.reduce((a, n) => a + n.attempts, 0)) : "-",
+      calls: String(r.calls ?? "-"),
+      usd: `$${r.usd.toFixed(3)}`,
+      wall: r.wallMs != null ? `${(r.wallMs / 1000).toFixed(0)}s` : "-",
+      g5: r.globalProblems ? String(r.globalProblems.length) : "-",
+    };
+  };
+  const head = ["case", "verdict", "ready", "attempts", "calls", "$", "wall", "G5", "vs previous"];
+  const table = rows.map((r) => {
+    const c = cells(r);
+    const before = previous?.results.find((p) => p.id === r.id);
+    let delta = "new";
+    if (before) {
+      const b = cells(before);
+      const moved = (Object.keys(c) as (keyof typeof c)[])
+        .filter((k) => c[k] !== b[k] && k !== "wall")
+        .map((k) => `${k} ${b[k]}->${c[k]}`);
+      delta = moved.join(", ") || "same";
+    }
+    return [r.id, c.verdict, c.nodes, c.attempts, c.calls, c.usd, c.wall, c.g5, delta];
+  });
+  const widths = head.map((h, i) => Math.max(h.length, ...table.map((row) => row[i]!.length)));
+  const line = (row: string[]) => row.map((v, i) => (i === row.length - 1 ? v : v.padEnd(widths[i]!))).join("  ");
+  console.log(`\n${line(head)}\n${widths.map((w) => "-".repeat(w)).join("  ")}`);
+  for (const row of table) console.log(line(row));
+  console.log(previous ? `diff vs ${previous.file}` : "no previous result of this kind to diff against");
+}
+
 async function main() {
   if (flag("self-test")) return selfTest();
   if (flag("score-projects")) return scoreProjects();
 
   const files = fs.readdirSync(casesDir).filter((f) => f.endsWith(".json")).sort();
-  const only = opt("case");
+  const only = opt("only") ?? opt("case");
   const cases: EvalCase[] = files
     .map((f) => JSON.parse(fs.readFileSync(path.join(casesDir, f), "utf8")) as EvalCase)
     .filter((c) => !only || c.id === only);
@@ -769,7 +856,8 @@ async function main() {
     return;
   }
 
-  if (!maxUsd) {
+  // A dry run is one architect call per case, so it needs no cap to be cheap.
+  if (!maxUsd && !flag("dry")) {
     console.error("refusing to run without --max-usd N (a ladder against a real provider spends money)");
     process.exit(2);
   }
@@ -786,7 +874,7 @@ async function main() {
   const results: unknown[] = [];
   let spent = 0;
   for (const c of plan) {
-    if (spent >= maxUsd) {
+    if (maxUsd && spent >= maxUsd) {
       console.log(`\nSTOPPING: spent $${spent.toFixed(3)} of $${maxUsd.toFixed(2)}. ${plan.length - plan.indexOf(c)} run(s) not started.`);
       break;
     }
@@ -815,6 +903,16 @@ async function main() {
     spent += r.usd;
     results.push(r);
     if ("error" in r) continue; // already reported above, and there is no run to summarise
+    if ("dry" in r) {
+      const d = r as DryResult;
+      console.log(
+        `  ${d.pass ? "PLANNED" : "FAIL"}  ${d.nodes} nodes [${d.planned.map((n) => `${n.id}:${n.kind}`).join(", ")}], ` +
+          `$${d.usd.toFixed(3)}, plan ${(d.planMs / 1000).toFixed(1)}s`,
+      );
+      for (const m of d.misses) console.log(`    MISS: ${m}`);
+      for (const m of d.lintProblems) console.log(`    lint-repair: ${m.slice(0, 160)}`);
+      continue;
+    }
     console.log(
       `  ${r.pass ? "PASS" : "FAIL"}  ${r.nodes} nodes (${r.deterministic} deterministic), ` +
         `${r.firstTry}/${r.modelNodes} first-try, ${r.dead} dead, ${r.calls} calls, ` +
@@ -834,9 +932,12 @@ async function main() {
   }
 
   fs.mkdirSync(resultsDir, { recursive: true });
+  // Read BEFORE writing, or the newest file is this run and the diff is empty.
+  const previous = latestResult(flag("dry"));
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const out = path.join(resultsDir, `${stamp}.json`);
-  fs.writeFileSync(out, JSON.stringify({ spent, maxUsd, results }, null, 2));
+  fs.writeFileSync(out, JSON.stringify({ spent, maxUsd, dry: flag("dry"), results }, null, 2));
+  summaryTable(results as RunRow[], previous);
 
   const passed = results.filter((r) => (r as { pass: boolean }).pass).length;
 

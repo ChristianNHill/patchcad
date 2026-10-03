@@ -140,9 +140,58 @@ describe("repairPrompt", () => {
     expect(text).toContain("Earlier attempts");
     expect(text).toContain("G1: SyntaxError: unexpected indent");
     expect(text).toContain("G2: boolean produced an empty solid");
-    // First line only — a full multi-line report per entry would crowd out the
-    // failure actually being repaired.
-    expect(text).not.toContain("line 3");
+    // The measured lines under the headline are kept: they often name the fix.
+    expect(text).toContain("line 3");
+  });
+
+  it("keeps a multi-line report but caps it, so a traceback cannot crowd out the failure", () => {
+    const report = ["port \"bolt\": expected Ø4.5, measured Ø9.00", "hint: Cylinder takes a radius",
+      ...Array.from({ length: 10 }, (_, i) => `frame ${i}`)].join("\n");
+    const text = lastUser(ctx({ attempt: 3, priorFailures: [{ stage: "G3", report }] }));
+    expect(text).toContain("measured Ø9.00");
+    expect(text).toContain("hint: Cylinder takes a radius");
+    expect(text).toContain("frame 3");
+    expect(text).not.toContain("frame 4");
+  });
+
+  it("keeps the first user turn identical across rounds, so it stays cacheable", () => {
+    const early = repairPrompt(ctx()).messages[0];
+    const late = repairPrompt(
+      ctx({ attempt: 4, priorFailures: [{ stage: "G1", report: "SyntaxError" }, { stage: "G2", report: "x" }] }),
+    ).messages[0];
+    expect(late).toEqual(early);
+  });
+
+  it("keeps the system block byte-identical whatever the failure", () => {
+    const plain = generatePrompt(ctx()).system;
+    const repaired = repairPrompt(
+      ctx({
+        failure: { stage: "TIMEOUT", report: "execution exceeded 20s and was killed" },
+        priorFailures: [{ stage: "G1", report: "build(p) raised IndexError: list index out of range" }],
+        basedOnAttempt: 1,
+        attempt: 3,
+      } as never),
+    ).system;
+    expect(repaired).toBe(plain);
+  });
+
+  it("puts known fixes for the failure in the repair turn", () => {
+    const text = lastUser(ctx());
+    expect(text).toContain("Known fixes");
+    expect(text).toContain("Cylinder takes a RADIUS");
+  });
+
+  it("offers no fixes when nothing matches", () => {
+    expect(lastUser(ctx({ failure: { stage: "G3", report: "something novel" } }))).not.toContain("Known fixes");
+  });
+
+  it("names the attempt being repaired when it is not the latest", () => {
+    expect(lastUser(ctx({ attempt: 4, basedOnAttempt: 2 } as never))).toContain(
+      "You are fixing attempt 2, the closest so far",
+    );
+    expect(lastUser(ctx({ attempt: 4 }))).not.toContain("You are fixing attempt");
+    // attempt is the round about to run, so attempt 3 IS the latest
+    expect(lastUser(ctx({ attempt: 4, basedOnAttempt: 3 } as never))).not.toContain("You are fixing attempt");
   });
 
   it("warns on the last round, and only then", () => {
@@ -280,5 +329,131 @@ describe("the repair prompt changes tactics as rounds run out", () => {
 
   it("still carries the gate measurement, which is the whole point of the prompt", () => {
     expect(round(4)).toContain("bottoms out at 2.80mm");
+  });
+});
+
+describe("fresh starts", () => {
+  it("lists approaches already tried when a generate carries prior failures", () => {
+    const user = generatePrompt({
+      ...ctx(),
+      priorFailures: [{ stage: "G3", report: 'port "bolt": bottoms out at 2.80mm\nhint: cut deeper' }],
+    } as never).messages[0]!.content;
+    expect(user).toContain("Approaches already tried");
+    expect(user).toContain("bottoms out at 2.80mm");
+    expect(user).toContain("hint: cut deeper");
+  });
+
+  it("adds nothing on a plain first generate", () => {
+    expect(generatePrompt(ctx()).messages[0]!.content).not.toContain("Approaches already tried");
+  });
+});
+
+describe("generatePrompt · patterns and assertions", () => {
+  const withPayload = (extra: Partial<CadContractPayload>) => {
+    const c = ctx();
+    c.node.contract.payload = { ...c.node.contract.payload, ...extra };
+    return generatePrompt(c).messages[0]!.content;
+  };
+
+  it("lists the assertions the kernel will measure", () => {
+    const user = withPayload({
+      assertions: [
+        { kind: "hole_count", min: 4, max: 4 },
+        { kind: "bbox_axis", axis: "x", min: 79.5, max: 80.5 },
+      ],
+    });
+    expect(user).toContain("Measured on the finished part");
+    expect(user).toContain("hole_count min=4, max=4");
+    expect(user).toContain("bbox_axis axis=x, min=79.5, max=80.5");
+  });
+
+  it("explains a pattern layout only when a pattern port exists", () => {
+    const pattern = withPayload({
+      ports: [{ name: "bolts", type: "HOLE_PATTERN", pose, params: { diameter: 4.5, count: 4, pcd: 50 } }] as never,
+    });
+    expect(pattern).toContain("circle of DIAMETER pcd");
+    expect(generatePrompt(ctx()).messages[0]!.content).not.toContain("Pattern ports");
+    expect(generatePrompt(ctx()).messages[0]!.content).not.toContain("Measured on the finished part");
+  });
+});
+
+describe("generatePrompt ports and envelope", () => {
+  const withGeometry = () => {
+    const c = ctx();
+    c.node.contract.params = [{ name: "thickness", type: "number", default: 5, description: "" }] as never;
+    c.node.params = { thickness: 6 };
+    c.node.contract.payload.ports = [
+      {
+        name: "mount_hole",
+        type: "CLEARANCE_HOLE",
+        pose: { origin: [10, 0, "param(base-plate.thickness) / 2"], zAxis: [0, 0, 1], xAxis: [0, 1, 0] },
+        params: { diameter: 4.5 },
+      },
+      {
+        name: "post",
+        type: "FLAT_FACE",
+        pose: { origin: [0, 0, "param(bracket.height) + 1"], zAxis: [0, 0, 1], xAxis: [1, 0, 0] },
+        params: { size: 4 },
+      },
+    ] as never;
+    c.node.contract.payload.envelope.volumes = [
+      { kind: "cylinder", pose: { origin: [0, 0, 3], zAxis: [1, 0, 0], xAxis: [0, 1, 0] }, d: 8, h: "param(base-plate.thickness) * 4" },
+      { kind: "box", pose: { ...pose, xAxis: [1, 1, 0] }, dims: [40, 40, 5] },
+    ] as never;
+    c.paramValues = { bracket: { height: 20 } };
+    return generatePrompt(c).messages[0]!.content;
+  };
+
+  it("prints resolved numbers, the xAxis, and own-param origins as p formulas", () => {
+    expect(withGeometry()).toContain(
+      "mount_hole (CLEARANCE_HOLE) at origin [10, 0, 3] (z = p.thickness / 2), z-out [0, 0, 1], x [0, 1, 0]",
+    );
+  });
+
+  it("resolves another node's param to a number but offers no p formula for it", () => {
+    expect(withGeometry()).toContain("post (FLAT_FACE) at origin [0, 0, 21], z-out [0, 0, 1], x [1, 0, 0]");
+  });
+
+  it("prints each envelope volume's orientation", () => {
+    const user = withGeometry();
+    expect(user).toContain("cylinder Ø8×24 mm centered at [0, 0, 3], axis along [1, 0, 0]");
+    expect(user).toContain("box 40×40×5 mm centered at [0, 0, 0], rotated: dims run along its own x [1, 1, 0]");
+    expect(generatePrompt(ctx()).messages[0]!.content).toContain("box 40×40×5 mm centered at [0, 0, 0], axis-aligned");
+  });
+});
+
+describe("fit cut targets on the generator's own ports", () => {
+  const withPorts = (ports: unknown[]) => {
+    const c = ctx();
+    c.node.contract.payload.ports = ports as CadContractPayload["ports"];
+    return c;
+  };
+  const dowel = { name: "pin_hole", type: "DOWEL_HOLE", pose, params: { diameter: 3, depth: 6, fit: "press" } };
+  const seat = { name: "brg_seat", type: "BEARING_SEAT", pose, params: { od: 22, width: 7, fit: "slip" } };
+
+  it("annotates each fitted port with the size to cut, from its nominal + fit", () => {
+    const user = generatePrompt(withPorts([dowel, seat])).messages.at(-1)!.content;
+    expect(user).toContain("pin_hole (DOWEL_HOLE)");
+    expect(user).toContain("fdm: cut Ø 2.95 (diameter 3 − 0.05, press)");
+    expect(user).toContain("fdm: cut Ø 22.15 (od 22 + 0.15, slip); pocket ≥ width deep on a shoulder lip ≥ 1 mm");
+  });
+
+  it("leaves the system block byte-identical", () => {
+    expect(generatePrompt(withPorts([dowel, seat])).system).toBe(generatePrompt(ctx()).system);
+  });
+
+  it("aims a machined part at the machined band, not the printed one", () => {
+    const c = withPorts([dowel, seat]);
+    (c.node.contract.payload as { sourcing?: unknown }).sourcing = { class: "fabricate", process: "cnc", material: "6061" };
+    const user = generatePrompt(c).messages.at(-1)!.content;
+    expect(user).toContain("cnc: cut Ø 2.975 (diameter 3 − 0.025, press)");
+    expect(user).toContain("cnc: cut Ø 22.025 (od 22 + 0.025, slip)");
+    expect(user).not.toContain("fdm: cut");
+  });
+
+  it("adds nothing to ports with no fit", () => {
+    const face = { name: "face", type: "FLAT_FACE", pose, params: {} };
+    const user = generatePrompt(withPorts([face])).messages.at(-1)!.content;
+    expect(user).not.toContain(": cut");
   });
 });

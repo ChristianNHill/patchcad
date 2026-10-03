@@ -1,11 +1,12 @@
 import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Canvas, useThree } from "@react-three/fiber";
-import { Grid, OrbitControls } from "@react-three/drei";
+import { Canvas, useThree, type ThreeEvent } from "@react-three/fiber";
+import { Grid, Html, Line, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import type { NodeStatus } from "@patchcad/shared";
+import { isCooking, type NodeStatus } from "@patchcad/shared";
 import { useStudio } from "./store.js";
 import { API } from "./api";
+import { fmtMm, measure, sectionOffset, sectionPlane, type Axis, type MeasurePoint, type Vec3 } from "./measure.js";
 
 /**
  * The CAD preview pane: per-node GLB meshes (straight from the kernel's
@@ -42,46 +43,97 @@ const TINTS: Record<string, THREE.Color> = {
   "var-warn": new THREE.Color("#8a5300"), //   --color-warn
   "var-danger": new THREE.Color("#b3261e"), // --color-danger
 };
-const BASE = new THREE.Color("#898884"); //    --color-graphite
+export const BASE = new THREE.Color("#898884"); //    --color-graphite
 const GRID = "#c4c3bf"; //                     --color-grid       10mm cells
 const GRID_MAJOR = "#9d9c97"; //               --color-grid-major 50mm lines
+export const INK = "#37352f"; //                      --color-ink        measure line
 
-function PartMesh({
+/** GPU memory is not garbage-collected: every refetch used to leave the
+ *  previous meshes' buffers behind. Clones share geometry and materials with
+ *  the loaded original, so disposing the original frees them all. */
+function dispose(root: THREE.Object3D) {
+  root.traverse((child) => {
+    if (child instanceof THREE.Mesh) {
+      child.geometry.dispose();
+      for (const m of [child.material].flat() as THREE.Material[]) m.dispose();
+    }
+  });
+}
+
+/** glTF is meters and Y-up by spec (the exporter rotates Z-up CAD data -90°
+ *  about X); assembly matrices are millimeter Z-up. Undo both. */
+function placement(matrix?: number[]): THREE.Matrix4 {
+  const m = new THREE.Matrix4();
+  if (matrix && matrix.length === 16) m.fromArray(matrix);
+  m.multiply(new THREE.Matrix4().makeScale(1000, 1000, 1000));
+  m.multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2));
+  return m;
+}
+
+/**
+ * One node's mesh, drawn at every pose the assembly gives it (four arms off
+ * one plate). The GLB loads ONCE and the extra poses are clones sharing its
+ * geometry and materials; each pose used to fetch and parse its own copy.
+ */
+function NodeParts({
   id,
   url,
-  matrix,
+  matrices,
   tint,
   offset,
+  clip,
   onCenter,
+  onError,
 }: {
   id: string;
   url: string;
-  matrix?: number[];
+  matrices: (number[] | undefined)[];
   tint: string | null;
-  /** World-space displacement (mm) — the exploded-view slide. */
+  /** World-space displacement (mm) — the exploded-view slide, shared by every
+   *  pose of the node. */
   offset?: [number, number, number];
-  /** Omitted for repeat instances: the explode offset is per-node, so only
-   *  the first copy reports a centre. */
-  onCenter?: (id: string, min: [number, number, number], max: [number, number, number]) => void;
+  /** Section planes, or null for none. */
+  clip: THREE.Plane[] | null;
+  /** The first pose's placed bounds: framing and explode directions. */
+  onCenter: (id: string, min: [number, number, number], max: [number, number, number]) => void;
+  onError: (id: string, message: string) => void;
 }) {
   const [object, setObject] = useState<THREE.Object3D | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    loader.load(url, (gltf) => {
-      if (cancelled) return;
-      const cloned = gltf.scene;
-      cloned.traverse((child) => {
-        if (child instanceof THREE.Mesh) {
-          child.material = new THREE.MeshStandardMaterial({ color: BASE, metalness: 0.1, roughness: 0.6 });
+    let loaded: THREE.Object3D | null = null;
+    loader.load(
+      url,
+      (gltf) => {
+        if (cancelled) {
+          dispose(gltf.scene);
+          return;
         }
-      });
-      setObject(cloned);
-    });
+        gltf.scene.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            (child.material as THREE.Material).dispose();
+            // Double-sided so a section cut shows the part's inside rather
+            // than an empty shell.
+            child.material = new THREE.MeshStandardMaterial({ color: BASE, metalness: 0.1, roughness: 0.6, side: THREE.DoubleSide });
+            child.userData.nodeId = id;
+          }
+        });
+        loaded = gltf.scene;
+        setObject(loaded);
+      },
+      undefined,
+      // A failed GLB used to be silent: the bar counted the part and the
+      // viewport drew nothing.
+      (err) => {
+        if (!cancelled) onError(id, err instanceof Error ? err.message : String(err));
+      },
+    );
     return () => {
       cancelled = true;
+      if (loaded) dispose(loaded);
     };
-  }, [url]);
+  }, [url, id, onError]);
 
   useEffect(() => {
     if (!object) return;
@@ -94,40 +146,57 @@ function PartMesh({
     });
   }, [object, tint]);
 
-  const m4 = useMemo(() => {
-    const m = new THREE.Matrix4();
-    if (matrix && matrix.length === 16) m.fromArray(matrix);
-    // glTF is meters and Y-up by spec (the exporter rotates Z-up CAD data
-    // -90° about X); assembly matrices are millimeter Z-up. Undo both.
-    m.multiply(new THREE.Matrix4().makeScale(1000, 1000, 1000));
-    m.multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2));
-    return m;
-  }, [matrix]);
+  useEffect(() => {
+    if (!object) return;
+    object.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        const m = child.material as THREE.MeshStandardMaterial;
+        m.clippingPlanes = clip;
+        m.needsUpdate = true; // clipping on/off is a shader variant
+      }
+    });
+  }, [object, clip]);
+
+  const poseCount = matrices.length;
+  const copies = useMemo(
+    () => (object ? Array.from({ length: poseCount }, (_, i) => (i === 0 ? object : object.clone())) : []),
+    [object, poseCount],
+  );
+
+  // Keyed by value: the parent builds a fresh one-pose array every render.
+  const matricesKey = JSON.stringify(matrices);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const m4s = useMemo(() => matrices.map(placement), [matricesKey]);
 
   // Report the part's placed bounds — the parent frames the camera on the
   // assembly and derives each part's exploded-view direction from the centers.
   useEffect(() => {
-    if (!object) return;
+    if (!object || !m4s[0]) return;
     const box = new THREE.Box3().setFromObject(object);
     if (box.isEmpty()) return;
-    box.applyMatrix4(m4);
-    onCenter?.(id, [box.min.x, box.min.y, box.min.z], [box.max.x, box.max.y, box.max.z]);
-  }, [object, m4, id, onCenter]);
+    box.applyMatrix4(m4s[0]);
+    onCenter(id, [box.min.x, box.min.y, box.min.z], [box.max.x, box.max.y, box.max.z]);
+  }, [object, m4s, id, onCenter]);
 
-  const placed = useMemo(() => {
-    if (!offset) return m4;
-    return new THREE.Matrix4().makeTranslation(offset[0], offset[1], offset[2]).multiply(m4);
-  }, [m4, offset]);
+  const placed = useMemo(
+    () => (offset ? m4s.map((m) => new THREE.Matrix4().makeTranslation(offset[0], offset[1], offset[2]).multiply(m)) : m4s),
+    [m4s, offset],
+  );
 
-  if (!object) return null;
-  return <primitive object={object} matrix={placed} matrixAutoUpdate={false} />;
+  return (
+    <>
+      {copies.map((copy, i) => (
+        <primitive key={i} object={copy} matrix={placed[i]} matrixAutoUpdate={false} />
+      ))}
+    </>
+  );
 }
 
 /** Frames the camera on the assembly: imported models live wherever their
  * mesh coordinates put them (often nowhere near the origin), so a fixed
  * camera can open onto empty grid. Re-frames only when the part set changes,
  * never while the user is orbiting. */
-function FitCamera({ box, partsKey }: { box: THREE.Box3 | null; partsKey: string }) {
+export function FitCamera({ box, partsKey }: { box: THREE.Box3 | null; partsKey: string }) {
   const camera = useThree((s) => s.camera);
   const controls = useThree((s) => s.controls) as { target: THREE.Vector3; update: () => void } | null;
   // Framed part sets, not a one-shot effect: box, controls and partsKey settle
@@ -158,7 +227,7 @@ function FitCamera({ box, partsKey }: { box: THREE.Box3 | null; partsKey: string
 
 /** WebGL isn't a given (hardware acceleration off, remote sessions) — a
  * viewport failure must degrade to a message, never a dead studio. */
-class ViewportBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
+export class ViewportBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
   state = { error: null as string | null };
   static getDerivedStateFromError(err: Error) {
     return { error: err.message };
@@ -189,14 +258,24 @@ export function CadViewport() {
   );
 }
 
+const AXES = ["x", "y", "z"] as const;
+const vec = (v: THREE.Vector3): Vec3 => [v.x, v.y, v.z];
+
 function CadViewportInner() {
   const graph = useStudio((s) => s.graph);
   const statuses = useStudio((s) => s.statuses);
   const selectedNodeId = useStudio((s) => s.selectedNodeId);
+  const kernel = useStudio((s) => s.status?.kernel);
   const [data, setData] = useState<SceneData | null>(null);
+  const [sceneError, setSceneError] = useState<string | null>(null);
+  const [sceneLoading, setSceneLoading] = useState(false);
+  const [loadErrors, setLoadErrors] = useState<Record<string, string>>({});
   const [reloadKey, setReloadKey] = useState(0);
   const [explode, setExplode] = useState(0);
   const [bounds, setBounds] = useState<Record<string, { min: [number, number, number]; max: [number, number, number] }>>({});
+  const [measuring, setMeasuring] = useState(false);
+  const [picks, setPicks] = useState<MeasurePoint[]>([]);
+  const [section, setSection] = useState<{ on: boolean; axis: Axis; t: number }>({ on: false, axis: 2, t: 0.5 });
 
   const onCenter = useCallback((id: string, min: [number, number, number], max: [number, number, number]) => {
     setBounds((prev) => {
@@ -211,26 +290,55 @@ function CadViewportInner() {
     });
   }, []);
 
+  const onLoadError = useCallback((id: string, message: string) => {
+    setLoadErrors((prev) => ({ ...prev, [id]: message }));
+  }, []);
+
   // Scene refetches ride the store's cook/param signals.
   const sceneRev = useStudio((s) => s.cadSceneRev);
   useEffect(() => {
     let cancelled = false;
+    setSceneLoading(true);
     void fetch(`${API}/api/project/cad-scene`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d: SceneData | null) => {
-        if (cancelled || !d) return;
+      .then(async (r) => {
+        if (r.ok) return (await r.json()) as SceneData;
+        const body = (await r.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `the scene did not load (${r.status})`);
+      })
+      .then((d) => {
+        if (cancelled) return;
         setData(d);
+        setSceneError(null);
+        setLoadErrors({});
         const scores: Record<string, never> = {};
         for (const [id, m] of Object.entries(d.meshes)) {
           if (m.printability) scores[id] = m.printability as never;
         }
         useStudio.getState().setPrintability(scores);
       })
-      .catch(() => {});
+      .catch((err: Error) => {
+        if (!cancelled) setSceneError(err.message);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setSceneLoading(false);
+        // The kernel answered (or failed): let the warm-up banner settle.
+        void useStudio.getState().loadStatus();
+      });
     return () => {
       cancelled = true;
     };
   }, [graph?.rev, sceneRev, reloadKey]);
+
+  // A scene fetch waits on the kernel, and its first boot pays the OCP import —
+  // a minute of empty grid. Ask the server whether that is what is happening.
+  useEffect(() => {
+    if (!sceneLoading) return;
+    const loadStatus = useStudio.getState().loadStatus;
+    void loadStatus();
+    const timer = setInterval(() => void loadStatus(), 2000);
+    return () => clearInterval(timer);
+  }, [sceneLoading]);
 
   // Exploded view: each part slides away from the assembly centroid along its
   // own center direction — mates and joints (pegs, sockets) become inspectable
@@ -270,15 +378,66 @@ function CadViewportInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bounds, liveIds.join("|")]);
 
+  // One plane object for the life of the viewport: materials hold a reference,
+  // so moving the slider updates it in place without recompiling a shader.
+  const clipPlane = useMemo(() => new THREE.Plane(), []);
+  const clip = useMemo(() => (section.on ? [clipPlane] : null), [section.on, clipPlane]);
+  useEffect(() => {
+    if (!unionBox) return;
+    // A hair past the bounds, so both slider ends show the whole part or none.
+    const min = vec(unionBox.min.clone().subScalar(0.5));
+    const max = vec(unionBox.max.clone().addScalar(0.5));
+    const { normal, constant } = sectionPlane(section.axis, sectionOffset(min, max, section.axis, section.t));
+    clipPlane.set(new THREE.Vector3(...normal), constant);
+  }, [clipPlane, unionBox, section.axis, section.t]);
+
+  /** Click a part to select its node (the canvas and inspector follow), or,
+   *  while measuring, to drop a measure point on its surface. */
+  const onPick = useCallback(
+    (e: ThreeEvent<MouseEvent>) => {
+      // An orbit drag ends in a click too; only a still click picks.
+      if (e.delta > 4) return;
+      e.stopPropagation();
+      // Raycasts ignore clipping, so skip hits on the cut-away side.
+      const hit = e.intersections.find((h) => !clip || clipPlane.distanceToPoint(h.point) >= 0);
+      if (!hit) return;
+      if (measuring) {
+        const normal = hit.face ? vec(hit.face.normal.clone().transformDirection(hit.object.matrixWorld)) : null;
+        const p: MeasurePoint = { point: vec(hit.point), normal };
+        setPicks((prev) => (prev.length >= 2 ? [p] : [...prev, p]));
+        return;
+      }
+      const nodeId = hit.object.userData.nodeId as string | undefined;
+      if (nodeId && nodeId !== useStudio.getState().selectedNodeId) void useStudio.getState().selectNode(nodeId);
+    },
+    [measuring, clip, clipPlane],
+  );
+
+  const reading = picks.length === 2 ? measure(picks[0]!, picks[1]!) : null;
+
   if (!graph) return null;
   const parts = Object.entries(data?.meshes ?? {});
   // Never let an exclusion be silent: a short export is otherwise indistinguishable
   // from a broken one.
   const hiddenCount = Object.values(graph.nodes).filter((n) => n.hidden).length;
+  const failedLoads = Object.entries(loadErrors);
+  const warming = sceneLoading && kernel != null && !kernel.ok;
+  const cooking = Object.values(statuses).some(isCooking);
 
   return (
-    <div className="cad-viewport">
-      <Canvas camera={{ position: [90, -90, 80], up: [0, 0, 1], fov: 40, near: 0.1, far: 5000 }}>
+    <div className="cad-viewport" data-tool={measuring ? "measure" : undefined}>
+      {warming && (
+        <div className="banner cad-viewport__banner" role="status">
+          Starting the geometry kernel. Its first boot loads OpenCascade and can take a minute;
+          {cooking ? " the cook continues once it is up." : " parts appear once it is up."}
+        </div>
+      )}
+      <Canvas
+        camera={{ position: [90, -90, 80], up: [0, 0, 1], fov: 40, near: 0.1, far: 5000 }}
+        onCreated={({ gl }) => {
+          gl.localClippingEnabled = true;
+        }}
+      >
         <ambientLight intensity={0.6} />
         <directionalLight position={[100, -60, 140]} intensity={1.4} />
         <directionalLight position={[-80, 90, 40]} intensity={0.4} />
@@ -301,27 +460,41 @@ function CadViewportInner() {
           side={THREE.DoubleSide}
         />
         <FitCamera box={unionBox} partsKey={liveIds.join("|")} />
-        {parts.flatMap(([id, mesh]) => {
-          // One node can be placed at several poses (four arms off one plate),
-          // so the node draws once per pose. Only the first reports its centre:
-          // the explode offset is per-node, so every copy of a node slides by
-          // the same vector.
-          // ponytail: shared offset, give instances their own centres if
-          // exploding a repeated part ever needs to fan them out individually.
-          const n = data?.scene.nodes[id];
-          const poses = n?.matrices?.length ? n.matrices : [n?.matrix];
-          return poses.map((matrix, i) => (
-            <PartMesh
-              key={`${id}:${mesh.glb}:${i}`}
-              id={id}
-              url={mesh.glb}
-              matrix={matrix}
-              tint={statusTint(statuses[id], selectedNodeId === id)}
-              offset={offsets[id]}
-              onCenter={i === 0 ? onCenter : undefined}
-            />
-          ));
-        })}
+        <group onClick={onPick}>
+          {parts.map(([id, mesh]) => {
+            const n = data?.scene.nodes[id];
+            return (
+              <NodeParts
+                key={`${id}:${mesh.glb}`}
+                id={id}
+                url={mesh.glb}
+                matrices={n?.matrices?.length ? n.matrices : [n?.matrix]}
+                tint={statusTint(statuses[id], selectedNodeId === id)}
+                offset={offsets[id]}
+                clip={clip}
+                onCenter={onCenter}
+                onError={onLoadError}
+              />
+            );
+          })}
+        </group>
+        {measuring &&
+          picks.map((p, i) => (
+            <Html key={i} position={p.point} center>
+              <span className="cad-viewport__measure-dot" />
+            </Html>
+          ))}
+        {reading && (
+          <>
+            <Line points={[picks[0]!.point, picks[1]!.point]} color={INK} lineWidth={1.5} depthTest={false} />
+            <Html position={reading.mid} center>
+              <span className="cad-viewport__measure-label">
+                {fmtMm(reading.distance)}
+                {reading.faceGap !== null && ` · faces ${fmtMm(reading.faceGap)}`}
+              </span>
+            </Html>
+          </>
+        )}
         <OrbitControls makeDefault />
       </Canvas>
       <div className="cad-viewport__bar">
@@ -342,13 +515,68 @@ function CadViewportInner() {
               max={1}
               step={0.01}
               value={explode}
+              disabled={measuring}
               onChange={(e) => setExplode(Number(e.target.value))}
             />
           </label>
         )}
+        <button
+          className="btn btn--quiet btn--tiny"
+          aria-pressed={measuring}
+          title="click two points on the model for the distance between them; two parallel faces also give the gap between their planes"
+          onClick={() => {
+            // An exploded measurement is a distance between parts that are
+            // not where the assembly puts them.
+            if (!measuring) setExplode(0);
+            setMeasuring(!measuring);
+            setPicks([]);
+          }}
+        >
+          measure
+        </button>
+        <button
+          className="btn btn--quiet btn--tiny"
+          aria-pressed={section.on}
+          title="cut the model with a plane to see inside it"
+          onClick={() => setSection((s) => ({ ...s, on: !s.on }))}
+        >
+          section
+        </button>
+        {section.on && (
+          <span className="cad-viewport__section">
+            <select
+              className="input"
+              value={section.axis}
+              onChange={(e) => setSection((s) => ({ ...s, axis: Number(e.target.value) as Axis }))}
+              aria-label="section axis"
+            >
+              {AXES.map((a, i) => (
+                <option key={a} value={i}>
+                  {a}
+                </option>
+              ))}
+            </select>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.005}
+              value={section.t}
+              onChange={(e) => setSection((s) => ({ ...s, t: Number(e.target.value) }))}
+              aria-label="section offset"
+            />
+          </span>
+        )}
+        {measuring && !reading && <span>{picks.length === 0 ? "click a point" : "click a second point"}</span>}
         {selectedNodeId && data?.meshes[selectedNodeId]?.printability?.composite !== undefined && (
           <span title="DfAM printability (min-wall + overhang, CADClamp method): 1.0 prints clean, low values will fail on an FDM printer">
             printability {data.meshes[selectedNodeId]!.printability!.composite!.toFixed(2)}
+          </span>
+        )}
+        {sceneError && <span className="cad-viewport__problem">{sceneError}</span>}
+        {failedLoads.length > 0 && (
+          <span className="cad-viewport__problem" title={failedLoads.map(([id, msg]) => `${id}: ${msg}`).join("\n")}>
+            {failedLoads.length} part{failedLoads.length === 1 ? "" : "s"} failed to load
           </span>
         )}
         {(data?.scene.problems.length ?? 0) > 0 && (
@@ -366,10 +594,11 @@ function CadViewportInner() {
 /**
  * Geometry out. Exports the SELECTED part in its own frame when there is one,
  * because that is what you slice — parts print flat and separately, not posed.
- * With nothing selected it writes the whole assembly as one mesh.
+ * With nothing selected it writes the posed assembly: one STEP child or 3MF
+ * object per placed part, one combined mesh for stl/obj.
  *
- * The kernel serves the file; the browser saves it. Nothing is written into
- * the project, so exporting can never disturb a graph.
+ * The server streams the kernel's file; the browser saves it. Nothing is
+ * written into the project, so exporting can never disturb a graph.
  */
 function ExportButton({ nodeId, partCount }: { nodeId: string | null; partCount: number }) {
   const [format, setFormat] = useState<string>("stl");
@@ -380,17 +609,25 @@ function ExportButton({ nodeId, partCount }: { nodeId: string | null; partCount:
     setBusy(true);
     setError(null);
     try {
-      const q = new URLSearchParams({ format, ...(nodeId ? { node: nodeId } : {}) });
-      const res = await fetch(`${API}/api/project/export?${q}`);
-      const body = (await res.json()) as { url?: string; filename?: string; error?: string; hint?: string };
-      if (!res.ok || !body.url) {
+      const q = new URLSearchParams(nodeId ? { node: nodeId } : {});
+      const res = await fetch(`${API}/api/project/export/${format}?${q}`);
+      if (!res.ok) {
+        const body = (await res.json()) as { error?: string; hint?: string };
         setError(body.hint ? `${body.error} — ${body.hint}` : (body.error ?? "export failed"));
         return;
       }
+      // A blob URL is same-origin, so the browser honours `download` — it
+      // ignored the name on the old cross-origin link to the kernel.
+      const filename = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1];
+      const url = URL.createObjectURL(await res.blob());
       const a = document.createElement("a");
-      a.href = body.url;
-      a.download = body.filename ?? `patchcad.${format}`;
+      a.href = url;
+      a.download = filename ?? `patchcad.${format}`;
       a.click();
+      URL.revokeObjectURL(url);
+      // e.g. imported mesh parts a STEP export had to leave out
+      const warning = res.headers.get("x-patchcad-warning");
+      if (warning) setError(warning);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -405,7 +642,7 @@ function ExportButton({ nodeId, partCount }: { nodeId: string | null; partCount:
         value={format}
         onChange={(e) => setFormat(e.target.value)}
         aria-label="export format"
-        title="stl / 3mf / obj write a mesh for a slicer; step writes B-rep for another CAD tool, one part at a time"
+        title="stl / 3mf / obj write a mesh for a slicer; step writes B-rep for another CAD tool, the whole assembly when nothing is selected"
       >
         {["stl", "3mf", "obj", "step"].map((f) => (
           <option key={f} value={f}>

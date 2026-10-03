@@ -630,6 +630,16 @@ body {
 .plan-row strong { font-weight: 600; }
 .plan-row__kind { color: var(--color-muted); font-family: var(--font-mono); font-size: var(--text-2xs); margin-left: var(--space-2xs); }
 .plan-row__summary { color: var(--color-ink-2); font-size: var(--text-xs); margin-top: var(--space-3xs); }
+.plan-preview {
+  height: 14rem;
+  margin: var(--space-xs) 0 var(--space-3xs);
+  background: var(--color-well);
+  border: 1px solid var(--color-rule-2);
+  border-radius: var(--radius-node);
+  overflow: hidden;
+}
+.plan-preview__note { color: var(--color-muted); font-size: var(--text-2xs); }
+.plan-preview__drafts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2xs); margin: var(--space-2xs) 0; }
 .plan-row__params { color: var(--color-accent); font-family: var(--font-mono); font-size: var(--text-2xs); margin-top: var(--space-3xs); }
 
 /* ---------- tier routing + T3 proposals ---------- */
@@ -1062,3 +1072,90 @@ body {
 }
 .plan-progress__step[data-state="done"] .plan-progress__mark { color: var(--color-ok); }
 .plan-progress__step[data-state="active"] .plan-progress__mark { color: var(--color-accent); }
+
+/* ---- banners: a standing condition, not a failure (kernel warming, no model) */
+.banner {
+  border: 1px solid oklch(from var(--color-warn) l c h / 0.4);
+  border-radius: var(--radius-input);
+  background: oklch(from var(--color-warn) l c h / 0.07);
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  padding: var(--space-xs) var(--space-sm);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.banner strong { color: var(--color-warn); font-weight: 600; }
+.cad-viewport__banner {
+  position: absolute;
+  top: var(--space-sm);
+  left: var(--space-sm);
+  right: var(--space-sm);
+  z-index: 1;
+  background: var(--color-paper-2);
+  box-shadow: var(--shadow-card);
+}
+
+/* ---- viewport tools: measure + section */
+.cad-viewport[data-tool="measure"] canvas { cursor: crosshair; }
+.cad-viewport__bar .btn[aria-pressed="true"] { color: var(--color-accent); border-color: var(--color-accent); }
+.cad-viewport__section { display: inline-flex; align-items: center; gap: var(--space-2xs); }
+.cad-viewport__section .input {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  padding: var(--space-3xs) var(--space-2xs);
+}
+.cad-viewport__section input[type="range"] { width: 88px; accent-color: var(--color-accent); }
+.cad-viewport__measure-dot {
+  display: block;
+  width: var(--space-xs);
+  height: var(--space-xs);
+  border-radius: var(--radius-pill);
+  background: var(--color-paper-2);
+  border: 2px solid var(--color-ink);
+}
+.cad-viewport__measure-label {
+  display: block;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink);
+  background: var(--color-paper-2);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-input);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-3xs) var(--space-2xs);
+  pointer-events: none;
+}
+
+/* ---------- sourcing + BOM ---------- */
+
+/* ink, not blue: it marks a kind of part, not an action */
+.vendor-badge {
+  display: inline-block;
+  margin-left: var(--space-2xs);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  padding: 0 var(--space-2xs);
+  border: 1px solid var(--color-ink);
+  border-radius: var(--radius-input);
+  color: var(--color-ink);
+  white-space: nowrap;
+}
+.bom { display: grid; gap: var(--space-md); }
+.bom__title {
+  margin: 0 0 var(--space-2xs);
+  font-family: var(--font-display);
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-muted);
+}
+.bom__table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+.bom__table td { padding: var(--space-2xs) var(--space-2xs); border-top: 1px solid var(--color-rule-2); vertical-align: baseline; }
+.bom__table tr:first-child td { border-top: none; }
+.bom__mono { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--color-ink-2); }
+.bom__num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bom__sub { color: var(--color-muted); font-size: var(--text-xs); margin: 0; }
+.bom__sub a { color: var(--color-accent); margin-right: var(--space-2xs); }

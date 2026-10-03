@@ -7,6 +7,7 @@ import type { LlmProvider, LlmRequest, LlmResult, LlmRole } from "@patchcad/engi
 import { ClaudeProvider, PRICES } from "@patchcad/llm-claude";
 import { OpenAiCompatProvider } from "@patchcad/llm-openai-compat";
 import { ClaudeCliProvider } from "./claude-cli-provider.js";
+import { MeshGenConfig } from "./meshgen/index.js";
 
 /**
  * Provider resolution, in order:
@@ -51,7 +52,13 @@ const RoleModels = z
   })
   .partial();
 
-const ConfigSchema = z.object({
+export const ConfigSchema = z.object({
+  /** Spend cap per cook wave, in list-price dollars. Unset means no cap. */
+  maxUsd: z.number().positive().optional(),
+  /** Image-to-3D for `geometrySource: "mesh"` parts. Absent = none. A broken
+   *  entry reads as absent here so it cannot take LLM routing down with it;
+   *  readMeshGen reports it. */
+  meshgen: MeshGenConfig.optional().catch(undefined),
   /** Per-role provider routing, e.g. {"architect":"claude","generator":"local"}.
    * repair defaults to the architect's provider (escalation), classifier to
    * the generator's. Referenced entries must be configured below. */
@@ -101,8 +108,8 @@ export class CompositeProvider implements LlmProvider {
   }
   complete<T>(req: LlmRequest<T>): Promise<LlmResult<T>> {
     // IMAGES OUTRANK ROLE, because neither vision call is reachable by a role
-    // map: inspectNode runs as "generator" (deliberately — it is triage, not
-    // repair) and the CAD repair prompt attaches a render under "repair". A
+    // map: inspectNode runs as "classifier" (shared with the text-only tier
+    // classifier) and the CAD repair prompt attaches a render under "repair". A
     // provider that cannot see drops the attachment SILENTLY and answers about
     // a picture it never received, which reads as a model being stupid rather
     // than a router being wrong. So route on the capability the call needs.
@@ -270,6 +277,41 @@ export async function resolveProvider(
     }
   }
   return null;
+}
+
+/** The per-cook cap from the config file. Read on its own because it applies
+ *  whichever provider resolution picked, env keys included. */
+export async function readMaxUsd(
+  configPath = path.join(os.homedir(), ".patchcad", "config.json"),
+): Promise<number | undefined> {
+  if (!existsSync(configPath)) return undefined;
+  try {
+    return ConfigSchema.parse(JSON.parse(await readFile(configPath, "utf8"))).maxUsd;
+  } catch {
+    // resolveProvider already warns about an invalid file.
+    return undefined;
+  }
+}
+
+/** The mesh-generation entry, or null when there is none. An invalid entry
+ *  warns and reads as none: the server still boots, and plans parametric. */
+export async function readMeshGen(
+  configPath = path.join(os.homedir(), ".patchcad", "config.json"),
+): Promise<MeshGenConfig | null> {
+  if (!existsSync(configPath)) return null;
+  let raw: { meshgen?: unknown };
+  try {
+    raw = JSON.parse(await readFile(configPath, "utf8"));
+  } catch {
+    return null; // resolveProvider already warns about an invalid file
+  }
+  if (raw.meshgen === undefined) return null;
+  const parsed = MeshGenConfig.safeParse(raw.meshgen);
+  if (!parsed.success) {
+    console.warn(`[patchcad] ignoring meshgen in ${configPath}: ${parsed.error.issues.map((i) => `${i.path.join(".")} ${i.message}`).join("; ")}`);
+    return null;
+  }
+  return parsed.data;
 }
 
 export const NO_PROVIDER_HELP =

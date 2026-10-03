@@ -53,8 +53,10 @@ Actively in development; nothing here is stable. Current known limits:
 - **No clash checking.** Each part is gated on its own: imports, volume, port
   geometry, envelope. Nothing yet checks a solved assembly for parts
   intersecting each other (G5).
-- **STEP exports one part at a time.** STL, 3MF and OBJ export the whole posed
-  assembly; STEP is per-part, because a posed assembly has no B-rep answer.
+- **Exports carry names, not metadata.** A posed STEP is an assembly with one
+  named, coloured child per placed part, and 3MF has one named object per part.
+  Contract hashes and params are not written into either file. Imported meshes
+  have no B-rep, so STEP leaves them out and says which.
 - **Smart segmentation is import-only.** Splitting a model into naturally
   separating, peg-jointed pieces works for imported meshes; generated parts
   can't split yet.
@@ -102,6 +104,24 @@ an STL/STEP/3MF you already have. Either creates a project under
 hand-authored 3-node reference (plate + L-bracket + M4 screw): drag the param
 sliders on nodes. **T0 edits never touch an LLM**, and the bracket's hole and
 the screw's thread re-derive from the plate through T1 bindings.
+
+## Run with Docker
+
+```sh
+ANTHROPIC_API_KEY=sk-ant-... docker compose up --build   # or OPENROUTER_API_KEY=...
+```
+
+Then open http://localhost:4100. Two containers: `server` (Node 22, the API plus
+a production studio build on one port) and `kernel` (Python 3.12 with the
+build123d/OCP virtualenv baked into the image, so nothing downloads at
+runtime). The browser only talks to the server, which proxies meshes, renders
+and exports from the kernel, so it works from another machine too. Projects and
+`~/.patchcad` (library, config) live in named volumes. There is still no
+auth, so publish port 4100 only on a network you trust.
+
+Use an API key or OpenRouter here. The `subscription` provider shells out to
+the `claude` CLI, which is not in the image and is not logged in, so a config
+routing to it will fail inside the container.
 
 ## Enable planning + generation
 

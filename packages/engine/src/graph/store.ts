@@ -24,10 +24,12 @@ const STATUS_TRANSITIONS: Record<NodeStatus, NodeStatus[]> = {
   building: ["queued", "verifying", "repairing", "error_code", "error_contract", "cancelled"],
   verifying: ["queued", "ready", "repairing", "error_code", "error_contract", "cancelled"],
   repairing: ["queued", "generating", "error_code", "error_contract", "cancelled"],
-  ready: ["dirty", "queued", "cancelled"],
+  // ready ⇄ error_contract without a cook: the assembly check (applyCheck)
+  // blocks a part whose own gates pass and releases it once the clash is gone.
+  ready: ["dirty", "queued", "error_contract", "cancelled"],
   dirty: ["queued", "cancelled"],
   error_code: ["queued", "cancelled"],
-  error_contract: ["queued", "cancelled"],
+  error_contract: ["queued", "ready", "cancelled"],
   cancelled: ["queued"],
 };
 

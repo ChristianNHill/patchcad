@@ -35,18 +35,23 @@ def two_tier_index(measured: float, feasible: float, recommended: float) -> floa
     return 1.0 / (1.0 + math.exp(-z))
 
 
+def thin_wall_mm(mesh: trimesh.Trimesh) -> float | None:
+    """Min wall: ray chords along inverted surface normals, robust percentile.
+    Shared with the G4b `min_wall` assertion so advisory and gate agree."""
+    points, face_index = trimesh.sample.sample_surface(mesh, WALL_SAMPLES, seed=0)
+    normals = mesh.face_normals[face_index]
+    thickness = trimesh.proximity.thickness(mesh, points, normals=normals, method="ray")
+    finite = np.asarray(thickness)[np.isfinite(thickness)]
+    return float(np.percentile(finite, THIN_PERCENTILE)) if len(finite) > 0 else None
+
+
 def measure_printability(shape: Any) -> dict[str, Any]:
     mesh = to_trimesh(shape, 0.2)
     out: dict[str, Any] = {}
 
-    # min wall: ray chords along inverted surface normals, robust percentile
     try:
-        points, face_index = trimesh.sample.sample_surface(mesh, WALL_SAMPLES, seed=0)
-        normals = mesh.face_normals[face_index]
-        thickness = trimesh.proximity.thickness(mesh, points, normals=normals, method="ray")
-        finite = np.asarray(thickness)[np.isfinite(thickness)]
-        if len(finite) > 0:
-            thin = float(np.percentile(finite, THIN_PERCENTILE))
+        thin = thin_wall_mm(mesh)
+        if thin is not None:
             recommended = 2.0 * LINE_WIDTH_MM
             feasible = 1.125 * LINE_WIDTH_MM
             out["min_wall"] = {

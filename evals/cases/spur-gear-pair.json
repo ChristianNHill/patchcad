@@ -1,0 +1,15 @@
+{
+  "id": "spur-gear-pair",
+  "prompt": "two meshing module-1 spur gears, 20 and 40 teeth, 6mm thick with 5mm bores, on a 4mm base plate carrying two 5mm pins at the correct centre distance",
+  "why": "Registry hardware that has to mesh. Gears come from the registry (zero LLM calls). The centre distance is m(z1+z2)/2 = 30mm: G5 clashes the two posed gears, so pins placed too close make the teeth interpenetrate and fail, and G3 measures both 5mm bores. Pins too far apart pass every gate, which this case cannot see.",
+  "expect": {
+    "nodes": { "min": 3, "max": 5 },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": ["fastener", "nut", "insert", "threaded_rod", "gear"],
+    "ports": [
+      { "anyType": ["BORE", "SHAFT"], "minCount": 2, "diameter": 5.0, "tol": 0.4 }
+    ],
+    "assemblyProblems": 0
+  }
+}

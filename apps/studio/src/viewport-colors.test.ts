@@ -49,6 +49,10 @@ describe("viewport colour literals track the tokens", () => {
     expect(/const GRID_MAJOR = "(#[0-9a-f]{6})"/.exec(source)![1]).toBe(token("color-grid-major"));
   });
 
+  it("the measure line matches --color-ink", () => {
+    expect(/const INK = "(#[0-9a-f]{6})"/.exec(source)![1]).toBe(token("color-ink"));
+  });
+
   it("nobody reintroduces a CSS-var bridge three.js cannot parse", () => {
     // A CALL, not the word — the comment above the literals explains why the
     // bridge is wrong, and matching prose would fail on its own rationale.

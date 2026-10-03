@@ -12,8 +12,13 @@ from __future__ import annotations
 
 import base64
 import io
+import json
+import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import cache
+from itertools import combinations
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -28,6 +33,12 @@ TESSELLATION_LIMIT = 500_000  # faces; imports beyond this get decimated
 PEG_D = 5.0
 PEG_CLEARANCE = 0.3
 PEG_LEN = 6.0
+
+# Joint mode "auto": the kernel finds WHERE a joint fits and how much material
+# it has there; the server's joint rules pick the hardware (joints.ts) and the
+# host features are cut at execute time by `cut_joints`. Every feature keeps
+# this much wall around it, the FDM minimum (joints.ts FDM_MIN_WALL_MM).
+JOINT_MIN_WALL_MM = 1.2
 
 
 class _Vec:
@@ -184,6 +195,8 @@ class Interface:
     holes: list[dict[str, Any]]  # {center: [x,y,z], diameter: float}
     pegs: list[dict[str, Any]]  # {center, peg_diameter, socket_diameter, length}
     face_size: float = 3.0  # probe extent that actually fits in material at the anchor
+    # joint mode "auto": {center, normal, span, wallA, wallB, face_size} per site
+    candidates: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _boolean(a: trimesh.Trimesh, op: str, b: trimesh.Trimesh) -> trimesh.Trimesh:
@@ -375,16 +388,156 @@ def _probed_face_size(solid: trimesh.Trimesh, anchor: np.ndarray, axis: int, cap
     return 0.6
 
 
+def _joint_need(thread: str, min_wall: float = JOINT_MIN_WALL_MM) -> float:
+    """Ø of material a fastened joint needs around its axis: the widest feature
+    any fastening rule cuts for this thread (an insert's boss, a counterbore, a
+    nut's corners) plus a wall each side. The rules run on the server; this is
+    their envelope, so no site the kernel offers is too narrow for one of them.
+    The old floor was hole Ø + 2, which left 0.75mm walls around a peg socket."""
+    threads = {k.upper(): k for k in _catalog_threads()}
+    key = threads.get(thread.upper(), "M4")
+    families = _catalog()["families"]
+
+    def dims(family: str) -> dict[str, Any]:
+        return families[family]["dims"].get(key, {})
+
+    widest = max(
+        dims("heatset_std").get("minBossOd", 0.0),
+        dims("shcs").get("headD", 0.0) + 1.0,  # the counterbore, bindings.ts cboreD
+        dims("hex_nut").get("af", 0.0) * 2 / math.sqrt(3),
+        _catalog_clearance(key) + 1.0,
+    )
+    return round(widest + 2 * min_wall, 2)
+
+
+def _rim(pt: np.ndarray, axis: int, radius: float, n: int = 8) -> np.ndarray:
+    """pt and n points on a circle of `radius` around it, in the cut plane."""
+    u, v = [a for a in range(3) if a != axis]
+    pts = [pt.copy()]
+    for k in range(n):
+        q = pt.copy()
+        q[u] += radius * math.cos(2 * math.pi * k / n)
+        q[v] += radius * math.sin(2 * math.pi * k / n)
+        pts.append(q)
+    return np.array(pts)
+
+
+def _disk_in_solid(solid: trimesh.Trimesh, pt: np.ndarray, axis: int, radius: float,
+                   n: int = 8, eps: float = 0.5) -> bool:
+    """A disk of material on both sides of the plane, not just a point."""
+    pts = _rim(pt, axis, radius, n)
+    off = np.zeros(3)
+    off[axis] = eps
+    try:
+        return bool(solid.contains(pts - off).all() and solid.contains(pts + off).all())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _column_depth(solid: trimesh.Trimesh, pt: np.ndarray, axis: int, sign: float,
+                  radius: float, limit: float) -> float:
+    """How far material runs from the cut plane along sign·axis over a column
+    of `radius` around pt: the shortest of the axis ray and its rim rays,
+    capped at `limit` (the slab boundary — past it is another piece). This is
+    a joint's wall: the head, nut or pocket floor sits inside it everywhere."""
+    pts = _rim(pt, axis, radius)
+    direction = np.zeros(3)
+    direction[axis] = sign
+    origins = pts + direction * 0.01
+    try:
+        locs, idx, _ = solid.ray.intersects_location(
+            ray_origins=origins, ray_directions=np.repeat([direction], len(origins), axis=0)
+        )
+    except Exception:  # noqa: BLE001
+        return 0.0
+    depth = limit
+    for k in range(len(origins)):
+        ts = (locs[idx == k] - origins[k]) @ direction
+        ts = ts[ts > 1e-6]
+        if len(ts) == 0:
+            return 0.0
+        depth = min(depth, float(ts.min()) + 0.01)
+    return max(0.0, depth)
+
+
+def _joint_candidates(
+    solid: trimesh.Trimesh,
+    axis: int,
+    spans: list[tuple[float, float, float]],
+    to3: Any,
+    need: float,
+    walls: tuple[float, float],
+    avoid: list[list[float]] = (),
+) -> list[dict[str, Any]]:
+    """Up to two joint sites on one cut, each a validated disk of Ø `need` with
+    its column depth into each piece. Two only when the disk around their
+    midpoint, out past both, is material too: the server makes the pair ONE
+    joint with count 2 (one screw node, two placements), and that joint's face
+    probe rings their midpoint. Sites too shallow for any rule (a wall under
+    2·minWall either side) are dropped rather than offered, and so are sites
+    whose column (a joint's bores and access run the full axis) passes within
+    `need` of a feature already in the piece: `avoid`, from earlier joints."""
+    keep_off = np.asarray(avoid, dtype=float).reshape(-1, 3)
+
+    def clear_of_features(pt: np.ndarray) -> bool:
+        off = keep_off - pt
+        off[:, axis] = 0.0
+        return bool((np.linalg.norm(off, axis=1) >= need).all())
+
+    sites: list[tuple[np.ndarray, float]] = []
+    for width, u_mid, v_val in spans:
+        if width < need:
+            continue
+        slack = (width - need) / 2 - 0.5  # a disk exactly at the edge is not inside it
+        for du in [0.0] if slack < need / 2 else [-slack, slack, 0.0]:
+            cand = to3(u_mid + du, v_val)
+            if any(np.linalg.norm(cand - s) < need for s, _ in sites) or not clear_of_features(cand):
+                continue
+            if _disk_in_solid(solid, cand, axis, need / 2):
+                sites.append((cand, width))
+        if len(sites) >= 8:
+            break
+
+    found: list[dict[str, Any]] = []
+    for pt, width in sites:
+        wall_a = _column_depth(solid, pt, axis, -1.0, need / 2, walls[0])
+        wall_b = _column_depth(solid, pt, axis, 1.0, need / 2, walls[1])
+        if min(wall_a, wall_b) < 2 * JOINT_MIN_WALL_MM:
+            continue
+        found.append({
+            "center": [round(float(c), 3) for c in pt],
+            "normal": [float(c) for c in np.eye(3)[axis]],
+            "span": round(float(width), 2),
+            # floored, never rounded up: a wall is a promise of material
+            "wallA": math.floor(wall_a * 10) / 10,
+            "wallB": math.floor(wall_b * 10) / 10,
+            "face_size": need,
+        })
+    if not found:
+        return []
+    best, best_d = found[:1], 0.0
+    for a, b in combinations(found, 2):
+        pa, pb = np.asarray(a["center"]), np.asarray(b["center"])
+        d = float(np.linalg.norm(pa - pb))
+        if d > best_d and _disk_in_solid(solid, (pa + pb) / 2, axis, d / 2 + need / 2, n=16):
+            best, best_d = [a, b], d
+    return best
+
+
 def segment(
     components: list[trimesh.Trimesh],
     pieces: int,
     joints: str,
     thread: str,
+    avoid: list[list[float]] = (),
 ) -> tuple[list[trimesh.Trimesh], list[Interface]]:
     """Multi-body files: one piece per body (no cutting). Single solids with
     pieces > 1: equal slabs along the longest axis. Joints at each cut:
-    "holes" = thread-clearance through-holes for screws; "pegs" = an alignment
-    peg grown on the low side + a CLEARANCE-FIT socket cut into the high side."""
+    "auto" (the default) = joint SITES only, `Interface.candidates`, nothing
+    cut — the server's joint rules pick real hardware and the host features
+    are cut at execute time (`cut_joints`); "holes" = thread-clearance
+    through-holes for screws; "pegs" = an alignment peg grown on the low side
+    + a CLEARANCE-FIT socket cut into the high side."""
     join_holes = joints in ("holes", "pegs")  # both modes need placement points
     if len(components) > 1 or pieces == 1:
         return components, []
@@ -408,11 +561,12 @@ def segment(
     # computed here rather than at the cut, and the cut reads them.
     boundaries = [lo - 1.0, *planes, hi + 1.0]
 
-    # Kernel-side mirror of the TS fastener registry's clearance dims (mm).
-    # Single source of truth is packages/backend-cad/src/registry.ts. The
-    # cross-language duplication is unavoidable; a whole module for one 3-entry
-    # dict with one reader was not.
-    hole_d = {"M3": 3.4, "M4": 4.5, "M5": 5.5}.get(thread.upper(), 4.5)
+    # ISO 273 clearance from the same catalog the TS registry reads.
+    hole_d = _catalog_clearance(thread)
+    # What a feature needs around it: for holes/pegs the feature's own Ø plus a
+    # minimum wall each side; for auto whatever the widest joint rule cuts.
+    feature_d = PEG_D + PEG_CLEARANCE if joints == "pegs" else hole_d
+    need = _joint_need(thread) if joints == "auto" else feature_d + 2 * JOINT_MIN_WALL_MM
     interfaces: list[Interface] = []
     hole_cutters: list[trimesh.Trimesh] = []
 
@@ -434,7 +588,7 @@ def segment(
         hole_pts: list[np.ndarray] = []
         if join_holes:
             for width, u_mid, v_val in spans:
-                if width < hole_d + 2:
+                if width < need:
                     continue
                 # wide spans offer spread-out candidates (anti-rotation pairs)
                 offsets = [0.0] if width < hole_d * 4 else [-width / 4, width / 4, 0.0]
@@ -449,11 +603,21 @@ def segment(
                 if len(hole_pts) == 2:
                     break
 
+        candidates: list[dict[str, Any]] = []
+        if joints == "auto":
+            candidates = _joint_candidates(
+                solid, axis, spans, to3, need, (plane - boundaries[i - 1], boundaries[i + 1] - plane), avoid
+            )
+        # The anchor's face probe (≤ 3mm) stays clear of every feature's disk.
+        keep_out = [(hp, hole_d / 2 + 3.0) for hp in hole_pts] + [
+            (np.asarray(c["center"]), need / 2 + 1.6) for c in candidates
+        ]
+
         anchor3: np.ndarray | None = None
         face_size = 0.6
         for width, u_mid, v_val in spans:
             cand = to3(u_mid, v_val)
-            if any(np.linalg.norm(cand - hp) < hole_d / 2 + 3.0 for hp in hole_pts):
+            if any(np.linalg.norm(cand - pt) < r for pt, r in keep_out):
                 continue
             if _solid_on_both_sides(solid, cand, axis):
                 anchor3 = cand
@@ -506,6 +670,7 @@ def segment(
                 holes=holes,
                 pegs=pegs,
                 face_size=round(float(face_size), 2),
+                candidates=candidates,
             )
         )
 
@@ -545,12 +710,13 @@ def run_import(job: dict[str, Any]) -> dict[str, Any]:
     """Worker entrypoint: decode, segment, write piece STLs + GLBs, report."""
     data = base64.b64decode(job["data_b64"])
     components = load_mesh_file(job["filename"], data)
-    joints = str(job.get("joints") or "none")
+    joints = str(job.get("joints") or "auto")
     pieces, interfaces = segment(
         components,
         pieces=int(job.get("pieces", 1)),
         joints=joints,
         thread=str(job.get("thread", "M4")),
+        avoid=job.get("avoid") or [],
     )
 
     out_dir = job["out_dir"]
@@ -591,10 +757,138 @@ def run_import(job: dict[str, Any]) -> dict[str, Any]:
                 "holes": itf.holes,
                 "pegs": itf.pegs,
                 "face_size": itf.face_size,
+                "candidates": itf.candidates,
             }
             for itf in interfaces
         ],
     }
+
+
+# --- generated meshes (Phase 6.4) -------------------------------------------
+
+# How deep a mating face may be cut into a generated mesh to leave a flat of
+# the declared size: an organic extreme is a dome, and its first millimetre
+# is a pinhead.
+FLAT_CUT_STEPS_MM = (1.0, 2.0, 4.0, 8.0)
+
+# Y-up (glTF) → Z-up: +90° about X. glTF's front (+Z) lands on -Y, which is
+# where our "front" view camera stands.
+_Y_UP_TO_Z_UP = trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0])
+
+
+def _flat_width(mesh: trimesh.Trimesh, origin: np.ndarray, normal: np.ndarray) -> float:
+    """Narrowest in-plane extent of the section through `origin`, 0 for none."""
+    section = mesh.section(plane_origin=origin, plane_normal=normal)
+    if section is None:
+        return 0.0
+    planar, _ = section.to_2D()
+    lo, hi = planar.bounds
+    return float(min(hi - lo))
+
+
+def run_mesh_fit(job: dict[str, Any]) -> dict[str, Any]:
+    """A generator's GLB → one printable piece in the node's own frame.
+
+    Rotates glTF Y-up to Z-up, keeps the substantial shells, repairs what
+    trimesh can (weld, fill holes, fix winding), scales uniformly to fit the
+    contract's envelope box and centres it there. Each axis-aligned FLAT_FACE
+    port then gets a real flat: the mesh is pushed past the port plane by the
+    shallowest step that leaves a section of the declared size, and everything
+    in front of the plane is cut away. Writes `mesh.ply` + `mesh.glb`."""
+    data = base64.b64decode(job["data_b64"])
+    loaded = trimesh.load(io.BytesIO(data), file_type="glb", force="scene")
+    mesh = loaded.dump(concatenate=True) if isinstance(loaded, trimesh.Scene) else loaded
+    if job.get("up", "y") == "y":
+        mesh.apply_transform(_Y_UP_TO_Z_UP)
+
+    # Generators leave floating crumbs and inner shells; a crumb is a separate
+    # body the slicer prints as debris.
+    mesh.merge_vertices()
+    shells = mesh.split(only_watertight=False)
+    if len(shells) > 1:
+        biggest = max(len(s.faces) for s in shells)
+        mesh = trimesh.util.concatenate([s for s in shells if len(s.faces) >= 0.05 * biggest])
+    trimesh.repair.fill_holes(mesh)
+    trimesh.repair.fix_normals(mesh)
+
+    center = np.asarray(job["box"]["center"], dtype=float)
+    dims = np.asarray(job["box"]["dims"], dtype=float)
+    extent = mesh.extents
+    scale = float(np.min(dims / np.maximum(extent, 1e-9)))
+    mesh.apply_scale(scale)
+    mesh.apply_translation(center - mesh.bounds.mean(axis=0))
+
+    notes: list[str] = []
+    for flat in job.get("flats") or []:
+        origin = np.asarray(flat["origin"], dtype=float)
+        normal = np.asarray(flat["normal"], dtype=float)
+        normal /= np.linalg.norm(normal)
+        axis = int(np.argmax(np.abs(normal)))
+        if abs(normal[axis]) < 0.99:
+            notes.append(f"flat {flat.get('name', '?')} is not axis-aligned; left uncut")
+            continue
+        sign = float(np.sign(normal[axis]))
+        size = float(flat.get("size", 0.0))
+        # Push the mesh's extreme on that side past the plane, shallowest first.
+        extreme = mesh.bounds[1 if sign > 0 else 0][axis]
+        depth = FLAT_CUT_STEPS_MM[-1]
+        for step in FLAT_CUT_STEPS_MM:
+            probe = origin.copy()
+            probe[axis] = extreme - sign * step
+            if _flat_width(mesh, probe, normal) >= size:
+                depth = step
+                break
+        shift = np.zeros(3)
+        shift[axis] = origin[axis] + sign * depth - extreme
+        mesh.apply_translation(shift)
+        bounds = mesh.bounds.copy()
+        bounds[0] -= 1.0
+        bounds[1] += 1.0
+        # Keep everything behind the face: the half-space on -normal.
+        if sign > 0:
+            bounds[1][axis] = origin[axis]
+        else:
+            bounds[0][axis] = origin[axis]
+        try:
+            mesh = _boolean(mesh, "intersection", trimesh.creation.box(bounds=bounds))
+        except Exception as e:  # noqa: BLE001 — a non-volume mesh cannot be cut
+            notes.append(f"flat {flat.get('name', '?')} not cut: {e}")
+
+    if len(mesh.faces) > TESSELLATION_LIMIT:
+        mesh = mesh.simplify_quadric_decimation(face_count=TESSELLATION_LIMIT)
+    out_dir = job["out_dir"]
+    os.makedirs(out_dir, exist_ok=True)
+    mesh.export(os.path.join(out_dir, "mesh.ply"))
+    MeshPart(mesh).export_glb(os.path.join(out_dir, "mesh.glb"))
+    b = mesh.bounds
+    return {
+        "ok": True,
+        "file": "mesh.ply",
+        "scale": scale,
+        "watertight": bool(mesh.is_watertight),
+        "volume_mm3": round(float(mesh.volume), 1) if mesh.is_watertight else None,
+        "bbox": {"min": [round(float(v), 2) for v in b[0]], "max": [round(float(v), 2) for v in b[1]]},
+        "faces": len(mesh.faces),
+        "notes": notes,
+    }
+
+
+@cache
+def _catalog() -> dict[str, Any]:
+    """packages/backend-cad/catalog/hardware.json — plain JSON so this side
+    reads the numbers the TS registry builds from instead of mirroring them."""
+    path = Path(__file__).resolve().parents[3] / "catalog" / "hardware.json"
+    return json.loads(path.read_text("utf8"))
+
+
+def _catalog_threads() -> dict[str, Any]:
+    return _catalog()["threads"]
+
+
+def _catalog_clearance(thread: str) -> float:
+    """ISO 273 medium clearance Ø for a thread; M4's when the thread is unknown."""
+    threads = {k.upper(): v for k, v in _catalog_threads().items()}
+    return float(threads.get(thread.upper(), threads["M4"])["clearance"])
 
 
 def load_import_part(import_dir: str, name: str, scale: float = 1.0) -> MeshPart:
@@ -609,4 +903,63 @@ def load_import_part(import_dir: str, name: str, scale: float = 1.0) -> MeshPart
     if scale and float(scale) != 1.0:
         mesh = mesh.copy()
         mesh.apply_scale(float(scale))
+    return MeshPart(mesh)
+
+
+def _port_matrix(o: list[float], z: list[float], x: list[float]) -> np.ndarray:
+    """A port frame as a 4x4: x, y = z × x, z columns, origin o."""
+    zu = np.asarray(z, dtype=float)
+    zu /= np.linalg.norm(zu)
+    xu = np.asarray(x, dtype=float)
+    xu = xu - xu.dot(zu) * zu
+    xu /= np.linalg.norm(xu)
+    m = np.eye(4)
+    m[:3, 0], m[:3, 1], m[:3, 2], m[:3, 3] = xu, np.cross(zu, xu), zu, o
+    return m
+
+
+def _prism(d: float, z0: float, z1: float, frame: np.ndarray, hexagon: bool = False) -> trimesh.Trimesh:
+    """A Ø d cylinder (hexagon: d across the flats, a corner on +x) from z0 to
+    z1 along the frame's z."""
+    radius = d / math.sqrt(3) if hexagon else d / 2
+    body = trimesh.creation.cylinder(radius=radius, height=z1 - z0, sections=6 if hexagon else 48)
+    body.apply_translation([0.0, 0.0, (z0 + z1) / 2])
+    body.apply_transform(frame)
+    return body
+
+
+def cut_joints(part: MeshPart, cuts: list[dict[str, Any]]) -> MeshPart:
+    """Host features for joint hardware, cut into an imported piece at execute
+    time from its own port params (registry.ts importedNodeCode writes the
+    list, zero LLM). Each cut sits in a port frame {o, z, x}, +z out of the
+    part:
+      kind "round" | "hex": a Ø d bore (hex: d across the flats, a corner on
+        x) `depth` into the part, or through it when depth is None;
+      through: a Ø bore on from the origin through the part (the clearance
+        under a counterbore);
+      access: a Ø column from the origin OUT of the part. A head or a nut has
+        to get in, and the port plane sits at the joint's shallowest wall, so
+        an organic surface is usually above it somewhere;
+      kind "peg": a Ø d peg grown `depth` out of the face, fused 1mm in.
+    Manifold booleans, like every MeshPart edit."""
+    mesh = part.mesh
+    reach = float(np.linalg.norm(mesh.extents)) + 10.0
+    cutters: list[trimesh.Trimesh] = []
+    grown: list[trimesh.Trimesh] = []
+    for c in cuts:
+        frame = _port_matrix(c["o"], c["z"], c["x"])
+        d = float(c["d"])
+        if c["kind"] == "peg":
+            grown.append(_prism(d, -1.0, float(c["depth"]), frame))
+            continue
+        depth = reach if c.get("depth") is None else float(c["depth"])
+        cutters.append(_prism(d, -depth, 0.5, frame, hexagon=c["kind"] == "hex"))
+        if c.get("through"):
+            cutters.append(_prism(float(c["through"]), -reach, 0.0, frame))
+        if c.get("access"):
+            cutters.append(_prism(float(c["access"]), 0.0, reach, frame))
+    for peg in grown:
+        mesh = _boolean(mesh, "union", peg)
+    if cutters:
+        mesh = _boolean(mesh, "difference", trimesh.boolean.union(cutters, engine="manifold") if len(cutters) > 1 else cutters[0])
     return MeshPart(mesh)

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import type { LlmProvider, LlmRequest, LlmResult, LlmRole, LlmUsage } from "@patchcad/engine";
+import { LlmCallError, type LlmImage, type LlmProvider, type LlmRequest, type LlmResult, type LlmRole, type LlmUsage } from "@patchcad/engine";
 
 /**
  * Claude Code in headless mode (`claude -p`) as an LlmProvider, so a cook bills
@@ -18,17 +18,18 @@ import type { LlmProvider, LlmRequest, LlmResult, LlmRole, LlmUsage } from "@pat
  * it because "what this would have cost on the API" is the honest number, and a
  * silent $0 is exactly how the OpenRouter cost column became a lie.
  *
- * NO VISION. LlmRequest.images is dropped: the CLI takes one text prompt and
- * every tool that could read a file is disallowed. The interface documents
- * text-only providers as degrading rather than breaking, so inspect.ts still
- * runs, it just judges nothing. Use the API provider for the render->inspect
- * loop.
+ * VISION, BY WAY OF READ. A call carrying images switches to stream-json input
+ * so the images ride as content blocks. The CLI does not hand them to the model
+ * inline: it saves each to a temp file and the model opens it with its Read
+ * tool. So an image call gets exactly that one tool and two turns (read, then
+ * answer). With one turn it ended `error_max_turns` on the tool_use and never
+ * answered. Text-only calls keep the plain single-turn path.
  */
 
 const DEFAULT_MODELS: Record<LlmRole, string> = {
-  architect: "claude-opus-5",
-  generator: "claude-sonnet-5",
-  repair: "claude-opus-5",
+  architect: "claude-opus-5-5",
+  generator: "claude-opus-5-5",
+  repair: "claude-opus-5-5",
   classifier: "claude-haiku-4-5",
 };
 
@@ -45,6 +46,8 @@ export interface ClaudeCliOptions {
 
 type CliResult = {
   is_error?: boolean;
+  subtype?: string;
+  errors?: string[];
   result?: string;
   total_cost_usd?: number;
   usage?: {
@@ -68,6 +71,7 @@ export class ClaudeCliProvider implements LlmProvider {
       `${req.system}\n\nRespond with ONLY a JSON object (no markdown fences, no prose) ` +
       `matching this JSON Schema:\n${JSON.stringify(jsonSchema)}`;
 
+    const images = req.messages.flatMap((m) => m.images ?? []);
     const attempt = (extra: string[]) =>
       this.run(
         system,
@@ -75,6 +79,8 @@ export class ClaudeCliProvider implements LlmProvider {
           "\n\n",
         ),
         model,
+        images,
+        req.effort,
         req.signal,
       );
 
@@ -83,13 +89,15 @@ export class ClaudeCliProvider implements LlmProvider {
     if (!parsed.success) {
       // One repair reprompt, carrying the rejected answer so the model can see
       // what it just did rather than guessing from the error alone.
+      const first = out.usage;
       out = await attempt([
         `[assistant]\n${out.raw}`,
         `Your previous response failed schema validation:\n${parsed.error}\nRespond again with ONLY the corrected JSON.`,
       ]);
+      out = { ...out, usage: addUsage(first, out.usage) };
       parsed = tryParse(req, out.raw);
       if (!parsed.success) {
-        throw new Error(`${this.id}: schema validation failed twice for "${req.label}": ${parsed.error}`);
+        throw new LlmCallError(`${this.id}: schema validation failed twice for "${req.label}": ${parsed.error}`, out.usage);
       }
     }
     return { data: parsed.data, usage: out.usage };
@@ -99,23 +107,32 @@ export class ClaudeCliProvider implements LlmProvider {
     system: string,
     prompt: string,
     model: string,
+    images: LlmImage[],
+    effort: LlmRequest<unknown>["effort"],
     signal?: AbortSignal,
   ): Promise<{ raw: string; usage: LlmUsage }> {
+    const vision = images.length > 0;
     return new Promise((resolve, reject) => {
       if (signal?.aborted) return reject(new Error(`${this.id}: aborted`));
       const child = spawn(
         this.opts.bin ?? "claude",
         [
           "-p",
-          "--output-format", "json",
+          ...(vision
+            ? ["--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]
+            : ["--output-format", "json"]),
           "--model", model,
+          // Escalation lives in effort; there is no CLI flag for an output ceiling.
+          ...(effort ? ["--effort", effort] : []),
           "--system-prompt", system,
           // Everything below turns the agent back into a completion call.
           "--exclude-dynamic-system-prompt-sections",
           "--setting-sources", "",
           "--strict-mcp-config",
-          "--allowedTools", "",
-          "--max-turns", "1",
+          // `--tools` REMOVES tools; `--allowedTools ""` only skipped the
+          // permission prompt, so Opus still reached for Bash (to check the
+          // build123d version), was denied, and ended `error_max_turns`.
+          ...(vision ? ["--tools", "Read", "--max-turns", "2"] : ["--tools", "", "--max-turns", "1"]),
         ],
         { stdio: ["pipe", "pipe", "pipe"] },
       );
@@ -147,30 +164,61 @@ export class ClaudeCliProvider implements LlmProvider {
       });
       child.on("close", (code) => {
         cleanup();
-        if (code !== 0) {
-          return reject(new Error(`${this.id}: claude exited ${code}: ${stderr.slice(0, 500)}`));
-        }
-        let r: CliResult;
+        // The diagnosis is on STDOUT even on a non-zero exit (subtype, errors,
+        // cost); stderr is usually empty. Parse it first so a failure says why
+        // and still bills what it spent.
+        let r: CliResult | undefined;
         try {
-          r = JSON.parse(stdout) as CliResult;
+          // stream-json is one event per line; the answer is the `result` event.
+          r = vision
+            ? (JSON.parse(stdout.trim().split("\n").reverse().find((l) => l.includes('"type":"result"')) ?? "") as CliResult)
+            : (JSON.parse(stdout) as CliResult);
         } catch {
-          return reject(new Error(`${this.id}: unparseable CLI output: ${JSON.stringify(stdout.slice(0, 300))}`));
+          r = undefined;
         }
-        if (r.is_error) return reject(new Error(`${this.id}: ${r.result ?? "CLI reported an error"}`));
-        const u = r.usage ?? {};
-        resolve({
-          raw: r.result ?? "",
-          usage: {
-            inputTokens:
-              (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0),
-            outputTokens: u.output_tokens ?? 0,
-            usd: r.total_cost_usd ?? 0,
-          },
-        });
+        const usage = r ? usageOf(r) : undefined;
+        if (code !== 0 || !r || r.is_error) {
+          const why = r
+            ? [r.subtype, ...(r.errors ?? []), r.is_error ? r.result : undefined].filter(Boolean).join(": ")
+            : `unparseable CLI output: ${JSON.stringify(stdout.slice(0, 300))}`;
+          return reject(
+            new LlmCallError(`${this.id}: claude exited ${code}: ${why || stderr.slice(0, 500) || "no detail"}`, usage),
+          );
+        }
+        resolve({ raw: r.result ?? "", usage: usage! });
       });
-      child.stdin.end(prompt);
+      child.stdin.end(
+        vision
+          ? JSON.stringify({
+              type: "user",
+              message: {
+                role: "user",
+                content: [
+                  ...images.map((i) => ({
+                    type: "image",
+                    source: { type: "base64", media_type: i.mediaType, data: i.dataB64 },
+                  })),
+                  { type: "text", text: prompt },
+                ],
+              },
+            }) + "\n"
+          : prompt,
+      );
     });
   }
+}
+
+function usageOf(r: CliResult): LlmUsage {
+  const u = r.usage ?? {};
+  return {
+    inputTokens: (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0),
+    outputTokens: u.output_tokens ?? 0,
+    usd: r.total_cost_usd ?? 0,
+  };
+}
+
+function addUsage(a: LlmUsage, b: LlmUsage): LlmUsage {
+  return { inputTokens: a.inputTokens + b.inputTokens, outputTokens: a.outputTokens + b.outputTokens, usd: a.usd + b.usd };
 }
 
 /** Fence- and prose-tolerant, because a CLI turn has no JSON mode to enforce:

@@ -11,3 +11,4 @@ export * from "./library.js";
 export * from "./exemplars.js";
 export * from "./similarity.js";
 export * from "./inspect.js";
+export * from "./reexpand.js";

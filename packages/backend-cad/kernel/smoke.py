@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import sys
 import math
+import os
 import pathlib
 import subprocess
 import time
 
 import httpx
 
-BASE = "http://127.0.0.1:8621"
+BASE = f"http://127.0.0.1:{os.environ.get('PATCHCAD_KERNEL_PORT', '8621')}"
 
 PLATE = """
 from build123d import *
@@ -70,6 +71,91 @@ from build123d import *
 def build(p):
     return Box(30, 30, 6) + Pos(0, 0, 9) * Cylinder(p.peg_d / 2, 12)
 """
+
+
+BRACKET = """
+from build123d import *
+
+def build(p):
+    return Box(30, 20, 4) + Pos(-13, 0, 10) * Box(4, 20, 20)
+"""
+
+SCREW = """
+from build123d import *
+
+def build(p):
+    return Cylinder(3.5, 4) + Pos(0, 0, -8) * Cylinder(2, 12)
+"""
+
+
+def _at(x: float, y: float, z: float) -> list[float]:
+    """Column-major translation, the assembly solver's layout."""
+    return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1]
+
+
+def exports(client: httpx.Client) -> None:
+    """A cad-clamp-like assembly leaves as a STEP that re-imports with one
+    named solid per placed copy, and as a 3MF with one object per part."""
+    import tempfile
+
+    import trimesh
+    from build123d import import_step
+
+    print("exports")
+    plate = {"width": 50, "depth": 50, "thickness": 4, "hole_diameter": 4.5, "nonce": time.time()}
+    parts = [
+        {"name": "base-plate", "code": PLATE, "params": plate, "matrix": []},
+        {"name": "bracket", "code": BRACKET, "params": {}, "matrix": _at(0, 0, 4)},
+        # one node, two placed copies
+        {"name": "screw", "code": SCREW, "params": {}, "matrix": _at(10, 0, 8),
+         "matrices": [_at(10, 0, 8), _at(-10, 0, 8)]},
+    ]
+    tmp = pathlib.Path(tempfile.mkdtemp())
+
+    def fetch(fmt: str) -> tuple[dict, pathlib.Path | None]:
+        r = client.post("/export", json={"parts": parts, "format": fmt}, timeout=180)
+        body = r.json()
+        if not body.get("ok"):
+            return body, None
+        out = tmp / f"a.{fmt}"
+        out.write_bytes(client.get(body["file"]).content)
+        return body, out
+
+    body, step = fetch("step")
+    if step is None:
+        check("assembly STEP exports", False, str(body)[:200])
+    else:
+        shape = import_step(str(step))
+        names = sorted(c.label for c in shape.children)
+        check("assembly STEP re-imports with a solid per placed copy",
+              len(shape.solids()) == 4, f"{len(shape.solids())} solids")
+        check("assembly STEP keeps part names", names == ["base-plate", "bracket", "screw", "screw"], str(names))
+        zs = sorted(round(c.location.position.Z, 3) for c in shape.children)
+        check("assembly STEP children carry their world pose", zs == [0, 4, 8, 8], str(zs))
+
+    body, mf = fetch("3mf")
+    if mf is None:
+        check("assembly 3MF exports", False, str(body)[:200])
+    else:
+        scene = trimesh.load(str(mf))
+        check("3MF writes one object per part", len(scene.geometry) == 3, str(list(scene.geometry)))
+        check("3MF places every copy", len(scene.graph.nodes_geometry) == 4,
+              f"{len(scene.graph.nodes_geometry)} build items")
+
+    # An imported mesh has no B-rep: STEP leaves it out and SAYS so.
+    from build123d import Box
+    from src.patchcad_kernel.exporters import export_parts
+    from src.patchcad_kernel.meshpart import MeshPart
+
+    info = export_parts([{"shape": Box(5, 5, 5), "name": "printed", "matrices": [[]]},
+                         {"shape": MeshPart(trimesh.creation.box((10, 10, 10))), "name": "scan", "matrices": [[]]}],
+                        str(tmp / "mixed.step"), "step")
+    check("STEP names the imported mesh it left out", info.get("skipped") == ["scan"] and info["solids"] == 1, str(info))
+
+    body, stl = fetch("stl")
+    check("STL stays one combined, watertight mesh",
+          stl is not None and body["export"].get("watertight") and len(trimesh.load(str(stl)).split()) >= 4,
+          str(body.get("export") or body)[:160])
 
 
 def main() -> None:
@@ -182,6 +268,16 @@ def main() -> None:
             png.status_code == 200 and png.content[:8] == b"\x89PNG\r\n\x1a\n",
             f"{len(png.content)} bytes",
         )
+        # 3 columns x 2 rows of 220px tiles, unchanged by the triad, scale bar
+        # and edge lines; and the light ground the judge's prompt describes.
+        import io
+        from PIL import Image
+        img = Image.open(io.BytesIO(png.content)).convert("RGB")
+        check(
+            "sheet is 660x440 on a light ground",
+            img.size == (660, 440) and body4e["render"]["size"] == [660, 440] and min(img.getpixel((200, 40))) > 200,
+            f"{img.size}, ground {img.getpixel((200, 40))}",
+        )
         check("second render is cached", client.post(
             "/render", json={"code": PLATE, "params": params, "views": 6}
         ).json().get("cached") is True)
@@ -217,6 +313,11 @@ def build(p):
     # "not killed early" and that is the lower bound alone. The 9s of overhead
     # over the 20s timeout is worth its own look, not a failing assertion.
     check("timeout not tripped early", elapsed > 18, f"{elapsed:.1f}s (20s SIGKILL + pool overhead)")
+    # faulthandler dumps the stack a second before the kill, so the report can
+    # say where the code was stuck instead of only that it was.
+    check("timeout names the line still running",
+          "line 2: while True:" in body6.get("error", "") or "line 3: pass" in body6.get("error", ""),
+          body6.get("error", "").splitlines()[0] if body6.get("error") else "")
 
     # 7. Hard native crash → one worker dies, service survives, next job fine.
     crash = "import build123d\ndef build(p):\n    import ctypes\n    ctypes.string_at(0)\n"
@@ -279,6 +380,36 @@ def build(p):
     r12 = client.post("/execute", json={"code": PLATE, "params": params, "envelope": tight})
     body12 = r12.json()
     check("G4 catches envelope escape", r12.status_code == 422 and body12.get("stage") == "G4", body12.get("error", "")[:80])
+
+    # 11b. G1 names the line. "build(p) raised IndexError" sent the model to
+    # guess which subscript; the line and its neighbours say.
+    indexed = "from build123d import *\n\ndef build(p):\n    plate = Box(10, 10, 2)\n    edges = []\n    return plate - edges[3]\n"
+    body11b = client.post("/execute", json={"code": indexed, "params": {}}).json()
+    check("G1 reports the failing line", body11b.get("stage") == "G1"
+          and "line 6: return plate - edges[3]" in body11b.get("error", ""),
+          body11b.get("error", "")[:120])
+    check("G1 failure carries the line structurally",
+          (body11b.get("failures") or [{}])[0].get("line") == 6, str(body11b.get("failures")))
+
+    # 11c. Every contract failure in ONE 422. G3 stopped at the first bad port
+    # and G4 never ran after it, so each repair round uncovered one more.
+    wrong_d = {**hole_port, "key": "wrong_d", "params": {"diameter": 5}}
+    fresh = {**params, "width": 61.5 + time.time() % 1}  # never built before, so 11d proves the sharing
+    r11c = client.post("/execute", json={
+        "code": PLATE, "params": fresh, "ports": [wrong_d, lost], "envelope": tight,
+    })
+    body11c = r11c.json()
+    got = [(f.get("stage"), f.get("port")) for f in body11c.get("failures", [])]
+    check("one 422 lists both bad ports and the envelope escape",
+          r11c.status_code == 422 and body11c.get("stage") == "G3"
+          and got == [("G3", "wrong_d"), ("G3", "mount_hole"), ("G4", None)], str(got))
+    first = (body11c.get("failures") or [{}])[0]
+    check("a port failure carries expected vs measured",
+          first.get("expected") == 5 and abs((first.get("measured") or 0) - 8) < 0.25, str(first))
+    # The mesh is keyed without the contract, so the viewport's port-less ask
+    # is a cache hit even though the contract failed.
+    r11d = client.post("/execute", json={"code": PLATE, "params": fresh}).json()
+    check("a contract failure still leaves the mesh for the viewport", r11d.get("cached") is True, str(r11d.get("glb")))
 
     # 12. SCREW_BOSS probe: boss with pilot hole, checked both good and bad.
     boss_code = """
@@ -573,6 +704,109 @@ def build(p):
           r17d["ok"] and r17d["clash"]["pairs_tested"] == 0 and r17d.get("hash") is None,
           str(r17d.get("clash")))
 
+    # 17b. G5 is MATE-AWARE. The solver makes two ports coincide; only this
+    # checks that each port sits on its part, so a lid whose port is posed 3mm
+    # off its face floats 3mm in the air while every other gate passes.
+    def mated(lid_z, extra=()):
+        n = int(time.time())
+        return client.post("/clash", json={
+            "parts": [
+                {"key": "base", "code": cube, "params": {"nonce": n}, "matrix": at(0)},
+                {"key": "lid", "code": cube, "params": {"nonce": n}, "matrix": at(lid_z)},
+                *extra,
+            ],
+            "contacts": [{"edge": "e1", "a": "base", "b": "lid", "at": [0, 0, 5]}],
+        }).json()
+
+    r17e = mated(10.0)
+    gap_e = ((r17e.get("clash") or {}).get("contacts") or [{}])[0].get("gap_mm", -1)
+    check("G5 contact: a seated lid touches its base at the mate point",
+          r17e["ok"] and 0 <= gap_e < 0.1 and r17e["clash"]["clashes"] == [], str(r17e.get("clash")))
+    r17f = mated(13.0)
+    gap_f = ((r17f.get("clash") or {}).get("contacts") or [{}])[0].get("gap_mm", -1)
+    check("G5 contact: a FLOATING mated lid reports its 3mm gap",
+          r17f["ok"] and abs(gap_f - 3.0) < 0.05, str(r17f.get("clash")))
+
+    # An INSTANCED copy is a part like any other. Before, only the primary pose
+    # was compared, so a second copy could sit inside the base unreported.
+    n17g = int(time.time())
+    r17g = mated(10.0, extra=[{"key": "lid#1", "code": cube, "params": {"nonce": n17g}, "matrix": at(6)}])
+    cg = (r17g.get("clash") or {}).get("clashes") or []
+    check("G5 catches an instanced copy (lid#1) inside the base",
+          r17g["ok"] and any(c.get("b") == "lid#1" and c.get("a") == "base" for c in cg)
+          and not any(c.get("b") == "lid" for c in cg), str(cg))
+
+    # A SCREW IN ITS NUT SHARES THE THREAD by design: major Ø4 through a Ø3.3
+    # tap bore, pi/4 * (4² - 3.3²) * 3.2 = 12.8mm³. Allowed up to the declared
+    # volume, and a clash again with no allowance, so the exemption is the
+    # allowance and not the pair.
+    screw = (
+        "from build123d import *\n"
+        "def build(p):\n"
+        "    _ = p['nonce']\n"
+        "    return Pos(0, 0, 2) * Cylinder(3.5, 4) + Pos(0, 0, -6) * Cylinder(2, 12)\n"
+    )
+    nut = (
+        "from build123d import *\n"
+        "import math\n"
+        "def build(p):\n"
+        "    _ = p['nonce']\n"
+        "    body = extrude(RegularPolygon(7 / math.sqrt(3), 6), 3.2)\n"
+        "    return body - Pos(0, 0, 1.6) * Cylinder(1.65, 6.4)\n"
+    )
+
+    def bolted(allow):
+        n = int(time.time())
+        return client.post("/clash", json={
+            "parts": [
+                {"key": "screw", "code": screw, "params": {"nonce": n}, "matrix": at(0)},
+                {"key": "nut", "code": nut, "params": {"nonce": n}, "matrix": at(-8)},
+            ],
+            "allow": allow,
+        }).json()
+
+    r17h = bolted([{"a": "nut", "b": "screw", "volume_mm3": 19.3}])
+    ex = (r17h.get("clash") or {}).get("exempt") or [{}]
+    check("G5 exempts a screw's thread inside its nut, up to the engagement volume",
+          r17h["ok"] and r17h["clash"]["clashes"] == [] and abs(ex[0].get("volume_mm3", 0) - 12.8) < 0.5,
+          str(r17h.get("clash")))
+    r17i = bolted([])
+    check("G5 still reports the same overlap with no allowance",
+          r17i["ok"] and len(r17i["clash"]["clashes"]) == 1, str(r17i.get("clash")))
+    r17j = bolted([{"a": "nut", "b": "screw", "volume_mm3": 5.0}])
+    check("G5 reports an overlap beyond the allowance (an overlapping pair fails)",
+          r17j["ok"] and len(r17j["clash"]["clashes"]) == 1, str(r17j.get("clash")))
+
+    # A VALID SOLID WHOSE TESSELLATION IS NOT. OCP leaves split seams on
+    # filleted and lofted faces, trimesh's boolean refuses anything failing its
+    # is_volume check, and every pair with a helicopter's fuselage or cockpit
+    # went "boolean failed" — uncompared. A filleted box reproduces it.
+    rounded = (
+        "from build123d import *\n"
+        "def build(p):\n"
+        "    _ = p['nonce']\n"
+        "    b = Box(20, 20, 10)\n"
+        "    return fillet(b.edges(), 3)\n"
+    )
+
+    def rounded_pair(z):
+        n = int(time.time())
+        return client.post("/clash", json={"parts": [
+            {"key": "base", "code": rounded, "params": {"nonce": n}, "matrix": at(0)},
+            {"key": "lid", "code": rounded, "params": {"nonce": n}, "matrix": at(z)},
+        ]}).json()
+
+    r17k = rounded_pair(6.0)
+    ck = (r17k.get("clash") or {})
+    check("G5 compares parts whose tessellation has split seams, and finds the overlap",
+          r17k["ok"] and ck.get("errors") == [] and len(ck.get("clashes", [])) == 1
+          and ck["clashes"][0].get("depth_mm", 0) > 1.0, str(ck))
+    r17l = rounded_pair(10.0)
+    cl17 = (r17l.get("clash") or {})
+    check("G5 passes the same rounded parts stacked face to face, compared, not skipped",
+          r17l["ok"] and cl17.get("errors") == [] and cl17.get("clashes") == [] and cl17.get("pairs_tested") == 1,
+          str(cl17))
+
     # 18. Hole depth. The diameter was measured at one plane 0.6mm down, so a
     # Ø8 dimple 0.75mm deep reported "measured_diameter: 8.0" and passed as a
     # clearance hole a screw was meant to go through.
@@ -643,6 +877,79 @@ def build(p):
     check("G3 accepts a stepped hole rather than failing it unsatisfiably",
           r18e.status_code == 200, r18e.json().get("error", ""))
 
+    # 19. The hole's CENTRE, not just its width. The median ray measured
+    # distances from the declared origin, so a hole drilled 0.5mm off read as
+    # the right diameter and passed while a mating screw missed it.
+    offset_hole = (
+        "from build123d import *\n"
+        "def build(p):\n"
+        "    _ = p['nonce']\n"
+        "    return Box(40, 40, 10) - Pos(p['dx'], 0, 0) * Cylinder(4, 12)\n"
+    )
+
+    def off(dx):
+        return client.post("/execute", json={
+            "code": offset_hole, "params": {"dx": dx, "nonce": int(time.time())},
+            "ports": [{"key": "bolt", "type": "CLEARANCE_HOLE", "pose": top_face, "params": {"diameter": 8.0}}],
+        })
+
+    r19 = off(0.1)
+    check("G3 passes a hole 0.1mm off centre", r19.status_code == 200, r19.json().get("error", ""))
+    r19b = off(0.5)
+    f19 = (r19b.json().get("failures") or [{}])[0]
+    check("G3 fails a hole 0.5mm off centre with measured/expected offset",
+          r19b.status_code == 422 and "0.50mm off the declared origin" in f19.get("error", "")
+          and f19.get("expected") == 0.0 and abs((f19.get("measured") or 0) - 0.5) < 0.02, str(f19))
+
+    print()
+    # G2 solid count, and G4 in the primitive's own frame. Both need a contract,
+    # so they only run on a verify pass.
+    print("G2 solids + G4 rotated envelope")
+    two_bodies = (
+        "from build123d import *\n"
+        "def build(p):\n"
+        "    _ = p['nonce']\n"
+        "    return Box(10, 10, 10) + Pos(p['gap'], 0, 0) * Box(10, 10, 10)\n"
+    )
+
+    def bodies(gap, solids=1):
+        return client.post("/execute", json={
+            "code": two_bodies, "params": {"gap": gap, "nonce": int(time.time())}, "solids": solids,
+        })
+
+    r20 = bodies(25.0)
+    b20 = r20.json()
+    check("G2 fails two disjoint solids, naming each one",
+          r20.status_code == 422 and b20.get("stage") == "G2" and "solid 1:" in b20.get("error", "")
+          and "fuse" in b20.get("hint", ""), b20.get("error", "")[:160])
+    r20b = bodies(8.0)
+    check("G2 passes two boxes that overlap into one solid", r20b.status_code == 200, r20b.json().get("error", ""))
+    r20c = bodies(25.0, solids=2)
+    check("G2 passes two solids when the contract declares 2", r20c.status_code == 200, r20c.json().get("error", ""))
+    r20d = client.post("/execute", json={"code": two_bodies, "params": {"gap": 25.0, "nonce": int(time.time())}})
+    check("without a contract the build still serves the viewport", r20d.status_code == 200, r20d.json().get("error", ""))
+
+    rod_code = (
+        "from build123d import *\n"
+        "def build(p):\n"
+        "    _ = p['nonce']\n"
+        "    rod = Cylinder(3, 40)\n"
+        "    return Rot(0, 90, 0) * rod if p['lying'] else rod\n"
+    )
+    lying_env = [{"kind": "cylinder", "center": [0, 0, 0], "radius": 3.2, "height": 40.5,
+                  "zAxis": [1, 0, 0], "xAxis": [0, 1, 0]}]
+
+    def rod(lying):
+        return client.post("/execute", json={
+            "code": rod_code, "params": {"lying": lying, "nonce": int(time.time())}, "envelope": lying_env,
+        })
+
+    r21 = rod(True)
+    check("G4 passes a horizontal rod in a zAxis [1,0,0] cylinder", r21.status_code == 200, r21.json().get("error", ""))
+    r21b = rod(False)
+    check("G4 fails a vertical rod in the same envelope",
+          r21b.status_code == 422 and r21b.json().get("stage") == "G4", r21b.json().get("error", "")[:120])
+
     print()
     # SHAFT, the peg side of every imported peg joint. Nonce in params so each
     # assertion is cache-cold: /execute serves a cached 200 before a worker runs,
@@ -676,6 +983,196 @@ def build(p):
     check("G3 catches a declared peg that was never built", r.status_code == 422 and "no peg" in r.text,
           r.text[:140])
 
+    # ---- HOLE_PATTERN / BOSS_PATTERN: one port, each member probed ----------
+    four_holes = """
+from build123d import *
+
+def build(p):
+    part = Box(60, 60, 6)
+    for x, y in ((-20, -20), (20, -20), (-20, 20), (20, 20))[:p.holes]:
+        part = part - Pos(x, y, 0) * Cylinder(2.25, 8)
+    return part
+"""
+    top = {"origin": [0, 0, 3], "zAxis": [0, 0, 1], "xAxis": [1, 0, 0]}
+    pattern = {"key": "bolts", "type": "HOLE_PATTERN", "pose": top,
+               "params": {"diameter": 4.5, "nx": 2, "ny": 2, "pitch_x": 40, "pitch_y": 40}}
+    r = client.post("/execute", json={"code": four_holes, "params": {"holes": 4}, "ports": [pattern]})
+    members = (r.json().get("measurements", {}).get("ports") or [{}])[0].get("members", [])
+    check("HOLE_PATTERN of 4 passes with 4 measured members", r.status_code == 200 and len(members) == 4,
+          r.text[:160])
+    r = client.post("/execute", json={"code": four_holes, "params": {"holes": 3}, "ports": [pattern]})
+    fl = r.json().get("failures", [])
+    check("HOLE_PATTERN with one hole missing names that member",
+          r.status_code == 422 and [(f.get("port"), f.get("member")) for f in fl] == [("bolts", 4)],
+          str([f.get("error") for f in fl])[:200])
+
+    two_bosses = """
+from build123d import *
+
+def build(p):
+    part = Box(60, 30, 6)
+    for x in (-15, 15):
+        part = part + Pos(x, 0, 9) * Cylinder(4, 12) - Pos(x, 0, 9) * Cylinder(1.25, 14)
+    return part
+"""
+    bosses = {"key": "standoffs", "type": "BOSS_PATTERN",
+              "pose": {"origin": [0, 0, 15], "zAxis": [0, 0, 1], "xAxis": [1, 0, 0]},
+              "params": {"outer_diameter": 8, "pilot_diameter": 2.5, "count": 2, "pcd": 30}}
+    r = client.post("/execute", json={"code": two_bosses, "ports": [bosses]})
+    check("BOSS_PATTERN on a polar layout passes", r.status_code == 200, r.text[:160])
+    r = client.post("/execute", json={"code": two_bosses, "ports": [{**bosses, "params": {**bosses["params"], "pcd": 40}}]})
+    check("BOSS_PATTERN on the wrong pitch circle fails both members",
+          r.status_code == 422 and len(r.json().get("failures", [])) == 2, r.text[:160])
+
+    r = client.post("/execute", json={"code": four_holes, "params": {"holes": 4},
+                                      "ports": [{"key": "clip", "type": "SNAP_HOOK", "pose": top, "params": {}}]})
+    check("an unprobed port type fails G3 instead of passing as skipped",
+          r.status_code == 422 and r.json().get("stage") == "G3" and "no probe for SNAP_HOOK" in r.text, r.text[:160])
+
+    # ---- hardware host features: a pass and a fail per type ---------------
+    hw_part = """
+from build123d import *
+import math
+
+def build(p):
+    part = Box(60, 60, 20)
+    top = 10
+    def bore(d, depth, x=0, y=0):
+        return Pos(x, y, top - depth / 2) * Cylinder(d / 2, depth)
+    k = p.case
+    if k == "tap":
+        return part - bore(p.d, p.depth)
+    if k == "insert_boss":
+        return Pos(0, 0, -8) * Box(60, 60, 4) + Pos(0, 0, 0) * Cylinder(p.boss / 2, 20) - bore(p.d, p.depth)
+    if k == "nut":
+        hexa = Pos(0, 0, top - p.depth) * Rot(0, 0, p.rot) * extrude(RegularPolygon(p.af / math.sqrt(3), 6), p.depth)
+        part = part - hexa - bore(3.4, 20)
+        if p.side:
+            part = part - Pos(15, 0, top - p.depth / 2) * Box(30, p.af, p.depth)
+        return part
+    if k == "round":
+        return part - bore(p.d, p.depth) - bore(3.4, 20)
+    if k == "cbore":
+        return part - bore(p.d, p.depth) - bore(p.dt, 20)
+    if k == "csk":
+        h = (p.d - p.dt) / 2
+        return part - Pos(0, 0, top - h / 2) * Cone(p.dt / 2, p.d / 2, h) - bore(p.dt, 20)
+    if k == "seat":
+        return part - bore(p.d, p.depth) - bore(p.lip, 20)
+    if k == "motor":
+        part = part - bore(p.d, 20)
+        for sx in (-15.5, 15.5):
+            for sy in (-15.5, 15.5):
+                part = part - bore(3.4, 20, sx, sy)
+        return part
+    if k == "dbore":
+        return part - (Pos(0, 0, top - 5) * Cylinder(p.d / 2, 10) & Pos(p.flat - 10, 0, top - 5) * Box(20, 20, 10))
+    raise ValueError(k)
+"""
+    hw_top = {"origin": [0, 0, 10], "zAxis": [0, 0, 1], "xAxis": [1, 0, 0]}
+    for label, hw_params, kind, port_params, want in [
+        ("THREADED_HOLE M3 at Ø2.5, 10 deep", {"case": "tap", "d": 2.5, "depth": 10}, "THREADED_HOLE", {"thread": "M3", "depth": 8}, None),
+        ("THREADED_HOLE M3 drilled to clearance", {"case": "tap", "d": 3.4, "depth": 10}, "THREADED_HOLE", {"thread": "M3", "depth": 8}, "expected Ø2.40..2.60"),
+        ("THREADED_HOLE too shallow", {"case": "tap", "d": 2.5, "depth": 4}, "THREADED_HOLE", {"thread": "M3", "depth": 8}, "needs 8mm of depth"),
+        ("INSERT_POCKET Ø4 x 7 in a slab", {"case": "tap", "d": 4.0, "depth": 7}, "INSERT_POCKET", {"diameter": 4.0, "depth": 5.8}, None),
+        ("INSERT_POCKET with no melt room", {"case": "tap", "d": 4.0, "depth": 5.8}, "INSERT_POCKET", {"diameter": 4.0, "depth": 5.8}, "needs 6.1mm"),
+        ("INSERT_POCKET in a 1mm-wall boss", {"case": "insert_boss", "d": 4.0, "depth": 7, "boss": 6.0}, "INSERT_POCKET", {"diameter": 4.0, "depth": 5.8}, "wall under 1.2mm"),
+        ("NUT_TRAP M3 aligned", {"case": "nut", "af": 5.7, "depth": 2.6, "rot": 0, "side": 0}, "NUT_TRAP", {"af": 5.5, "depth": 2.4, "entry": "axial"}, None),
+        ("NUT_TRAP rotated 30°", {"case": "nut", "af": 5.7, "depth": 2.6, "rot": 30, "side": 0}, "NUT_TRAP", {"af": 5.5, "depth": 2.4, "entry": "axial"}, "across the flats"),
+        ("NUT_TRAP that is a round pocket", {"case": "round", "d": 5.7, "depth": 2.6}, "NUT_TRAP", {"af": 5.5, "depth": 2.4}, "across the corners"),
+        ("NUT_TRAP side entry along +x", {"case": "nut", "af": 5.7, "depth": 2.6, "rot": 0, "side": 1}, "NUT_TRAP", {"af": 5.5, "depth": 2.4, "entry": "side"}, None),
+        ("NUT_TRAP declared side, cut axial", {"case": "nut", "af": 5.7, "depth": 2.6, "rot": 0, "side": 0}, "NUT_TRAP", {"af": 5.5, "depth": 2.4, "entry": "side"}, "side entry is closed"),
+        ("COUNTERBORE M3", {"case": "cbore", "d": 6.0, "depth": 3.0, "dt": 3.4}, "COUNTERBORE", {"diameter": 6.0, "depth": 3.0, "through_diameter": 3.4}, None),
+        ("COUNTERBORE too shallow", {"case": "cbore", "d": 6.0, "depth": 1.5, "dt": 3.4}, "COUNTERBORE", {"diameter": 6.0, "depth": 3.0, "through_diameter": 3.4}, "steps at 1.50mm"),
+        ("COUNTERSINK 90°", {"case": "csk", "d": 6.5, "dt": 3.4}, "COUNTERSINK", {"diameter": 6.5, "angle": 90, "through_diameter": 3.4}, None),
+        ("COUNTERSINK declared 60°", {"case": "csk", "d": 6.5, "dt": 3.4}, "COUNTERSINK", {"diameter": 6.5, "angle": 60, "through_diameter": 3.4}, "expected Ø6.5 at the face"),
+        ("DOWEL_HOLE press at Ø3.95", {"case": "tap", "d": 3.95, "depth": 10}, "DOWEL_HOLE", {"diameter": 4, "depth": 8, "fit": "press"}, None),
+        ("DOWEL_HOLE press hole declared slip", {"case": "tap", "d": 3.95, "depth": 10}, "DOWEL_HOLE", {"diameter": 4, "depth": 8, "fit": "slip"}, "expected Ø4.05..4.25"),
+        ("DOWEL_HOLE slip at Ø4.15", {"case": "tap", "d": 4.15, "depth": 10}, "DOWEL_HOLE", {"diameter": 4, "depth": 8, "fit": "slip"}, None),
+        ("DOWEL_HOLE slip hole declared press", {"case": "tap", "d": 4.15, "depth": 10}, "DOWEL_HOLE", {"diameter": 4, "depth": 8, "fit": "press"}, "expected Ø3.90..4.00"),
+        ("BEARING_SEAT 608 press with a lip", {"case": "seat", "d": 21.95, "depth": 7, "lip": 19}, "BEARING_SEAT", {"od": 22, "width": 7, "fit": "press"}, None),
+        ("BEARING_SEAT with no shoulder", {"case": "seat", "d": 21.95, "depth": 7, "lip": 21.95}, "BEARING_SEAT", {"od": 22, "width": 7, "fit": "press"}, "no shoulder"),
+        ("BEARING_SEAT shallower than the bearing", {"case": "seat", "d": 21.95, "depth": 5, "lip": 19}, "BEARING_SEAT", {"od": 22, "width": 7, "fit": "press"}, "the seat is 5.00mm deep"),
+        ("BUSHING_BORE Ø10 x 12", {"case": "tap", "d": 9.95, "depth": 12}, "BUSHING_BORE", {"od": 10, "length": 10}, None),
+        ("BUSHING_BORE cut slip", {"case": "tap", "d": 10.15, "depth": 12}, "BUSHING_BORE", {"od": 10, "length": 10}, "expected Ø9.90..10.00"),
+        ("MOTOR_MOUNT NEMA17", {"case": "motor", "d": 22.15}, "MOTOR_MOUNT", {"pilot_diameter": 22, "hole_diameter": 3.4, "pitch_x": 31, "pitch_y": 31}, None),
+        ("MOTOR_MOUNT on the wrong pitch", {"case": "motor", "d": 22.15}, "MOTOR_MOUNT", {"pilot_diameter": 22, "hole_diameter": 3.4, "pitch_x": 26, "pitch_y": 26}, "member"),
+        ("MAGNET_POCKET Ø6.1 for a Ø6 magnet", {"case": "tap", "d": 6.1, "depth": 3.2}, "MAGNET_POCKET", {"diameter": 6, "depth": 3}, None),
+        ("MAGNET_POCKET with no clearance", {"case": "tap", "d": 6.0, "depth": 3.2}, "MAGNET_POCKET", {"diameter": 6, "depth": 3}, "expected Ø6.05..6.20"),
+        ("HUB_BORE Ø5 D-bore", {"case": "dbore", "d": 5.15, "flat": 2.0}, "HUB_BORE", {"diameter": 5, "flat": 2.0}, None),
+        ("HUB_BORE flat in the wrong place", {"case": "dbore", "d": 5.15, "flat": 2.0}, "HUB_BORE", {"diameter": 5, "flat": 1.5}, "the flat at 2.00mm"),
+        ("HUB_BORE round", {"case": "tap", "d": 5.15, "depth": 10}, "HUB_BORE", {"diameter": 5}, None),
+    ]:
+        r = client.post("/execute", json={"code": hw_part, "params": hw_params,
+                                          "ports": [{"key": "host", "type": kind, "pose": hw_top, "params": port_params}]})
+        if want is None:
+            check(f"G3 {label} passes", r.status_code == 200, r.text[:200])
+        else:
+            check(f"G3 {label} fails", r.status_code == 422 and r.json().get("stage") == "G3" and want in r.text,
+                  r.text[:200])
+
+    # ---- G4b: spec-derived assertions, a pass and a fail per kind ----------
+    cup = """
+from build123d import *
+
+def build(p):
+    return Cylinder(20, 30) - Pos(0, 0, 3) * Cylinder(20 - p.wall, 30)
+"""
+    lugged = """
+from build123d import *
+
+def build(p):
+    return Box(60, 60, 6) + Pos(18, 0, 8) * Box(20, 20, 10)
+"""
+    two = """
+from build123d import *
+
+def build(p):
+    return Box(10, 10, 10) + Pos(30, 0, 0) * Box(10, 10, 10)
+"""
+    slot = """
+from build123d import *
+
+def build(p):
+    return Box(40, 30, 10) - Pos(-5, 0, 0) * Cylinder(3, 12) - Pos(5, 0, 0) * Cylinder(3, 12) - Box(10, 6, 12)
+"""
+    filleted = """
+from build123d import *
+
+def build(p):
+    step = Box(40, 40, 20) - Pos(10, 0, 5) * Box(20, 50, 10)
+    return fillet(step.edges().filter_by(Axis.Y).sort_by_distance((0, 0, 0))[0], 3)
+"""
+    plate4 = (four_holes, {"holes": 4})
+    for label, (code, prm), assertion, want in (
+        ("solids", plate4, {"kind": "solids", "count": 1}, None),
+        ("solids", (two, {}), {"kind": "solids", "count": 1}, "measured 2"),
+        ("volume_range", plate4, {"kind": "volume_range", "min": 20000, "max": 21600}, None),
+        ("volume_range", plate4, {"kind": "volume_range", "min": 30000, "max": 40000}, 'assertion "volume_range"'),
+        ("bbox_axis", plate4, {"kind": "bbox_axis", "axis": "x", "min": 59.5, "max": 60.5}, None),
+        ("bbox_axis", plate4, {"kind": "bbox_axis", "axis": "z", "max": 4}, "at most 4 mm along z"),
+        ("hole_count", plate4, {"kind": "hole_count", "min": 4, "max": 4}, None),
+        ("hole_count", (four_holes, {"holes": 3}), {"kind": "hole_count", "min": 4}, "measured 3"),
+        # A D-bore's wall closes ~78% of a turn and its flat closes the rest:
+        # one hole. A slot's ends and a fillet close half and a quarter: none.
+        ("hole_count", (hw_part, {"case": "dbore", "d": 5.15, "flat": 2.0}), {"kind": "hole_count", "min": 1, "max": 1}, None),
+        ("hole_count", (slot, {}), {"kind": "hole_count", "min": 1}, "measured 0"),
+        ("hole_count", (filleted, {}), {"kind": "hole_count", "min": 1}, "measured 0"),
+        ("symmetry", plate4, {"kind": "symmetry", "plane": "yz"}, None),
+        ("symmetry", (lugged, {}), {"kind": "symmetry", "plane": "yz"}, 'assertion "symmetry yz"'),
+        ("min_wall", (cup, {"wall": 2.0}), {"kind": "min_wall", "mm": 1.6}, None),
+        ("min_wall", (cup, {"wall": 0.4}), {"kind": "min_wall", "mm": 1.2}, 'assertion "min_wall"'),
+    ):
+        r = client.post("/execute", json={"code": code, "params": prm, "assertions": [assertion]})
+        if want is None:
+            check(f"G4b {label} passes", r.status_code == 200, r.text[:160])
+        else:
+            body = r.json()
+            fl = body.get("failures") or [{}]
+            check(f"G4b {label} fails with expected/measured",
+                  r.status_code == 422 and body.get("stage") == "G4b" and want in body.get("error", "")
+                  and "measured" in fl[0] and "expected" in fl[0], body.get("error", r.text)[:160])
+
     # ---- render decimation must not shred the mesh -------------------------
     # OCP tessellation is unwelded, and fast_simplification collapses EDGES,
     # so simplifying it directly destroyed the part instead of coarsening it:
@@ -705,10 +1202,307 @@ def build(p):
           len(_t) > MAX_TRIANGLES and _after > 0.9 * _before,
           f"area {_before:.0f} -> {_after:.0f}mm2 over {len(_dt)} tris")
 
+    exports(client)
+    fabricate(client)
+    reference_images(client)
+    swept(client)
+    segmentation()
+    catalog_parts()
+
     if failures:
         print(f"{len(failures)} FAILURE(S): {failures}")
         sys.exit(1)
     print("all checks passed")
+
+
+def reference_images(client: httpx.Client) -> None:
+    """Phase 6: /image/prep must find a dark shape on white, and /silhouette
+    must score a posed part against a mask in the same normalized frame."""
+    import base64
+    import io
+
+    import numpy as np
+    from PIL import Image, ImageDraw
+
+    from patchcad_kernel.image_prep import decode_mask, iou, normalize_mask, png_b64
+
+    # An L on white, off-centre, so cropping and padding both have work to do.
+    im = Image.new("RGB", (640, 480), "white")
+    poly = [(120, 90), (220, 90), (220, 330), (420, 330), (420, 410), (120, 410)]
+    ImageDraw.Draw(im).polygon(poly, fill=(35, 38, 44))
+    truth = Image.new("L", im.size, 0)
+    ImageDraw.Draw(truth).polygon(poly, fill=255)
+    expected = normalize_mask(np.asarray(truth) > 127)
+    buf = io.BytesIO()
+    im.save(buf, format="PNG")
+    data = base64.b64encode(buf.getvalue()).decode()
+    for method in ("auto", "rembg"):
+        r = client.post("/image/prep", json={"data_b64": data, "method": method}, timeout=180).json()
+        got = decode_mask(r["mask_b64"]) if r.get("ok") else np.zeros_like(expected)
+        score = iou(got, expected)
+        check(f"/image/prep ({method}) recovers a dark L on white: mask IoU >= 0.95",
+              r.get("ok") and score >= 0.95 and abs(r["aspect"] - 300 / 320) < 0.02,
+              f"method={r.get('method')} IoU={score:.3f} aspect={r.get('aspect')}")
+    again = client.post("/image/prep", json={"data_b64": data, "method": "auto"}).json()
+    check("/image/prep caches by image hash", again.get("cached") is True)
+
+    # A 40 x 10 x 20 box seen from the front is a 2:1 rectangle.
+    box = "from build123d import *\ndef build(p):\n    return Box(p.x, p.y, p.z)\n"
+    ident = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+    front_ref = png_b64(normalize_mask(np.ones((300, 600), dtype=bool)))
+    part = {"key": "body", "code": box, "params": {"x": 40, "y": 10, "z": 20}, "matrix": ident}
+    r = client.post("/silhouette", json={"parts": [part], "views": [
+        {"view": "front", "ref": "r1", "mask_b64": front_ref},
+        {"view": "side", "ref": "r1", "mask_b64": front_ref},
+    ]}).json()
+    views = (r.get("silhouette") or {}).get("views") or [{}, {}]
+    check("silhouette IoU: matching front view >= 0.95, wrong (side) view < 0.6",
+          r.get("ok") and views[0].get("iou", 0) >= 0.95 and views[1].get("iou", 1) < 0.6,
+          f"front={views[0].get('iou')} side={views[1].get('iou')}")
+
+    # A second part the reference does not have takes the blame.
+    moved = list(ident)
+    moved[12] = 35.0
+    extra = {"key": "tail", "code": box, "params": {"x": 30, "y": 6, "z": 6}, "matrix": moved}
+    r2 = client.post("/silhouette", json={"parts": [part, extra], "views": [
+        {"view": "front", "ref": "r1", "mask_b64": front_ref}]}).json()
+    v2 = ((r2.get("silhouette") or {}).get("views") or [{}])[0]
+    blamed = (v2.get("parts") or [{}])[0].get("key")
+    check("silhouette attributes the disagreement to the part the reference lacks",
+          r2.get("ok") and v2.get("iou", 1) < 0.8 and blamed == "tail",
+          f"IoU={v2.get('iou')} parts={v2.get('parts')}")
+
+
+FAB = {
+    # cnc: a filleted pocket passes; a sharp one fails the corner rule.
+    "cnc": ("cnc", "return Box(40, 30, 12) - Pos(0, 0, 3) * fillet(Box(20, 12, 6.01).edges().filter_by(Axis.Z), 2)",
+            "return Box(40, 30, 12) - Pos(0, 0, 3) * Box(20, 12, 6.01)", "internal_corner"),
+    "cnc-undercut": ("cnc", "return Box(40, 30, 12) - Pos(0, 0, 3) * fillet(Box(20, 12, 6.01).edges().filter_by(Axis.Z), 2)",
+                     "return Box(40, 30, 12) - Rot(0, 90, 0) * Cylinder(2, 50)", "undercut"),
+    "cnc-pocket": ("cnc", "return Box(40, 30, 24) - Pos(0, 0, 2) * fillet(Box(30, 12, 20.01).edges().filter_by(Axis.Z), 2)",
+                   "return Box(40, 30, 24) - Pos(0, 0, 2) * fillet(Box(30, 4, 20.01).edges().filter_by(Axis.Z), 1.9)",
+                   "pocket_depth"),
+    "sheet_metal": ("sheet_metal", "return BENT(2.0, 10)", "return BENT(0.5, 10)", "bend_radius"),
+    "sheet-hole": ("sheet_metal", "return BENT(2.0, 10)", "return BENT(2.0, 4)", "hole_edge"),
+    "sheet-gauge": ("sheet_metal", "return BENT(2.0, 10)", "return BENT(2.0, 10) + Pos(25, 0, 3.5) * Cylinder(4, 3)",
+                    "constant_thickness"),
+    "laser_cut": ("laser_cut", "return extrude(Rectangle(60, 30) - Pos(15, 0) * Circle(3), 3)",
+                  "return chamfer(extrude(Rectangle(60, 30), 3).edges().group_by(Axis.Z)[-1], 0.8)", "planar_profile"),
+    "sls": ("sls", "return Box(20, 20, 20) - Pos(0, 0, 1) * Box(17, 17, 20)",
+            "return Box(20, 20, 20) - Pos(0, 0, 1) * Box(19.4, 19.4, 20)", "min_wall"),
+    "mjf": ("mjf", "return Box(20, 20, 20) - Pos(0, 0, 1) * Box(17, 17, 20)",
+            "return Box(20, 20, 20) - Pos(0, 0, 1) * Box(19.4, 19.4, 20)", "min_wall"),
+    "resin": ("resin", "return Box(20, 20, 20) - Pos(0, 0, 5) * Box(10, 10, 10.01)",
+              "return Box(20, 20, 20) - Box(10, 10, 10)", "enclosed_void"),
+}
+
+#: A 2 mm L-bracket with a real inner bend radius `ri` and a Ø5 hole `off`
+#: from the end of its foot.
+BENT = """
+def BENT(ri, off, t=2.0):
+    ro = ri + t
+    foot = Pos(20 + ro / 2, 0, t / 2) * Box(40 - ro, 30, t)
+    wall = Pos(t / 2, 0, 20 + ro / 2) * Box(t, 30, 40 - ro)
+    bend = Pos(ro, 0, ro) * Rot(90, 0, 0) * (Cylinder(ro, 30) - Cylinder(ri, 30)) & Pos(ro / 2, 0, ro / 2) * Box(ro, 30, ro)
+    return foot + wall + bend - Pos(40 - off, 0, t / 2) * Cylinder(2.5, 2 * t)
+"""
+
+
+def _fab_code(body: str) -> str:
+    return f"from build123d import *\n{BENT}\ndef build(p):\n    {body}\n"
+
+
+def fabricate(client: httpx.Client) -> None:
+    """G4c process DFM: one pass and one fail per rule family, through
+    /execute, then the vendor package for each flat-or-bent kind."""
+    import io
+    import re
+    import tempfile
+    import zipfile
+
+    import ezdxf
+
+    print("fabricate: G4c process DFM + vendor package")
+    nonce = time.time()
+    for label, (kind, good, bad, rule) in FAB.items():
+        ok = client.post("/execute", json={"code": _fab_code(good), "params": {"n": nonce},
+                                            "process": {"kind": kind}}, timeout=60)
+        no = client.post("/execute", json={"code": _fab_code(bad), "params": {"n": nonce},
+                                            "process": {"kind": kind}}, timeout=60)
+        nb = no.json()
+        rules = [f.get("rule") for f in nb.get("failures") or []]
+        check(f"G4c {label}: passes the good part, fails the bad one on {rule}",
+              ok.status_code == 200 and no.status_code == 422 and nb.get("stage") == "G4c" and rule in rules,
+              f"good={ok.json().get('error', 'ok')[:90]} bad={nb.get('stage')} {rules}")
+    allowed = client.post("/execute", json={"code": _fab_code(FAB["cnc-undercut"][2]), "params": {"n": nonce},
+                                             "process": {"kind": "cnc", "allow_undercuts": True}})
+    check("G4c cnc: a flagged second setup allows the side hole", allowed.status_code == 200,
+          allowed.json().get("error", "")[:120])
+
+    ports = [{"key": "mount", "type": "CLEARANCE_HOLE", "params": {"diameter": 5.0},
+              "pose": {"origin": [30, 0, 2], "zAxis": [0, 0, 1], "xAxis": [1, 0, 0]}}]
+    tmp = pathlib.Path(tempfile.mkdtemp())
+
+    def package(kind: str, body: str) -> tuple[dict, zipfile.ZipFile | None]:
+        r = client.post("/vendor-package", json={
+            "code": _fab_code(body), "params": {"n": nonce}, "ports": ports, "process": {"kind": kind},
+            "meta": {"name": "bracket", "title": "Motor bracket", "process": kind, "material": "Al 5052-H32",
+                     "finish": "bead blast", "qty": 4, "date": "2026-10-02"}}, timeout=120)
+        body_ = r.json()
+        if not body_.get("ok"):
+            return body_, None
+        return body_, zipfile.ZipFile(io.BytesIO(client.get(body_["file"]).content))
+
+    def pages(pdf: bytes) -> int:
+        return len(re.findall(rb"/Type\s*/Page(?![s\w])", pdf))
+
+    expected = {"bracket.step", "bracket.dxf", "bracket-drawing.pdf", "RFQ.md"}
+    body, z = package("sheet_metal", "return BENT(2.0, 10)")
+    if z is None:
+        check("sheet-metal vendor package builds", False, str(body)[:200])
+    else:
+        names = set(z.namelist())
+        check("sheet-metal vendor zip holds STEP, DXF, PDF and RFQ.md", names == expected, str(sorted(names)))
+        step = z.read("bracket.step").decode()
+        check("vendor STEP is AP242, named, in mm",
+              "AP242_MANAGED_MODEL_BASED_3D_ENGINEERING" in step and "PRODUCT('bracket'" in step
+              and "SI_UNIT(.MILLI.,.METRE.)" in step)
+        check("vendor drawing PDF is one sheet", pages(z.read("bracket-drawing.pdf")) == 1)
+        (tmp / "bent.dxf").write_bytes(z.read("bracket.dxf"))
+        doc = ezdxf.readfile(tmp / "bent.dxf")
+        check("bent-part DXF parses with three projected views",
+              {"FRONT", "TOP", "RIGHT"} <= {e.dxf.layer for e in doc.modelspace()}, str(len(doc.modelspace())))
+        rfq = z.read("RFQ.md").decode()
+        check("RFQ says no flat pattern for a bent part, and carries material, qty and the hole",
+              body["vendor"]["flat_pattern"] is False and "NO FLAT PATTERN" in rfq and "Al 5052-H32" in rfq
+              and "Quantity: 4" in rfq and "Ø5 THRU" in rfq, rfq[:160])
+
+    body, z = package("laser_cut", "return extrude(Rectangle(60, 30) - Pos(15, 0) * Circle(3), 3)")
+    if z is None:
+        check("laser vendor package builds", False, str(body)[:200])
+    else:
+        (tmp / "laser.dxf").write_bytes(z.read("bracket.dxf"))
+        kinds = sorted(e.dxftype() for e in ezdxf.readfile(tmp / "laser.dxf").modelspace())
+        check("laser DXF is the profile: an outline and the Ø6 hole", kinds.count("CIRCLE") == 1 and "LINE" in kinds,
+              str(kinds))
+
+    body, z = package("cnc", "return Box(40, 30, 12) - Pos(0, 0, 3) * Box(20, 12, 6.01)")
+    check("no vendor package for a part that fails G4c", z is None and body.get("stage") == "G4c",
+          str(body.get("error", ""))[:120])
+
+
+def swept(client: httpx.Client) -> None:
+    """G5 sweeps a moving part through its joint's travel. A rotor whose blades
+    rest along x misses a strut standing at +y, so the static check is clean
+    both times; turned through its full revolution, the rotor with a strut
+    inside its blade circle hits it and the one with the strut outside does
+    not. A slider runs into a stop the same way along its stroke."""
+    print("swept clearance")
+    n = int(time.time())
+    rotor = ("from build123d import *\ndef build(p):\n    _ = p['nonce']\n"
+             "    return Pos(0, 0, 20) * Cylinder(8, 6) + Pos(30, 0, 20) * Box(60, 10, 3) + Pos(-30, 0, 20) * Box(60, 10, 3)\n")
+    strut = "from build123d import *\ndef build(p):\n    return Pos(0, p['r'], 15) * Box(4, 4, 30)\n"
+    revolve = {"joint": "j1", "type": "revolute", "origin": [0, 0, 0], "direction": [0, 0, 1], "limits": [-180, 180], "moving": ["rotor"]}
+
+    def spin(r):
+        return client.post("/clash", json={"parts": [
+            {"key": "rotor", "code": rotor, "params": {"nonce": n}, "matrix": []},
+            {"key": "strut", "code": strut, "params": {"r": r}, "matrix": []},
+        ], "sweeps": [revolve]}).json()
+
+    hit = spin(45.0)
+    found = (hit.get("clash") or {}).get("swept") or []
+    check("swept G5: a rotor that clears at rest but hits a strut a quarter turn on fails, naming the joint",
+          hit["ok"] and hit["clash"]["clashes"] == [] and len(found) == 1 and found[0]["joint"] == "j1"
+          and found[0]["a"] == "rotor" and found[0]["b"] == "strut" and abs(abs(found[0]["travel"]) - 90) < 10,
+          str(hit.get("clash"))[:300])
+    clear = spin(70.0)
+    check("swept G5: the same rotor with the strut outside its blade circle is clean",
+          clear["ok"] and clear["clash"]["clashes"] == [] and clear["clash"].get("swept") == [], str(clear.get("clash"))[:300])
+
+    box = "from build123d import *\ndef build(p):\n    _ = p['nonce']\n    return Box(10, 10, 10)\n"
+    stop = "from build123d import *\ndef build(p):\n    return Pos(p['x'], 0, 0) * Box(4, 20, 20)\n"
+
+    def slide(x):
+        return client.post("/clash", json={"parts": [
+            {"key": "slider", "code": box, "params": {"nonce": n}, "matrix": []},
+            {"key": "stop", "code": stop, "params": {"x": x}, "matrix": []},
+        ], "sweeps": [{"joint": "p1", "type": "prismatic", "origin": [0, 0, 0], "direction": [1, 0, 0],
+                       "limits": [0, 50], "moving": ["slider"]}]}).json()
+
+    into = (slide(40.0).get("clash") or {}).get("swept") or []
+    past = (slide(70.0).get("clash") or {}).get("swept")
+    check("swept G5: a slider meets a stop inside its stroke, and not one past it",
+          len(into) == 1 and into[0]["b"] == "stop" and past == [], f"{into} / {past}")
+
+
+def segmentation() -> None:
+    """Joint mode "auto": sites, not cuts. Every site is a disk of the width the
+    widest fastening rule needs, with a column of material behind it into both
+    pieces; a neck too thin for any of them offers no site at all, rather than
+    a hole with 0.75mm walls. Then the features the server's rules ask for are
+    cut by `cut_joints` and the G3 probes pass them."""
+    print("segmentation joints")
+    import trimesh
+    from patchcad_kernel.gates import GateError, _probe_port
+    from patchcad_kernel.meshpart import MeshPart, _joint_need, cut_joints, segment
+
+    need = _joint_need("M3")
+    _, itfs = segment([trimesh.creation.box((120, 40, 30))], 2, "auto", "M3")
+    sites = itfs[0].candidates if itfs else []
+    check("auto joints report sites with walls, and cut nothing",
+          len(sites) == 2 and all(c["wallA"] >= 50 and c["wallB"] >= 50 and c["face_size"] == need for c in sites)
+          and itfs[0].holes == [] and itfs[0].pegs == [], str(sites)[:300])
+    a = trimesh.creation.box((40, 40, 40))
+    a.apply_translation([-30, 0, 0])
+    b = trimesh.creation.box((40, 40, 40))
+    b.apply_translation([30, 0, 0])
+    neck = trimesh.creation.box((22, 6, 6))
+    _, itfs = segment([trimesh.boolean.union([a, b, neck], engine="manifold")], 2, "auto", "M3")
+    check(f"a 6mm neck offers no joint site (needs Ø{need:g})", len(itfs) == 1 and itfs[0].candidates == [],
+          str([i.candidates for i in itfs]))
+
+    # A 20mm slab, cut face at z=0 (+z out), back face at z=-20.
+    slab = MeshPart(trimesh.creation.box(bounds=[[-20, -20, -20], [20, 20, 0]]))
+    up, down, x = [0, 0, 1], [0, 0, -1], [1, 0, 0]
+    cut = cut_joints(slab, [
+        {"o": [-8, 0, 0], "z": up, "x": x, "kind": "round", "d": 4.0, "depth": 6.3},
+        {"o": [8, 0, -20], "z": down, "x": x, "kind": "round", "d": 6.5, "depth": 3.4, "through": 3.4, "access": 6.5},
+        {"o": [0, 10, -20], "z": down, "x": x, "kind": "hex", "d": 5.7, "depth": 2.6, "access": 7.0},
+    ])
+    ports = [
+        {"key": "pocket", "type": "INSERT_POCKET", "pose": {"origin": [-8, 0, 0], "zAxis": up, "xAxis": x},
+         "params": {"diameter": 4.0, "depth": 5.8}},
+        {"key": "cbore", "type": "COUNTERBORE", "pose": {"origin": [8, 0, -20], "zAxis": down, "xAxis": x},
+         "params": {"diameter": 6.5, "depth": 3.4, "through_diameter": 3.4}},
+        {"key": "trap", "type": "NUT_TRAP", "pose": {"origin": [0, 10, -20], "zAxis": down, "xAxis": x},
+         "params": {"af": 5.5, "depth": 2.4}},
+    ]
+    for port in ports:
+        try:
+            _probe_port(cut, port)
+            check(f"cut_joints cuts a {port['type']} its probe passes", True)
+        except GateError as err:
+            check(f"cut_joints cuts a {port['type']} its probe passes", False, str(err))
+    check("cut_joints leaves a watertight piece", cut.is_valid)
+
+
+def catalog_parts() -> None:
+    """Every catalog family's registry code, built here and held to G2. The code
+    is TypeScript codegen (src/registry.ts), so the live vitest that owns it
+    runs against this kernel rather than smoke.py carrying a copy of it."""
+    print("catalog parts")
+    from patchcad_kernel.meshpart import _catalog_clearance
+    check("kernel reads ISO 273 clearances from the shared catalog",
+          (_catalog_clearance("M3"), _catalog_clearance("M8")) == (3.4, 9.0))
+    pkg = pathlib.Path(__file__).parent.parent
+    proc = subprocess.run([str(pkg / "node_modules" / ".bin" / "vitest"), "run", "src/registry.kernel.test.ts"],
+                          cwd=pkg, capture_output=True, text=True,
+                          env={**os.environ, "PATCHCAD_KERNEL_LIVE": "1",
+                               "PATCHCAD_KERNEL_PORT": BASE.rsplit(":", 1)[1]})
+    tail = (proc.stdout + proc.stderr).strip().splitlines()
+    check("every catalog family and size builds one valid solid", proc.returncode == 0,
+          next((ln.strip() for ln in tail if "Tests" in ln), tail[-1] if tail else "no output"))
 
 
 if __name__ == "__main__":

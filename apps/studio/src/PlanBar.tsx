@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { BusyButton } from "./BusyButton.js";
+import { PlanPreview } from "./PlanPreview.js";
 import { Modal } from "./Modal.js";
 import { useStudio, type PlanPhase } from "./store.js";
 
@@ -19,7 +20,7 @@ const elapsed = (since: number) => `${Math.max(0, Math.round((Date.now() - since
 
 export function PlanProgress() {
   const planState = useStudio((s) => s.planState);
-  const cancelCook = useStudio((s) => s.cancelCook);
+  const cancelPlan = useStudio((s) => s.cancelPlan);
   const [, tick] = useState(0);
 
   // One timer while planning; the elapsed readout is the honest part — it is
@@ -56,7 +57,7 @@ export function PlanProgress() {
           </li>
         ))}
       </ol>
-      <button className="btn btn--quiet btn--tiny" onClick={() => void cancelCook()}>
+      <button className="btn btn--quiet btn--tiny" onClick={() => void cancelPlan()}>
         stop
       </button>
     </div>
@@ -150,6 +151,9 @@ export function PlanOverlay() {
           <>
             <h3>proposed design</h3>
             <p className="modal__rationale">{planState.rationale}</p>
+            {planState.plan.backend === "cad" && (
+              <PlanPreview planKey={`${planState.plan.id}:${Object.keys(planState.plan.nodes).join(",")}`} />
+            )}
             <div className="plan-rows">
               {Object.values(planState.plan.nodes).map((n) => (
                 <div key={n.id} className="plan-row">

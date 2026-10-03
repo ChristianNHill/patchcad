@@ -1,17 +1,18 @@
 import { useRef, useState } from "react";
 import { Modal } from "./Modal.js";
-import { useStudio } from "./store.js";
+import { useStudio, type JointMode } from "./store.js";
 
 /** Bring an existing CAD file (STL / STEP / 3MF / OBJ) into the graph system:
  * multi-body files become one node per body; a single solid can be cut into
- * pieces whose cut faces become mating contracts — optionally with joining
+ * pieces whose cut faces become mating contracts, joined by real hardware the
+ * joint rules pick (screws into inserts or nuts, else dowels), by pegs, or by
  * holes sized to a chosen thread. */
 export function ImportButton() {
   const importCad = useStudio((s) => s.importCad);
   const fileRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [pieces, setPieces] = useState(1);
-  const [joints, setJoints] = useState<"none" | "holes" | "pegs">("pegs");
+  const [joints, setJoints] = useState<JointMode>("auto");
   const [thread, setThread] = useState<"M3" | "M4" | "M5">("M4");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -62,13 +63,14 @@ export function ImportButton() {
                   className="input"
                   value={joints}
                   disabled={pieces === 1}
-                  onChange={(e) => setJoints(e.target.value as "none" | "holes" | "pegs")}
+                  onChange={(e) => setJoints(e.target.value as JointMode)}
                 >
+                  <option value="auto">screws and inserts (picked per cut)</option>
                   <option value="pegs">alignment pegs (Ø5, slip fit)</option>
                   <option value="holes">screw holes</option>
                   <option value="none">plain cuts</option>
                 </select>
-                {joints === "holes" && (
+                {(joints === "holes" || joints === "auto") && (
                   <select
                     className="input"
                     value={thread}
@@ -83,7 +85,9 @@ export function ImportButton() {
               </label>
               <p className="import-opts__hint">
                 Cut faces become mating ports, so the pieces reassemble in the viewport and every piece is a
-                reprompt-able node. Pegs print 0.3&nbsp;mm smaller than their sockets so the pieces actually fit.
+                reprompt-able node. Screws and inserts are real catalog parts sized to each cut&apos;s walls, with
+                their pockets cut into the pieces; where a cut is too thin for one, a dowel aligns it instead.
+                Pegs print 0.3&nbsp;mm smaller than their sockets so the pieces actually fit.
               </p>
               {error && <div className="contract-editor__error">{error}</div>}
             </div>

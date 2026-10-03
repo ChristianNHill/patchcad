@@ -9,7 +9,13 @@ pnpm exec tsx src/eval.ts --dry-run               # what each case asserts, 0 LL
 pnpm exec tsx src/eval.ts --case single-plate --max-usd 0.50
 pnpm exec tsx src/eval.ts --max-usd 2.00          # the whole ladder, once each
 pnpm exec tsx src/eval.ts --repeat 3 --max-usd 6  # and again, for the spread
+pnpm exec tsx src/eval.ts --dry --only hinge-revolute  # plan only: one architect call, no cook
 ```
+
+`--only` is `--case`. Every run ends with a one-screen table (pass, nodes ready,
+generation attempts, calls, $, wall clock, G5 findings) and what moved since the
+newest earlier result of the same kind, dry or cooked. A dry run asserts only
+the node count, because that is all a plan can answer.
 
 `--repeat N` runs every case N times and reports the spread per case, because a
 sweep of single runs is what hid a real regression behind four green lines: the

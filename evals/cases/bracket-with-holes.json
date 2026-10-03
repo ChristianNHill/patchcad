@@ -1,0 +1,14 @@
+{
+  "id": "bracket-with-holes",
+  "prompt": "a single printed L-bracket, 40mm wide and 3mm thick, with a 30mm leg and a 25mm leg, and two M4 clearance holes through each leg",
+  "why": "Single part with holes on two faces at right angles. G3 measures every hole's diameter and whether it passes through, so a hole drilled into the wrong leg, or bridged by the other leg's material at the inside corner, fails a probe. volumeFraction separates an L from the solid 30x40x25 block that contains it (a real L is about 0.2).",
+  "expect": {
+    "nodes": { "min": 1, "max": 1 },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "ports": [
+      { "anyType": ["CLEARANCE_HOLE", "HOLE_PATTERN"], "minCount": 2, "diameter": 4.5, "tol": 0.4, "through": true }
+    ],
+    "volumeFraction": { "max": 0.45 }
+  }
+}

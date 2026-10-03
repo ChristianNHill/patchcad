@@ -16,7 +16,11 @@ export const API =
   // pulls in any component transitively importing it must not die on `location`.
   (typeof location === "undefined"
     ? "http://localhost:4100"
-    : `${location.protocol}//${location.hostname}:4100`);
+    : // A production build is served by the patchcad server itself (Docker),
+      // on whatever port it was published at.
+      import.meta.env.PROD
+      ? location.origin
+      : `${location.protocol}//${location.hostname}:4100`);
 
 /** Same origin, ws:// scheme — for the /ws event stream. */
 export const WS_API = API.replace(/^http/, "ws");

@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { isCooking } from "@patchcad/shared";
 import { fmtTokens, useStudio } from "./store.js";
+import { isListPrice, projectSpend } from "./cost.js";
 import { Canvas } from "./canvas/Canvas.js";
 import { BusyButton } from "./BusyButton.js";
 import { Modal } from "./Modal.js";
 import { CadViewport } from "./CadViewport.js";
 import { Inspector } from "./Inspector.js";
+import { BomButton } from "./BomPanel.js";
 import { PlanBar, PlanOverlay, PlanProgress } from "./PlanBar.js";
 import { ImportButton } from "./ImportButton.js";
 import { Welcome } from "./Welcome.js";
@@ -125,6 +127,7 @@ export function App() {
         <CookProgress />
         <DirtyButton />
         <UndoButton />
+        <BomButton />
         <ProjectButton />
         <span className="header__goal" title={graph.brief.goal}>
           {graph.brief.goal}
@@ -161,22 +164,22 @@ export function App() {
 
 function CostChip() {
   const graph = useStudio((s) => s.graph);
+  const providerId = useStudio((s) => s.status?.provider?.id);
   if (!graph) return null;
-  let calls = 0;
-  let tokens = 0;
-  let usd = 0;
-  for (const n of Object.values(graph.nodes)) {
-    calls += n.cost.calls;
-    tokens += n.cost.inputTokens + n.cost.outputTokens;
-    usd += n.cost.usd;
-  }
+  const { calls, tokens, usd } = projectSpend(graph);
   if (calls === 0) return null;
+  const listPrice = isListPrice(providerId);
+  const dollars = usd > 0 ? `$${usd.toFixed(2)}${listPrice ? " ≈ API list price" : ""}` : "";
   return (
     <span
       className="checker cost-chip"
-      title={`LLM spend on this project — ${calls} call${calls === 1 ? "" : "s"}, ${fmtTokens(tokens)} tokens${usd > 0 ? `, $${usd.toFixed(2)}` : " (local model, $0)"}`}
+      title={
+        `LLM spend on this project, planning included — ${calls} call${calls === 1 ? "" : "s"}, ${fmtTokens(tokens)} tokens` +
+        (usd > 0 ? `, $${usd.toFixed(2)}` : " (local model, $0)") +
+        (listPrice ? ". Billed to your subscription; the dollar figure is what the same tokens cost at API list price." : "")
+      }
     >
-      {fmtTokens(tokens)} tok{usd > 0 ? ` · $${usd.toFixed(2)}` : ""}
+      {fmtTokens(tokens)} tok{dollars ? ` · ${dollars}` : ""}
     </span>
   );
 }

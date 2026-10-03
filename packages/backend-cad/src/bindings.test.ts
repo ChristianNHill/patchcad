@@ -154,3 +154,81 @@ describe("cad-port-consistency lint", () => {
     expect(cadPortConsistencyLint.run(graph)).toEqual([]);
   });
 });
+
+describe("hw: catalog bindings", () => {
+  const hw = (expr: string, plateParams: Record<string, number | string> = {}) => {
+    const { resolved, problems } = resolveParamBindings(makeGraph({ hole_diameter: expr }, plateParams), "bracket");
+    return problems[0] ?? resolved.hole_diameter;
+  };
+
+  it("resolves every field to the part's nominal size; the probe owns the fit", () => {
+    const cases: [string, number][] = [
+      ["hw:tapDrill:M3", 2.5],
+      ["hw:tapDrill:ISO4762-M3x12", 2.5],
+      ["hw:clearance:M6", 6.6],
+      ["hw:insertHoleD:M3", 4],
+      ["hw:insertDepth:M3", 5.8],
+      ["hw:insertDepth:HEATSET-S-M3", 3],
+      ["hw:bossOd:M4", 8.8],
+      ["hw:nutTrapAf:M3", 5.5],
+      ["hw:nutTrapDepth:M4", 3.2],
+      ["hw:cboreD:M3", 6.5],
+      ["hw:cboreDepth:M3", 3.4],
+      ["hw:cboreD:ISO7380-M3x10", 6.7],
+      ["hw:cskD:M4", 8.96],
+      ["hw:washerOd:M5", 10],
+      ["hw:dowelHole:3", 3],
+      ["hw:bearingSeatD:608", 22],
+      ["hw:bearingSeatD:BRG-F608", 22],
+      ["hw:bearingWidth:625", 5],
+      ["hw:shaftD:608", 8],
+      ["hw:shaftD:ROD-8x200", 8],
+      ["hw:shaftD:LM10UU", 10],
+      ["hw:shaftD:NEMA17", 5],
+      ["hw:hubFlat:DSHAFT-5x50", 2],
+      ["hw:motorPilot:NEMA17", 22],
+      ["hw:motorPcd:NEMA17", 43.84],
+      ["hw:motorPcd:2204", 16],
+      ["hw:magnetPocketD:6x3", 6],
+    ];
+    for (const [expr, want] of cases) expect(hw(expr), expr).toBe(want);
+  });
+
+  it("follows a thread or SKU param upstream, so a thread change re-resolves", () => {
+    expect(hw("hw:insertHoleD:param:plate.thread")).toBe(5.6);
+    expect(hw("hw:insertHoleD:param:plate.thread", { thread: "M3" })).toBe(4);
+  });
+
+  it("reports instead of guessing", () => {
+    expect(hw("hw:frobnicate:M3")).toContain('unknown hw field "frobnicate"');
+    expect(hw("hw:bearingSeatD:ISO4762-M3x12")).toContain("is not a bearing / bearing_flanged / lm_uu / bushing size");
+    expect(hw("hw:tapDrill:M7")).toContain('"M7" is not a known thread');
+    expect(hw("hw:insertHoleD:param:ghost.thread")).toContain("resolves to nothing");
+  });
+});
+
+describe("screwLengthIn", () => {
+  const len = (expr: string, plateParams: Record<string, number | string> = {}) => {
+    const { resolved, problems } = resolveParamBindings(makeGraph({ hole_diameter: expr }, plateParams), "bracket");
+    return problems[0] ?? resolved.hole_diameter;
+  };
+
+  it("picks the shortest stocked length of that family and thread in range", () => {
+    // 4.5 + 4 = 8.5 → 10 for an SHCS; a csk M3 starts at 8 and has 10 too.
+    expect(len("screwLengthIn: shcs, M3, min=param(plate.hole_diameter) + 4")).toBe(10);
+    expect(len("screwLengthIn: shcs, param:plate.thread, min=param(plate.hole_diameter) + 4, max=20")).toBe(10);
+    expect(len("screwLengthIn: button, M4, min=13")).toBe(16);
+  });
+
+  it("re-derives when the stack moves", () => {
+    const expr = "screwLengthIn: shcs, M4, min=param(plate.hole_diameter) + 4, max=param(plate.hole_diameter) + 8";
+    expect(len(expr, { hole_diameter: 4 })).toBe(8);
+    expect(len(expr, { hole_diameter: 14 })).toBe(20);
+  });
+
+  it("names the stocked lengths when nothing fits", () => {
+    expect(len("screwLengthIn: shcs, M3, min=13, max=15")).toContain("stocked: 5, 6, 8, 10, 12, 16");
+    expect(len("screwLengthIn: shcs, M3")).toContain("needs min=");
+    expect(len("screwLengthIn: bearing, 608, min=3")).toContain("no stocked lengths");
+  });
+});

@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { computeDirtySet, isCooking, type CookFailure, type GraphDoc, type NodeRecord } from "@patchcad/shared";
-import { fmtTokens, useStudio } from "./store.js";
+import { fmtTokens, useStudio, type JointMode } from "./store.js";
 import { BusyButton } from "./BusyButton.js";
+import { ImageDrop, type RefDraft } from "./ImageDrop.js";
 import { groupParams, ParamRow } from "./params.js";
 import { MeasurementsSection, RenderSheet } from "./measurements.js";
+import { isFabricate, VendorBadge } from "./BomPanel.js";
 
 /** What the attribution means, in words. The engine decides whether a stuck
  *  node is the generator's fault or the architect's; that verdict determines
@@ -124,6 +126,7 @@ export function Inspector({ graph }: { graph: GraphDoc }) {
         <h2 className="inspector__title">{node.title}</h2>
         <div className="inspector__meta">
           {node.kind} · v{node.version} · {node.id}
+          {isFabricate(node) && <> <VendorBadge /></>}
         </div>
         <NodeActions node={node} graph={graph} />
         <PrintabilityLine nodeId={node.id} />
@@ -267,7 +270,7 @@ function ParamsSection({ node }: { node: NodeRecord }) {
  * "break out the orbs"). Each piece becomes its own node, jointed at the cuts. */
 function SegmentBox({ nodeId }: { nodeId: string }) {
   const segmentNode = useStudio((s) => s.segmentNode);
-  const [joints, setJoints] = useState<"none" | "holes" | "pegs">("pegs");
+  const [joints, setJoints] = useState<JointMode>("auto");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   return (
@@ -275,6 +278,7 @@ function SegmentBox({ nodeId }: { nodeId: string }) {
       <span className="section__label">Split where it naturally separates</span>
       <div className="segment-box">
         <select className="input" value={joints} onChange={(e) => setJoints(e.target.value as never)} aria-label="joint type at cuts">
+          <option value="auto">with screws and inserts</option>
           <option value="pegs">with alignment pegs (slip fit)</option>
           <option value="holes">with screw holes</option>
           <option value="none">plain cuts</option>
@@ -415,6 +419,7 @@ function RepromptBox({ nodeId }: { nodeId: string }) {
   const backend = useStudio((s) => s.graph?.backend);
   const status = useStudio((s) => s.statuses[nodeId]);
   const [text, setText] = useState("");
+  const [images, setImages] = useState<RefDraft[]>([]);
   const [routing, setRouting] = useState(false);
   const [routed, setRouted] = useState<{ tier: "T2" | "T3"; reason: string } | null>(null);
   const cooking = !!status && isCooking(status);
@@ -429,9 +434,10 @@ function RepromptBox({ nodeId }: { nodeId: string }) {
           if (text.trim().length >= 2 && !busy) {
             const message = text.trim();
             setText("");
+            setImages([]);
             setRouted(null);
             setRouting(true);
-            void reprompt(nodeId, message)
+            void reprompt(nodeId, message, images)
               .then((r) => setRouted(r))
               .finally(() => setRouting(false));
           }
@@ -454,6 +460,7 @@ function RepromptBox({ nodeId }: { nodeId: string }) {
           {routing ? "routing…" : cooking ? "cooking…" : "re-cook"}
         </button>
       </form>
+      {backend === "cad" && <ImageDrop images={images} onChange={setImages} labels={false} max={2} disabled={busy} />}
       {routed && (
         <div className="tier-note">
           <span

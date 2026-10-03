@@ -1,0 +1,398 @@
+{
+  "version": 1,
+  "notes": {
+    "units": "mm throughout",
+    "dimsSource": "standard = transcribed from the named standard (max/theoretical values where the standard gives a range); nominal = the designation IS the dimension; family-typical = no standard exists or the value was not checkable at entry, taken from common vendor practice",
+    "engagementMin": "rule of thumb, not a standard: 1.0d into steel, 1.5d into aluminium, 2.5d tapped directly into FDM plastic",
+    "vendors": "a vendor entry needs verifiedAt; part numbers are filled in by people from a vendor page, never generated",
+    "frames": "every family's local frame is documented beside its codegen in src/registry.ts"
+  },
+  "threads": {
+    "M2": { "pitch": 0.4, "clearance": 2.4, "tapDrill": 1.6, "engagementMin": { "steel": 2, "aluminum": 3, "fdm": 5 } },
+    "M2.5": { "pitch": 0.45, "clearance": 2.9, "tapDrill": 2.05, "engagementMin": { "steel": 2.5, "aluminum": 4, "fdm": 6.5 } },
+    "M3": { "pitch": 0.5, "clearance": 3.4, "tapDrill": 2.5, "engagementMin": { "steel": 3, "aluminum": 4.5, "fdm": 7.5 } },
+    "M4": { "pitch": 0.7, "clearance": 4.5, "tapDrill": 3.3, "engagementMin": { "steel": 4, "aluminum": 6, "fdm": 10 } },
+    "M5": { "pitch": 0.8, "clearance": 5.5, "tapDrill": 4.2, "engagementMin": { "steel": 5, "aluminum": 7.5, "fdm": 12.5 } },
+    "M6": { "pitch": 1.0, "clearance": 6.6, "tapDrill": 5.0, "engagementMin": { "steel": 6, "aluminum": 9, "fdm": 15 } },
+    "M8": { "pitch": 1.25, "clearance": 9.0, "tapDrill": 6.8, "engagementMin": { "steel": 8, "aluminum": 12, "fdm": 20 } }
+  },
+  "families": {
+    "shcs": {
+      "category": "fasteners", "kind": "fastener", "keyedBy": "thread", "skuPrefix": "ISO4762",
+      "standard": "ISO 4762", "dimsSource": "standard",
+      "dims": {
+        "M2": { "headD": 3.8, "headH": 2, "socketAf": 1.5 },
+        "M2.5": { "headD": 4.5, "headH": 2.5, "socketAf": 2 },
+        "M3": { "headD": 5.5, "headH": 3, "socketAf": 2.5 },
+        "M4": { "headD": 7, "headH": 4, "socketAf": 3 },
+        "M5": { "headD": 8.5, "headH": 5, "socketAf": 4 },
+        "M6": { "headD": 10, "headH": 6, "socketAf": 5 },
+        "M8": { "headD": 13, "headH": 8, "socketAf": 6 }
+      },
+      "lengths": {
+        "M2": [3, 4, 5, 6, 8, 10, 12, 16, 20],
+        "M2.5": [4, 5, 6, 8, 10, 12, 16, 20, 25],
+        "M3": [5, 6, 8, 10, 12, 16, 20, 25, 30],
+        "M4": [6, 8, 10, 12, 16, 20, 25, 30, 35, 40],
+        "M5": [8, 10, 12, 16, 20, 25, 30, 35, 40, 45, 50],
+        "M6": [10, 12, 16, 20, 25, 30, 35, 40, 45, 50, 55, 60],
+        "M8": [12, 16, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 80]
+      }
+    },
+    "button": {
+      "category": "fasteners", "kind": "fastener", "keyedBy": "thread", "skuPrefix": "ISO7380",
+      "standard": "ISO 7380-1 (M3 and up; M2 and M2.5 are outside the standard)", "dimsSource": "standard",
+      "dims": {
+        "M2": { "headD": 3.5, "headH": 1.3, "socketAf": 1.3, "dimsSource": "family-typical" },
+        "M2.5": { "headD": 4.7, "headH": 1.5, "socketAf": 1.5, "dimsSource": "family-typical" },
+        "M3": { "headD": 5.7, "headH": 1.65, "socketAf": 2 },
+        "M4": { "headD": 7.6, "headH": 2.2, "socketAf": 2.5 },
+        "M5": { "headD": 9.5, "headH": 2.75, "socketAf": 3 },
+        "M6": { "headD": 10.5, "headH": 3.3, "socketAf": 4 },
+        "M8": { "headD": 14, "headH": 4.4, "socketAf": 5 }
+      },
+      "lengths": {
+        "M2": [3, 4, 5, 6, 8, 10],
+        "M2.5": [4, 5, 6, 8, 10, 12],
+        "M3": [4, 5, 6, 8, 10, 12, 16, 20, 25, 30],
+        "M4": [6, 8, 10, 12, 16, 20, 25, 30],
+        "M5": [8, 10, 12, 16, 20, 25, 30],
+        "M6": [10, 12, 16, 20, 25, 30, 40],
+        "M8": [12, 16, 20, 25, 30, 40]
+      }
+    },
+    "csk": {
+      "category": "fasteners", "kind": "fastener", "keyedBy": "thread", "skuPrefix": "ISO10642",
+      "standard": "ISO 10642 (M3 and up; headD is the theoretical sharp-edge Ø; length includes the head)", "dimsSource": "standard",
+      "dims": {
+        "M2": { "headD": 4.4, "headH": 1.2, "socketAf": 1.3, "angle": 90, "dimsSource": "family-typical" },
+        "M2.5": { "headD": 5.5, "headH": 1.5, "socketAf": 1.5, "angle": 90, "dimsSource": "family-typical" },
+        "M3": { "headD": 6.72, "headH": 1.86, "socketAf": 2, "angle": 90 },
+        "M4": { "headD": 8.96, "headH": 2.48, "socketAf": 2.5, "angle": 90 },
+        "M5": { "headD": 11.2, "headH": 3.1, "socketAf": 3, "angle": 90 },
+        "M6": { "headD": 13.44, "headH": 3.72, "socketAf": 4, "angle": 90 },
+        "M8": { "headD": 17.92, "headH": 4.96, "socketAf": 5, "angle": 90 }
+      },
+      "lengths": {
+        "M2": [4, 5, 6, 8, 10, 12],
+        "M2.5": [5, 6, 8, 10, 12, 16],
+        "M3": [8, 10, 12, 16, 20, 25, 30],
+        "M4": [8, 10, 12, 16, 20, 25, 30, 35, 40],
+        "M5": [8, 10, 12, 16, 20, 25, 30, 35, 40, 45, 50],
+        "M6": [10, 12, 16, 20, 25, 30, 35, 40, 45, 50, 60],
+        "M8": [12, 16, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80]
+      }
+    },
+    "hex_nut": {
+      "category": "fasteners", "kind": "nut", "keyedBy": "thread", "skuPrefix": "ISO4032",
+      "standard": "ISO 4032 (height is m max)", "dimsSource": "standard",
+      "dims": {
+        "M2": { "af": 4, "height": 1.6 },
+        "M2.5": { "af": 5, "height": 2 },
+        "M3": { "af": 5.5, "height": 2.4 },
+        "M4": { "af": 7, "height": 3.2 },
+        "M5": { "af": 8, "height": 4.7 },
+        "M6": { "af": 10, "height": 5.2 },
+        "M8": { "af": 13, "height": 6.8 }
+      }
+    },
+    "heatset_std": {
+      "category": "fasteners", "kind": "insert", "keyedBy": "thread", "skuPrefix": "HEATSET",
+      "note": "no standard exists. holeD is the install hole, od the knurl, pocketDepth the blind hole (insert + room for displaced plastic). M3-M5 holeD/length are the values the registry has used since CAD-M1", "dimsSource": "family-typical",
+      "dims": {
+        "M2": { "holeD": 3.2, "od": 3.6, "length": 4, "minBossOd": 6.4, "pocketDepth": 5 },
+        "M2.5": { "holeD": 3.6, "od": 4, "length": 4, "minBossOd": 6.8, "pocketDepth": 5 },
+        "M3": { "holeD": 4, "od": 4.6, "length": 5.8, "minBossOd": 7.2, "pocketDepth": 6.8 },
+        "M4": { "holeD": 5.6, "od": 6.3, "length": 8.1, "minBossOd": 8.8, "pocketDepth": 9.1 },
+        "M5": { "holeD": 6.4, "od": 7.1, "length": 9.5, "minBossOd": 9.6, "pocketDepth": 10.5 },
+        "M6": { "holeD": 8, "od": 8.7, "length": 12.7, "minBossOd": 11.2, "pocketDepth": 13.7 },
+        "M8": { "holeD": 9.7, "od": 10.5, "length": 12.7, "minBossOd": 12.9, "pocketDepth": 13.7 }
+      }
+    },
+    "heatset_short": {
+      "category": "fasteners", "kind": "insert", "keyedBy": "thread", "skuPrefix": "HEATSET-S",
+      "note": "no standard exists; short inserts for thin walls", "dimsSource": "family-typical",
+      "dims": {
+        "M2": { "holeD": 3.2, "od": 3.6, "length": 3, "minBossOd": 6.4, "pocketDepth": 4 },
+        "M2.5": { "holeD": 3.6, "od": 4, "length": 3, "minBossOd": 6.8, "pocketDepth": 4 },
+        "M3": { "holeD": 4, "od": 4.6, "length": 3, "minBossOd": 7.2, "pocketDepth": 4 },
+        "M4": { "holeD": 5.6, "od": 6.3, "length": 4, "minBossOd": 8.8, "pocketDepth": 5 },
+        "M5": { "holeD": 6.4, "od": 7.1, "length": 5.8, "minBossOd": 9.6, "pocketDepth": 6.8 },
+        "M6": { "holeD": 8, "od": 8.7, "length": 6, "minBossOd": 11.2, "pocketDepth": 7 }
+      }
+    },
+    "washer": {
+      "category": "fasteners", "kind": "washer", "keyedBy": "thread", "skuPrefix": "ISO7089",
+      "standard": "ISO 7089 (id is d1 min, od is d2 max)", "dimsSource": "standard",
+      "dims": {
+        "M2": { "id": 2.2, "od": 5, "thickness": 0.3 },
+        "M2.5": { "id": 2.7, "od": 6, "thickness": 0.5 },
+        "M3": { "id": 3.2, "od": 7, "thickness": 0.5 },
+        "M4": { "id": 4.3, "od": 9, "thickness": 0.8 },
+        "M5": { "id": 5.3, "od": 10, "thickness": 1 },
+        "M6": { "id": 6.4, "od": 12, "thickness": 1.6 },
+        "M8": { "id": 8.4, "od": 16, "thickness": 1.6 }
+      }
+    },
+    "dowel": {
+      "category": "fasteners", "kind": "dowel", "keyedBy": "size", "skuPrefix": "ISO2338",
+      "standard": "ISO 2338 m6 (key is the nominal Ø)", "dimsSource": "standard",
+      "dims": {
+        "2": { "d": 2, "chamfer": 0.35 },
+        "2.5": { "d": 2.5, "chamfer": 0.4 },
+        "3": { "d": 3, "chamfer": 0.5 },
+        "4": { "d": 4, "chamfer": 0.63 },
+        "5": { "d": 5, "chamfer": 0.8 },
+        "6": { "d": 6, "chamfer": 1.2 },
+        "8": { "d": 8, "chamfer": 1.6 }
+      },
+      "lengths": {
+        "2": [4, 5, 6, 8, 10, 12, 16, 20],
+        "2.5": [6, 8, 10, 12, 16, 20, 25],
+        "3": [6, 8, 10, 12, 16, 20, 25, 30],
+        "4": [8, 10, 12, 16, 20, 25, 30, 40],
+        "5": [10, 12, 16, 20, 25, 30, 40, 50],
+        "6": [12, 16, 20, 25, 30, 40, 50, 60],
+        "8": [16, 20, 25, 30, 40, 50, 60, 80]
+      }
+    },
+    "threaded_rod": {
+      "category": "fasteners", "kind": "threaded_rod", "keyedBy": "thread", "skuPrefix": "DIN976",
+      "standard": "DIN 976-1 (cut to length)", "dimsSource": "standard",
+      "dims": {
+        "M2": { "d": 2 }, "M2.5": { "d": 2.5 }, "M3": { "d": 3 }, "M4": { "d": 4 },
+        "M5": { "d": 5 }, "M6": { "d": 6 }, "M8": { "d": 8 }
+      },
+      "lengths": {
+        "M2": [20, 30, 40, 50, 100], "M2.5": [20, 30, 40, 50, 100], "M3": [20, 30, 40, 50, 100, 200],
+        "M4": [20, 30, 40, 50, 100, 200], "M5": [30, 40, 50, 100, 200, 300], "M6": [30, 40, 50, 100, 200, 300],
+        "M8": [40, 50, 100, 200, 300, 500]
+      }
+    },
+    "bearing": {
+      "category": "bearings", "kind": "bearing", "keyedBy": "size", "skuPrefix": "BRG",
+      "standard": "ISO 15 boundary dimensions (deep groove 6xx, 68xx, 69xx)", "dimsSource": "standard",
+      "dims": {
+        "623": { "bore": 3, "od": 10, "width": 4 },
+        "624": { "bore": 4, "od": 13, "width": 5 },
+        "625": { "bore": 5, "od": 16, "width": 5 },
+        "626": { "bore": 6, "od": 19, "width": 6 },
+        "627": { "bore": 7, "od": 22, "width": 7 },
+        "628": { "bore": 8, "od": 24, "width": 8 },
+        "629": { "bore": 9, "od": 26, "width": 8 },
+        "605": { "bore": 5, "od": 14, "width": 5 },
+        "606": { "bore": 6, "od": 17, "width": 6 },
+        "607": { "bore": 7, "od": 19, "width": 6 },
+        "608": { "bore": 8, "od": 22, "width": 7 },
+        "6800": { "bore": 10, "od": 19, "width": 5 },
+        "6801": { "bore": 12, "od": 21, "width": 5 },
+        "6802": { "bore": 15, "od": 24, "width": 5 },
+        "6803": { "bore": 17, "od": 26, "width": 5 },
+        "6804": { "bore": 20, "od": 32, "width": 7 },
+        "6805": { "bore": 25, "od": 37, "width": 7 },
+        "6900": { "bore": 10, "od": 22, "width": 6 },
+        "6901": { "bore": 12, "od": 24, "width": 6 },
+        "6902": { "bore": 15, "od": 28, "width": 7 }
+      }
+    },
+    "bearing_flanged": {
+      "category": "bearings", "kind": "bearing", "keyedBy": "size", "skuPrefix": "BRG",
+      "standard": "ISO 15 bore/OD/width; flange Ø and width per the common miniature-bearing catalogue", "dimsSource": "standard",
+      "dims": {
+        "F623": { "bore": 3, "od": 10, "width": 4, "flangeD": 11.5, "flangeW": 1 },
+        "F624": { "bore": 4, "od": 13, "width": 5, "flangeD": 15, "flangeW": 1 },
+        "F625": { "bore": 5, "od": 16, "width": 5, "flangeD": 18, "flangeW": 1 },
+        "F626": { "bore": 6, "od": 19, "width": 6, "flangeD": 22, "flangeW": 1.5 },
+        "F627": { "bore": 7, "od": 22, "width": 7, "flangeD": 25, "flangeW": 1.5, "dimsSource": "family-typical" },
+        "F628": { "bore": 8, "od": 24, "width": 8, "flangeD": 27, "flangeW": 1.5, "dimsSource": "family-typical" },
+        "F608": { "bore": 8, "od": 22, "width": 7, "flangeD": 25, "flangeW": 1.5 }
+      }
+    },
+    "bushing": {
+      "category": "plain_bearings", "kind": "bushing", "keyedBy": "size", "skuPrefix": "BUSH",
+      "note": "sintered-bronze plain bushing, DIN 1850 / ISO 2795 style; sizes not checked against the standard's table", "dimsSource": "family-typical",
+      "dims": {
+        "3x6": { "bore": 3, "od": 6 },
+        "4x8": { "bore": 4, "od": 8 },
+        "5x8": { "bore": 5, "od": 8 },
+        "6x10": { "bore": 6, "od": 10 },
+        "8x12": { "bore": 8, "od": 12 },
+        "10x14": { "bore": 10, "od": 14 },
+        "12x16": { "bore": 12, "od": 16 }
+      },
+      "lengths": {
+        "3x6": [4, 6], "4x8": [4, 6, 8], "5x8": [5, 8, 10], "6x10": [6, 10, 12],
+        "8x12": [8, 10, 12, 16], "10x14": [10, 12, 16, 20], "12x16": [12, 16, 20]
+      }
+    },
+    "shaft": {
+      "category": "shafts", "kind": "shaft", "keyedBy": "size", "skuPrefix": "ROD",
+      "note": "h6 ground rod, cut to length", "dimsSource": "nominal",
+      "dims": {
+        "3": { "d": 3 }, "4": { "d": 4 }, "5": { "d": 5 }, "6": { "d": 6 },
+        "8": { "d": 8 }, "10": { "d": 10 }, "12": { "d": 12 }
+      },
+      "lengths": {
+        "3": [50, 100, 150, 200], "4": [50, 100, 150, 200], "5": [50, 100, 150, 200, 300],
+        "6": [50, 100, 150, 200, 300], "8": [100, 150, 200, 250, 300, 400, 500],
+        "10": [100, 150, 200, 250, 300, 400, 500], "12": [100, 200, 300, 400, 500]
+      }
+    },
+    "d_shaft": {
+      "category": "shafts", "kind": "shaft", "keyedBy": "size", "skuPrefix": "DSHAFT",
+      "note": "D-profile shaft, flat along the full length; flatDepth is the material removed", "dimsSource": "family-typical",
+      "dims": {
+        "3": { "d": 3, "flatDepth": 0.5 }, "4": { "d": 4, "flatDepth": 0.5 }, "5": { "d": 5, "flatDepth": 0.5 },
+        "6": { "d": 6, "flatDepth": 0.5 }, "8": { "d": 8, "flatDepth": 1 }
+      },
+      "lengths": {
+        "3": [20, 30, 50, 100], "4": [20, 30, 50, 100], "5": [20, 30, 50, 100, 150],
+        "6": [30, 50, 100, 150, 200], "8": [50, 100, 150, 200]
+      }
+    },
+    "collar": {
+      "category": "shafts", "kind": "collar", "keyedBy": "size", "skuPrefix": "COLLAR",
+      "note": "set-screw shaft collar, DIN 705 style; sizes not checked against the standard's table", "dimsSource": "family-typical",
+      "dims": {
+        "3": { "bore": 3, "od": 8, "width": 5, "setScrew": "M3" },
+        "4": { "bore": 4, "od": 10, "width": 6, "setScrew": "M3" },
+        "5": { "bore": 5, "od": 10, "width": 6, "setScrew": "M3" },
+        "6": { "bore": 6, "od": 12, "width": 7, "setScrew": "M4" },
+        "8": { "bore": 8, "od": 16, "width": 8, "setScrew": "M4" },
+        "10": { "bore": 10, "od": 20, "width": 10, "setScrew": "M5" },
+        "12": { "bore": 12, "od": 22, "width": 10, "setScrew": "M5" }
+      }
+    },
+    "eclip": {
+      "category": "shafts", "kind": "eclip", "keyedBy": "size", "skuPrefix": "DIN6799",
+      "standard": "DIN 6799 (key is the groove Ø d2)", "dimsSource": "standard",
+      "note": "grooveWidth is s plus a running clearance, not a table value",
+      "dims": {
+        "3.2": { "groove": 3.2, "od": 7.3, "thickness": 0.6, "grooveWidth": 0.64, "shaftMin": 4, "shaftMax": 5 },
+        "4": { "groove": 4, "od": 9.3, "thickness": 0.7, "grooveWidth": 0.74, "shaftMin": 5, "shaftMax": 7 },
+        "5": { "groove": 5, "od": 11.3, "thickness": 0.7, "grooveWidth": 0.74, "shaftMin": 6, "shaftMax": 8 },
+        "6": { "groove": 6, "od": 12.3, "thickness": 0.7, "grooveWidth": 0.74, "shaftMin": 7, "shaftMax": 9 },
+        "7": { "groove": 7, "od": 14.3, "thickness": 0.9, "grooveWidth": 0.94, "shaftMin": 8, "shaftMax": 11 },
+        "8": { "groove": 8, "od": 16.3, "thickness": 1, "grooveWidth": 1.05, "shaftMin": 9, "shaftMax": 12 }
+      }
+    },
+    "lm_uu": {
+      "category": "linear", "kind": "linear_bearing", "keyedBy": "size", "skuPrefix": "LIN",
+      "standard": "LM-UU series (THK designation, matched across vendors); groove* are the retaining-ring grooves", "dimsSource": "standard",
+      "dims": {
+        "LM6UU": { "bore": 6, "od": 12, "length": 19, "grooveSpan": 13.5, "grooveWidth": 1.1, "grooveD": 11.5 },
+        "LM8UU": { "bore": 8, "od": 15, "length": 24, "grooveSpan": 17.5, "grooveWidth": 1.1, "grooveD": 14.3 },
+        "LM10UU": { "bore": 10, "od": 19, "length": 29, "grooveSpan": 22, "grooveWidth": 1.3, "grooveD": 18 }
+      }
+    },
+    "mgn_rail": {
+      "category": "linear", "kind": "rail", "keyedBy": "size", "skuPrefix": "RAIL",
+      "note": "miniature profile rail; counterbored M3 mounting holes at pitch", "dimsSource": "family-typical",
+      "dims": {
+        "MGN9": { "width": 9, "height": 6.5, "pitch": 20, "holeD": 3.5, "cboreD": 6, "cboreDepth": 3.5 },
+        "MGN12": { "width": 12, "height": 8, "pitch": 25, "holeD": 3.5, "cboreD": 6, "cboreDepth": 4.5 }
+      },
+      "lengths": {
+        "MGN9": [100, 150, 200, 250, 300, 400, 500],
+        "MGN12": [100, 150, 200, 250, 300, 400, 500]
+      }
+    },
+    "mgn_carriage": {
+      "category": "linear", "kind": "carriage", "keyedBy": "size", "skuPrefix": "CAR",
+      "note": "standard-length block; height and underside gap are measured from the rail's mounting face", "dimsSource": "family-typical",
+      "dims": {
+        "MGN9C": { "rail": "MGN9", "width": 20, "length": 28.9, "height": 10, "gap": 2, "mountX": 10, "mountY": 15, "mountThread": "M3" },
+        "MGN12C": { "rail": "MGN12", "width": 27, "length": 34.7, "height": 13, "gap": 3, "mountX": 15, "mountY": 20, "mountThread": "M3" }
+      }
+    },
+    "gt2_pulley": {
+      "category": "transmission", "kind": "pulley", "keyedBy": "size", "skuPrefix": "GT2P",
+      "note": "2 mm pitch GT2 timing pulley for 6 mm belt; pitch Ø = teeth x 2 / pi, tip Ø = pitch Ø - 0.508. A 16T rim is too small for an 8 mm bore", "dimsSource": "family-typical",
+      "dims": {
+        "16T-5": { "teeth": 16, "bore": 5, "toothWidth": 7, "flangeD": 13, "flangeW": 1, "hubD": 13, "hubL": 6.5, "setScrew": "M3" },
+        "20T-5": { "teeth": 20, "bore": 5, "toothWidth": 7, "flangeD": 16, "flangeW": 1, "hubD": 16, "hubL": 7, "setScrew": "M3" },
+        "20T-8": { "teeth": 20, "bore": 8, "toothWidth": 7, "flangeD": 16, "flangeW": 1, "hubD": 16, "hubL": 7, "setScrew": "M3" }
+      }
+    },
+    "gt2_belt": {
+      "category": "transmission", "kind": "belt", "keyedBy": "size", "skuPrefix": "GT2B",
+      "note": "open belt sold by length, modelled as its envelope strip", "dimsSource": "family-typical",
+      "dims": {
+        "6": { "width": 6, "pitch": 2, "thickness": 1.38, "toothHeight": 0.75 },
+        "9": { "width": 9, "pitch": 2, "thickness": 1.38, "toothHeight": 0.75 },
+        "10": { "width": 10, "pitch": 2, "thickness": 1.38, "toothHeight": 0.75 }
+      },
+      "lengths": { "6": [200, 400, 600, 1000], "9": [200, 400, 600, 1000], "10": [200, 400, 600, 1000] }
+    },
+    "spur_gear": {
+      "category": "transmission", "kind": "gear", "keyedBy": "size", "skuPrefix": "GEAR",
+      "note": "involute spur gear, built from params (module, teeth, thickness, bore) by bd_warehouse SpurGear", "standard": "ISO 54 module series", "dimsSource": "standard",
+      "dims": {
+        "m0.5": { "module": 0.5, "pressureAngle": 20 },
+        "m0.8": { "module": 0.8, "pressureAngle": 20 },
+        "m1": { "module": 1, "pressureAngle": 20 },
+        "m1.5": { "module": 1.5, "pressureAngle": 20 }
+      }
+    },
+    "nema17": {
+      "category": "motors", "kind": "motor", "keyedBy": "size", "skuPrefix": "NEMA",
+      "standard": "NEMA ICS 16 faceplate (42.3 square, 31 hole pitch, M3, Ø22 pilot, Ø5 shaft); shaft length and flat are typical; length is the body length", "dimsSource": "standard",
+      "dims": {
+        "NEMA17": { "face": 42.3, "holePitch": 31, "holeThread": "M3", "holeDepth": 4.5, "pilotD": 22, "pilotH": 2, "shaftD": 5, "shaftL": 24, "flatDepth": 0.5 }
+      },
+      "lengths": { "NEMA17": [34, 40, 48, 60] }
+    },
+    "brushless": {
+      "category": "motors", "kind": "motor", "keyedBy": "size", "skuPrefix": "BLDC",
+      "note": "outrunner, stator Ø x height in the key; 4 M3 base holes on pcd", "dimsSource": "family-typical",
+      "dims": {
+        "2204": { "baseD": 25, "baseH": 4, "bellD": 27.5, "bellH": 12, "shaftD": 5, "shaftL": 10, "pcd": 16, "holeThread": "M3", "holeCount": 4 },
+        "2306": { "baseD": 27, "baseH": 4, "bellD": 29, "bellH": 14, "shaftD": 5, "shaftL": 12, "pcd": 19, "holeThread": "M3", "holeCount": 4 }
+      }
+    },
+    "n20": {
+      "category": "motors", "kind": "motor", "keyedBy": "size", "skuPrefix": "N20",
+      "note": "N20 gearmotor, 12 x 10 profile; two M1.6 holes in the gearbox face", "dimsSource": "family-typical",
+      "dims": {
+        "N20": { "width": 12, "height": 10, "gearboxL": 9, "motorL": 15, "shaftD": 3, "shaftL": 10, "flatDepth": 0.5, "pcd": 9, "holeD": 1.6, "holeCount": 2 }
+      }
+    },
+    "sg90": {
+      "category": "motors", "kind": "motor", "keyedBy": "size", "skuPrefix": "SERVO",
+      "note": "9 g micro servo; tabZ is the tab underside above the case bottom", "dimsSource": "family-typical",
+      "dims": {
+        "SG90": { "bodyL": 22.2, "bodyW": 11.8, "bodyH": 22.7, "tabL": 32, "tabT": 2.5, "tabZ": 15.9, "holePitch": 27, "holeD": 2, "bossD": 11.8, "bossH": 4, "splineD": 4.8, "splineH": 4.3 }
+      }
+    },
+    "disc_magnet": {
+      "category": "misc", "kind": "magnet", "keyedBy": "size", "skuPrefix": "MAG",
+      "note": "neodymium disc, key is Ø x thickness", "dimsSource": "nominal",
+      "dims": {
+        "3x1": { "d": 3, "h": 1 }, "5x2": { "d": 5, "h": 2 }, "6x2": { "d": 6, "h": 2 }, "6x3": { "d": 6, "h": 3 },
+        "8x2": { "d": 8, "h": 2 }, "8x3": { "d": 8, "h": 3 }, "10x2": { "d": 10, "h": 2 }, "10x3": { "d": 10, "h": 3 },
+        "10x5": { "d": 10, "h": 5 }, "12x3": { "d": 12, "h": 3 }
+      }
+    },
+    "oring": {
+      "category": "misc", "kind": "oring", "keyedBy": "size", "skuPrefix": "ORING",
+      "note": "key is the cross-section; the inner Ø is the `id` param. Gland numbers are a static-seal rule of thumb (depth 0.75 cs, width 1.35 cs)", "dimsSource": "family-typical",
+      "dims": {
+        "1": { "cs": 1, "glandDepth": 0.75, "glandWidth": 1.35 },
+        "1.5": { "cs": 1.5, "glandDepth": 1.1, "glandWidth": 2 },
+        "1.78": { "cs": 1.78, "glandDepth": 1.3, "glandWidth": 2.4 },
+        "2": { "cs": 2, "glandDepth": 1.5, "glandWidth": 2.7 },
+        "2.5": { "cs": 2.5, "glandDepth": 1.9, "glandWidth": 3.4 },
+        "2.62": { "cs": 2.62, "glandDepth": 2, "glandWidth": 3.6 },
+        "3": { "cs": 3, "glandDepth": 2.3, "glandWidth": 4 },
+        "3.53": { "cs": 3.53, "glandDepth": 2.7, "glandWidth": 4.8 }
+      }
+    },
+    "standoff": {
+      "category": "misc", "kind": "standoff", "keyedBy": "thread", "skuPrefix": "STANDOFF",
+      "note": "hex female-female standoff", "dimsSource": "family-typical",
+      "dims": { "M3": { "af": 5 } },
+      "lengths": { "M3": [5, 6, 8, 10, 12, 15, 20, 25, 30] }
+    }
+  },
+  "skus": []
+}

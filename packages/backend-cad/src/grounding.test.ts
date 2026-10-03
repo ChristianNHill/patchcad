@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   BEARING_DIAMETER,
+  FDM_FIT_CUT_MM,
   FDM_SLIP_FIT_MM,
+  fitCut,
   SEAT_POSE,
   engagementLength,
   groundingLines,
@@ -89,5 +91,37 @@ describe("grounded facts match what the probes and gates actually measured", () 
     expect(text).toContain("zAxis [0,0,-1]");
     expect(text).toContain("0.3mm SMALLER");
     expect(text).toContain("not a clash");
+  });
+});
+
+describe("fit cut targets for the generator", () => {
+  const num = (v: number | string) => (typeof v === "number" ? v : undefined);
+  const cut = (type: string, params: Record<string, number | string>) => fitCut({ type, params }, num);
+
+  it("sits mid-band of what the G3 probes accept", () => {
+    // press [d-0.1, d], slip [d+0.05, d+0.25], magnet [d+0.05, d+0.2], nut [af, af+0.4]
+    expect(FDM_FIT_CUT_MM).toEqual({ press: -0.05, slip: 0.15, magnet: 0.125, nutTrapAf: 0.2 });
+  });
+
+  it("works the cut out from the nominal size each port declares", () => {
+    expect(cut("DOWEL_HOLE", { diameter: 3, depth: 6, fit: "press" })).toBe("cut Ø 2.95 (diameter 3 − 0.05, press)");
+    expect(cut("BEARING_SEAT", { od: 22, width: 7, fit: "slip" })).toContain("Ø 22.15 (od 22 + 0.15, slip); pocket ≥ width deep on a shoulder lip ≥ 1 mm");
+    expect(cut("BUSHING_BORE", { od: 12, length: 10 })).toBe("cut Ø 11.95 (od 12 − 0.05, press)");
+    expect(cut("MAGNET_POCKET", { diameter: 6, depth: 3 })).toBe("cut Ø 6.125 (diameter 6 + 0.125, magnet)");
+    expect(cut("NUT_TRAP", { af: 5.5, depth: 2.4, entry: "axial" })).toBe("cut across the flats 5.7 (af 5.5 + 0.2, nutTrapAf)");
+    expect(cut("HUB_BORE", { diameter: 5 })).toBe("cut Ø 5.15 (diameter 5 + 0.15, slip)");
+    expect(cut("MOTOR_MOUNT", { pilot_diameter: 22, hole_diameter: 3.4, pcd: 43.84, count: 4 })).toBe("cut Ø 22.15 (pilot_diameter 22 + 0.15, slip)");
+    expect(cut("INSERT_POCKET", { diameter: 4, depth: 5.8 })).toContain("depth + 0.3");
+    expect(cut("FLAT_FACE", {})).toBeNull();
+  });
+
+  it("uses the tighter machined midpoints for cnc, sheet metal and laser", () => {
+    // press [d-0.05, d], slip [d, d+0.05], magnet [d, d+0.1]
+    expect(fitCut({ type: "DOWEL_HOLE", params: { diameter: 3, fit: "slip" } }, num, true)).toBe("cut Ø 3.025 (diameter 3 + 0.025, slip)");
+    expect(fitCut({ type: "MAGNET_POCKET", params: { diameter: 6 } }, num, true)).toBe("cut Ø 6.05 (diameter 6 + 0.05, magnet)");
+  });
+
+  it("falls back to the rule when a size is an unresolved expression", () => {
+    expect(cut("DOWEL_HOLE", { diameter: "param(x.d)", fit: "slip" })).toBe("cut Ø diameter + 0.15");
   });
 });

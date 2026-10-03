@@ -1,6 +1,13 @@
 import { z } from "zod";
 import type { GenerateCtx, PromptSpec, RepairCtx } from "@patchcad/engine";
 import type { CadContractPayload } from "./index.js";
+import type { GraphDoc, NodeRecord, ParamValue } from "@patchcad/shared";
+import { importedPartExpr } from "./segment-joints.js";
+import { resolveDim, resolvePose, type Dim } from "./bindings.js";
+import { matchPitfalls } from "./pitfalls.js";
+import { fitCut } from "./grounding.js";
+import { sourcingOf } from "./sourcing.js";
+import { processLines } from "./dfm.js";
 
 /**
  * Generator prompts for CAD nodes. The pinned build123d cheat sheet is the
@@ -84,23 +91,127 @@ export const CadArtifactSchema = z.object({
     .transform(normalizeCadCode),
 });
 
-function portLines(payload: CadContractPayload): string {
+/** Contract values only, never code: the node's own params, its neighbours'
+ *  contract params, and every node's current values when the cook passes
+ *  them. Enough for resolvePose to turn T1 expressions into numbers. */
+function paramGraph(ctx: GenerateCtx<CadContractPayload>): GraphDoc {
+  const nodes: Record<string, { params: Record<string, ParamValue>; contract: { params: unknown[] } }> = {};
+  for (const v of [...ctx.upstream, ...ctx.downstream]) nodes[v.nodeId] = { params: {}, contract: v.contract };
+  for (const [id, params] of Object.entries(ctx.paramValues ?? {})) {
+    nodes[id] = { params, contract: nodes[id]?.contract ?? { params: [] } };
+  }
+  nodes[ctx.node.id] = { params: ctx.node.params, contract: ctx.node.contract };
+  return { nodes } as unknown as GraphDoc;
+}
+
+type RawPose = { origin: Dim[]; zAxis: Dim[]; xAxis: Dim[] };
+
+function tryResolve(graph: GraphDoc | undefined, pose: RawPose): RawPose {
+  if (!graph) return pose;
+  try {
+    return resolvePose(graph, pose);
+  } catch {
+    return pose; // unresolvable: the expression itself is the most honest thing to show
+  }
+}
+
+function tryDim(graph: GraphDoc | undefined, d: Dim): Dim {
+  if (!graph) return d;
+  try {
+    return resolveDim(graph, d);
+  } catch {
+    return d;
+  }
+}
+
+const vec = (v: Dim[]) => `[${v.map((d) => (typeof d === "number" ? String(Number(d.toFixed(3))) : d)).join(", ")}]`;
+
+/** A pose component written over this node's OWN params, rewritten the way
+ *  code reading `p` computes it, so geometry built from the formula follows
+ *  T0 edits where the printed number would not. Null for a constant, or for
+ *  an expression reading another node, which `p` cannot see. */
+function ownFormula(d: Dim, nodeId: string): string | null {
+  if (typeof d === "number") return null;
+  const src = (d.startsWith("expr:") ? d.slice("expr:".length) : d).trim();
+  let foreign = false;
+  const out = src.replace(/param\(\s*([^.)]+)\.([^)]+?)\s*\)/g, (_m, id: string, name: string) => {
+    if (id.trim() !== nodeId) foreign = true;
+    return `p.${name.trim()}`;
+  });
+  return foreign || out === src ? null : out;
+}
+
+/** Processes whose G3 fit bands are the machined ones; every other process
+ *  prints to the FDM bands. */
+const MACHINED = new Set(["cnc", "sheet_metal", "laser_cut"]);
+
+/** `cutProcess`: annotate fitted ports with the cut size for that process (own ports only). */
+function portLines(payload: CadContractPayload, graph?: GraphDoc, nodeId?: string, cutProcess?: string): string {
   return payload.ports
     .map((p) => {
       const params = Object.entries(p.params).map(([k, v]) => `${k}=${v}`).join(", ");
-      return `  - ${p.name} (${p.type}) at origin [${p.pose.origin.join(", ")}], z-out [${p.pose.zAxis.join(", ")}]${params ? ` — ${params}` : ""}`;
+      const pose = tryResolve(graph, p.pose);
+      const formulas = nodeId
+        ? p.pose.origin.flatMap((d, i) => {
+            const f = ownFormula(d, nodeId);
+            return f ? [`${"xyz"[i]} = ${f}`] : [];
+          })
+        : [];
+      const origin = `${vec(pose.origin)}${formulas.length ? ` (${formulas.join(", ")})` : ""}`;
+      // Ports declare a bought part's NOMINAL size and G3 owns the fit band, so
+      // the node that cuts the feature is told the cut size, aimed mid-band for
+      // its process: machined bands are a tenth of the printed ones.
+      const cut = cutProcess
+        ? fitCut(
+            p,
+            (v) => {
+              const d = tryDim(graph, v);
+              return typeof d === "number" ? d : undefined;
+            },
+            MACHINED.has(cutProcess),
+          )
+        : null;
+      return `  - ${p.name} (${p.type}) at origin ${origin}, z-out ${vec(pose.zAxis)}, x ${vec(pose.xAxis)}${params ? ` — ${params}` : ""}${cut ? `; ${cutProcess}: ${cut}` : ""}`;
     })
     .join("\n");
 }
 
-function envelopeLines(payload: CadContractPayload): string {
+function envelopeLines(payload: CadContractPayload, graph?: GraphDoc): string {
   return payload.envelope.volumes
-    .map((v) =>
-      v.kind === "box"
-        ? `  - box ${v.dims.join("×")} mm centered at [${v.pose.origin.join(", ")}]`
-        : `  - cylinder Ø${v.d}×${v.h} mm at [${v.pose.origin.join(", ")}]`,
-    )
+    .map((v) => {
+      const pose = tryResolve(graph, v.pose);
+      if (v.kind === "cylinder") {
+        return `  - cylinder Ø${tryDim(graph, v.d)}×${tryDim(graph, v.h)} mm centered at ${vec(pose.origin)}, axis along ${vec(pose.zAxis)}`;
+      }
+      const aligned = vec(pose.zAxis) === "[0, 0, 1]" && vec(pose.xAxis) === "[1, 0, 0]";
+      const orientation = aligned
+        ? "axis-aligned"
+        : `rotated: dims run along its own x ${vec(pose.xAxis)}, y = z × x, z ${vec(pose.zAxis)}`;
+      return `  - box ${v.dims.map((d) => tryDim(graph, d)).join("×")} mm centered at ${vec(pose.origin)}, ${orientation}`;
+    })
     .join("\n");
+}
+
+/** Pattern layout and G4b assertions, spelled out because their params are
+ *  terse and the kernel measures both literally. Empty for a part using neither. */
+function checkLines(payload: CadContractPayload): string {
+  const lines: string[] = [];
+  if (payload.ports.some((p) => p.type === "HOLE_PATTERN" || p.type === "BOSS_PATTERN")) {
+    lines.push(
+      "Pattern ports place one feature per member in the port frame, x along its xAxis:",
+      "  polar: count features on a circle of DIAMETER pcd, first at start_angle° from xAxis (default 0)",
+      "  grid: nx × ny features at pitch_x / pitch_y, centred on the port origin",
+    );
+  }
+  const assertions = payload.assertions ?? [];
+  if (assertions.length > 0) {
+    lines.push("Measured on the finished part (its own frame):");
+    for (const a of assertions) {
+      const { kind, ...rest } = a;
+      lines.push(`  - ${kind} ${Object.entries(rest).map(([k, v]) => `${k}=${v}`).join(", ")}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 function paramLines(contract: { params: { name: string; type: string; default: unknown; description: string }[] }): string {
@@ -141,16 +252,33 @@ function exemplarBlock(ctx: GenerateCtx<CadContractPayload>): string {
   ].join("\n");
 }
 
+const LEDGER_LINES = 6;
+
+/** A failure as the ledger shows it: the measured lines, not just the first.
+ *  "port \"bolt\" (BORE): expected Ø4.5, measured Ø6.00" is the headline,
+ *  but the hint and the lines under it are often what names the fix. Capped so
+ *  a long traceback cannot crowd out the failure actually being repaired. */
+function ledgerEntry(f: { stage: string; report: string }): string {
+  const lines = f.report.split("\n").filter((l) => l.trim());
+  const kept = lines.slice(0, LEDGER_LINES).map((l) => (l.length > 240 ? `${l.slice(0, 240)}…` : l));
+  if (lines.length > LEDGER_LINES) kept.push("…");
+  return `  - ${f.stage}: ${kept.join("\n      ")}`;
+}
+
 export function generatePrompt(ctx: GenerateCtx<CadContractPayload>): PromptSpec {
   const payload = ctx.node.contract.payload;
   const params = paramLines(ctx.node.contract);
+  const graph = paramGraph(ctx);
 
+  // A generated mesh (geometrySource "mesh") is edited the same way; its
+  // fitted surface is already at size, so it has no scale param.
+  const meshSource = payload.geometrySource === "mesh";
   const importedGuidance =
-    ctx.node.kind === "imported"
+    ctx.node.kind === "imported" || meshSource
       ? [
           "",
           "THIS NODE WRAPS AN IMPORTED MESH. Do NOT re-model it. Start from",
-          `  part = load_import("${ctx.node.id}.ply", scale=p.scale)`,
+          meshSource ? `  part = load_import("${ctx.node.id}.ply")` : `  part = ${importedPartExpr(ctx.node as unknown as NodeRecord)}`,
           "and MODIFY it with boolean operators against build123d primitives:",
           "  part - Pos(x, y, z) * Cylinder(r, depth)     # cut a hole",
           "  part + Pos(x, y, z) * Box(a, b, c)           # add material",
@@ -172,6 +300,10 @@ export function generatePrompt(ctx: GenerateCtx<CadContractPayload>): PromptSpec
 
   const user = [
     `Part: ${ctx.node.title} — ${ctx.node.spec}`,
+    // The architect's reading of THIS part's region of the user's reference
+    // image. The image itself stays with the architect; this is the part's
+    // own description, so hermeticity holds.
+    payload.visualRef ? `In the reference image: ${payload.visualRef}` : "",
     `Design brief: ${ctx.brief.goal}`,
     // The only channel through which parts can agree on anything the contracts
     // do not pin. Hermeticity is what makes it necessary, not optional.
@@ -180,14 +312,39 @@ export function generatePrompt(ctx: GenerateCtx<CadContractPayload>): PromptSpec
     `Parameters (read via p.<name>):`,
     params || "  (none)",
     `Ports your geometry MUST realize (local frame, +z points out of material):`,
-    portLines(payload) || "  (none)",
+    portLines(payload, graph, ctx.node.id, sourcingOf(ctx.node).process) || "  (none)",
     `Envelope (all geometry must fit inside, ${payload.envelope.clearance} mm clearance):`,
-    envelopeLines(payload),
-    `Process: FDM, min wall ${payload.process.minWall} mm.`,
+    envelopeLines(payload, graph),
+    checkLines(payload),
+    // A fabricate part's process block (dfm.ts) rides the user turn, so the
+    // system block stays byte-identical across the wave.
+    processLines(ctx.node),
     ctx.node.thread.length > 0
       ? `User refinements:\n${ctx.node.thread.map((m) => `  ${m.role}: ${m.content}`).join("\n")}`
       : "",
+    // A reprompt edits the part the user is looking at. Without its code,
+    // "make the fillet bigger" regenerated the whole part from scratch. This
+    // is the node's OWN code, never a neighbour's, so hermeticity holds.
+    ctx.node.thread.length > 0 && ctx.node.currentCode
+      ? [
+          "",
+          "Current code (modify, don't rewrite — change only what the refinements ask for):",
+          "```python",
+          ctx.node.currentCode,
+          "```",
+        ].join("\n")
+      : "",
     exemplarBlock(ctx),
+    // A fresh start after chained repairs stalled: the code is gone on
+    // purpose, but what it failed on is not, or the new attempt walks straight
+    // back into the same wall.
+    ctx.priorFailures?.length
+      ? [
+          "",
+          "Approaches already tried for this part failed like this — do not repeat them:",
+          ...ctx.priorFailures.map(ledgerEntry),
+        ].join("\n")
+      : "",
     "",
     "Emit the complete module.",
   ]
@@ -196,14 +353,17 @@ export function generatePrompt(ctx: GenerateCtx<CadContractPayload>): PromptSpec
 
   return {
     system,
-    messages: [{ role: "user", content: user }],
+    // Images the user attached to this node's own reprompts: their spec.
+    messages: [{ role: "user", content: user, ...(ctx.refImages?.length ? { images: ctx.refImages } : {}) }],
     schema: CadArtifactSchema as unknown as PromptSpec["schema"],
     role: "generator",
   };
 }
 
 export function repairPrompt(ctx: RepairCtx<CadContractPayload>): PromptSpec {
-  const base = generatePrompt(ctx);
+  // The ledger goes in the repair turn below, not the first user turn, so
+  // that turn stays identical across repair rounds and remains cacheable.
+  const base = generatePrompt({ ...ctx, priorFailures: [] });
   // Only the newest failure comes with its code, so the earlier ones are
   // listed as a "already tried, still wrong" ledger: without it the model
   // re-proposes a fix it has already spent a round on.
@@ -212,8 +372,25 @@ export function repairPrompt(ctx: RepairCtx<CadContractPayload>): PromptSpec {
       ? [
           "",
           "Earlier attempts in this cook already failed like this — do not repeat them:",
-          ...ctx.priorFailures.map((f) => `  - ${f.stage}: ${f.report.split("\n")[0]}`),
+          ...ctx.priorFailures.map(ledgerEntry),
         ].join("\n")
+      : "";
+
+  // Known fixes for this failure's signature. User turn only: the system
+  // block must stay byte-identical across the wave to stay prefix-cached.
+  const pitfalls = matchPitfalls(ctx.failure.stage, ctx.failure.report);
+  const known =
+    pitfalls.length > 0
+      ? ["", "Known fixes for failures like this one:", ...pitfalls.map((p) => `  - ${p.fix}`)].join("\n")
+      : "";
+
+  // The code replayed below is the closest attempt so far, which need not be
+  // the latest: a later round can regress, and repairing the regression
+  // throws away the better start. `attempt` is the round about to run, so the
+  // latest failed round is attempt - 1 and needs no remark.
+  const basis =
+    ctx.basedOnAttempt !== undefined && ctx.basedOnAttempt < ctx.attempt - 1
+      ? `You are fixing attempt ${ctx.basedOnAttempt}, the closest so far — later attempts did worse, so build on this one.`
       : "";
 
   // THREE DIFFERENT ROUNDS, not one instruction repeated. The loop previously
@@ -258,8 +435,10 @@ export function repairPrompt(ctx: RepairCtx<CadContractPayload>): PromptSpec {
         role: "user",
         ...(ctx.render ? { images: [ctx.render] } : {}),
         content: [
-          `That code failed gate ${ctx.failure.stage} (attempt ${ctx.attempt} of ${ctx.maxAttempts}):`,
+          `That code failed gate ${ctx.failure.stage}. This is attempt ${ctx.attempt} of ${ctx.maxAttempts}:`,
           ctx.failure.report,
+          basis,
+          known,
           spent,
           "",
           `Fix exactly this problem and emit the corrected complete module.${seeing}${lastRound}`,

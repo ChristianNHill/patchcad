@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { PlanForm, PlanProgress } from "./PlanBar.js";
-import { useStudio } from "./store.js";
+import { PlanReferences } from "./ImageDrop.js";
+import { useStudio, type ProjectEntry } from "./store.js";
 
 /** The front door: an empty project shows nothing but the question that
  * matters — describe what you want to design, or bring geometry you already
@@ -11,6 +12,7 @@ export function Welcome() {
   const projects = useStudio((s) => s.projects);
   const loadProjects = useStudio((s) => s.loadProjects);
   const openProject = useStudio((s) => s.openProject);
+  const status = useStudio((s) => s.status);
 
   useEffect(() => {
     void loadProjects();
@@ -20,6 +22,10 @@ export function Welcome() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const busy = planState.status === "planning" || importing;
+  const yours = projects.filter((p) => !p.example);
+  const examples = projects.filter((p) => p.example);
+  // Unknown until /api/status answers; only a definite "none" earns the banner.
+  const noProvider = status !== null && status.provider === null;
 
   return (
     <div className="welcome">
@@ -32,6 +38,13 @@ export function Welcome() {
         </span>
         <h1 className="welcome__ask">What do you want to design?</h1>
 
+        {noProvider && (
+          <div className="banner" role="status">
+            <strong>No model is configured, so planning is off.</strong> Importing a model and
+            opening an example still work. {status.providerHelp}
+          </div>
+        )}
+
         <PlanForm
           className="welcome__form"
           inputClassName="input welcome__input"
@@ -42,6 +55,8 @@ export function Welcome() {
           busy={importing}
           requireGoal
         />
+
+        <PlanReferences disabled={busy} />
 
         <PlanProgress />
 
@@ -70,17 +85,20 @@ export function Welcome() {
         {planState.status === "error" && <div className="contract-editor__error">{planState.message}</div>}
         {importError && <div className="contract-editor__error">{importError}</div>}
 
-        {projects.length > 0 && (
+        {yours.length > 0 && (
           <div className="welcome__recent">
             <span className="section__label">or pick up where you left off</span>
-            {projects.slice(0, 6).map((p) => (
-              <button key={p.dir} className="project-list__row" onClick={() => void openProject(p.dir)}>
-                <span className="project-list__name">{p.name}</span>
-                <span className="project-list__goal">{p.goal || "—"}</span>
-                <span className="project-list__count">
-                  {p.nodes} node{p.nodes === 1 ? "" : "s"}
-                </span>
-              </button>
+            {yours.slice(0, 6).map((p) => (
+              <ProjectRow key={p.dir} project={p} onOpen={openProject} />
+            ))}
+          </div>
+        )}
+
+        {examples.length > 0 && (
+          <div className="welcome__recent">
+            <span className="section__label">or try an example (no model needed to open one)</span>
+            {examples.map((p) => (
+              <ProjectRow key={p.dir} project={p} onOpen={openProject} />
             ))}
           </div>
         )}
@@ -92,5 +110,17 @@ export function Welcome() {
         </p>
       </div>
     </div>
+  );
+}
+
+function ProjectRow({ project: p, onOpen }: { project: ProjectEntry; onOpen: (dir: string) => Promise<void> }) {
+  return (
+    <button className="project-list__row" onClick={() => void onOpen(p.dir)}>
+      <span className="project-list__name">{p.name}</span>
+      <span className="project-list__goal">{p.goal || "—"}</span>
+      <span className="project-list__count">
+        {p.nodes} node{p.nodes === 1 ? "" : "s"}
+      </span>
+    </button>
   );
 }

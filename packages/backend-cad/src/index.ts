@@ -6,8 +6,20 @@ export * from "./registry.js";
 export * from "./assembly.js";
 export * from "./bindings.js";
 export * from "./grounding.js";
+export * from "./g5.js";
+export * from "./plan-geometry.js";
+export * from "./mesh-source.js";
 export { normalizeCadCode } from "./prompts.js";
+export { useLearnedPitfalls } from "./pitfalls.js";
+export * from "./sourcing.js";
+export * from "./dfm.js";
+export * from "./bom.js";
+export * from "./joints.js";
+export * from "./expand.js";
+export * from "./segment-joints.js";
 import type {
+  CheckAdvisory,
+  CheckFinding,
   CheckResult,
   LlmImage,
   DomainBackend,
@@ -16,6 +28,7 @@ import type {
   GenerateCtx,
   PromptSpec,
   RepairCtx,
+  TierHints,
   VerifyResult,
   Workspace,
 } from "@patchcad/engine";
@@ -39,21 +52,82 @@ export const Pose = z.object({
 });
 export type Pose = z.infer<typeof Pose>;
 
-export const CadPortType = z.enum([
-  "FLAT_FACE",
-  "SCREW_BOSS",
+/** The port types the kernel can actually MEASURE (gates.py _probe_port and its
+ * own PROBED_PORT_TYPES, which a test holds identical to this list). A type the
+ * kernel has no probe for used to be recorded "skipped" and the job still
+ * passed, so a contract built from unprobed ports was verified by nothing: a
+ * solid brick satisfied it, which is exactly how a 75x75x95 block once passed
+ * as a pen cup holder with hexagonal cutouts. The kernel now FAILS such a port.
+ *
+ * CadPortType, the architect's allowed-types text and cadProbedPortsLint are
+ * all derived from this list, so they cannot disagree again (SHAFT was probed
+ * for weeks while the guidance still forbade it). Widen it in the same change
+ * that adds a probe, NEVER before. */
+export const PROBED_PORT_TYPES = [
   "CLEARANCE_HOLE",
-  "SCREW_SEAT",
   "BORE",
-  "SHAFT",
-  "SLOT",
-  "SNAP_HOOK",
-  "SNAP_RECESS",
-  "LIP",
+  "SCREW_SEAT",
+  "SCREW_BOSS",
+  "FLAT_FACE",
+  // Channel types, measured by _probe_channel: void at the pose, walls found by
+  // marching out to each side, width compared against the declaration.
   "GROOVE",
+  "SLOT",
+  // A peg standing out of a mating face, measured by _probe_shaft. Added because
+  // --score-projects found 14 SHAFT ports live on disk, all reporting "no probe
+  // for this type yet": main.ts emits SHAFT directly for every peg joint on the
+  // IMPORT path, which never runs this lint.
+  "SHAFT",
+  // N holes or bosses behind one port, expanded by _probe_pattern into member
+  // probes (polar {count, pcd, start_angle?} or grid {nx, ny, pitch_x, pitch_y}).
   "HOLE_PATTERN",
   "BOSS_PATTERN",
+  // Hardware host features: the pocket, seat or trap a catalog part goes into,
+  // each a bore graded against a fit band (gates.py HARDWARE_PROBES).
+  "THREADED_HOLE",
+  "INSERT_POCKET",
+  "NUT_TRAP",
+  "COUNTERBORE",
+  "COUNTERSINK",
+  "DOWEL_HOLE",
+  "BEARING_SEAT",
+  "BUSHING_BORE",
+  "MOTOR_MOUNT",
+  "MAGNET_POCKET",
+  "HUB_BORE",
+] as const;
+
+export const CadPortType = z.enum(PROBED_PORT_TYPES);
+
+/** The probed types that host a catalog part (gates.py HARDWARE_PROBES). */
+export const HARDWARE_PORT_TYPES = new Set<string>([
+  "THREADED_HOLE",
+  "INSERT_POCKET",
+  "NUT_TRAP",
+  "COUNTERBORE",
+  "COUNTERSINK",
+  "DOWEL_HOLE",
+  "BEARING_SEAT",
+  "BUSHING_BORE",
+  "MOTOR_MOUNT",
+  "MAGNET_POCKET",
+  "HUB_BORE",
 ]);
+
+/** True when a port's feature is wider than every envelope volume, so no cut
+ *  of it can pass. Expression dims are skipped: classifyFailure has no graph
+ *  to resolve them against, and an unknown never escalates. */
+function outgrowsEnvelope(node: NodeRecord, key: string): boolean {
+  const payload = node.contract?.payload as CadContractPayload | undefined;
+  const port = payload?.ports?.find((p) => p.name === key.split(" #")[0]);
+  if (!port || !payload) return false;
+  const sizes = ["od", "diameter", "af", "pilot_diameter", "pcd"].map((k) => Number(port.params[k]));
+  const feature = Math.max(0, ...sizes.filter(Number.isFinite));
+  const extents = payload.envelope.volumes.map((v) =>
+    v.kind === "box" ? Math.max(...v.dims.map(Number)) : Math.max(Number(v.d), Number(v.h)),
+  );
+  return extents.every(Number.isFinite) && feature > Math.max(...extents);
+}
 
 export const CadPort = z.object({
   name: z.string(),
@@ -76,12 +150,36 @@ export const EnvelopePrimitive = z.discriminatedUnion("kind", [
   }),
 ]);
 
+/** G4b: the numbers the user actually stated, measured on the solid after G4.
+ *  Ports say where features are and the envelope what the part may not exceed;
+ *  neither says "an 80mm plate with four holes". */
+export const CadAssertion = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("solids"), count: z.number().int().min(1) }),
+  z.object({ kind: z.literal("volume_range"), min: z.number().min(0), max: z.number().positive() }).describe("mm³"),
+  z
+    .object({ kind: z.literal("bbox_axis"), axis: z.enum(["x", "y", "z"]), min: z.number().optional(), max: z.number().optional() })
+    .describe("overall size along one axis of the part's own frame, mm"),
+  z
+    .object({ kind: z.literal("hole_count"), min: z.number().int().min(0), max: z.number().int().optional() })
+    .describe("closed round holes, blind or through; a counterbore over a pilot is one"),
+  z
+    .object({ kind: z.literal("symmetry"), plane: z.enum(["xy", "yz", "xz"]), tol: z.number().min(0).max(0.5).optional() })
+    .describe("mirror plane through the bounding-box centre; tol = allowed mismatched fraction, default 0.02"),
+  z.object({ kind: z.literal("min_wall"), mm: z.number().positive() }),
+]);
+export type CadAssertion = z.infer<typeof CadAssertion>;
+
 export const CadContractPayload = z.object({
   units: z.literal("mm"),
   process: z.object({
-    kind: z.literal("FDM"),
+    /** CNC = machined (sourcing fabricate/cnc); FDM covers every other process. */
+    kind: z.enum(["FDM", "CNC"]),
     minWall: z.number().default(1.2),
     nozzle: z.number().default(0.4),
+    /** The printer's build volume, mm. A generated mesh bigger than it is
+     *  split into jointed pieces. Optional with no default (250³ when absent),
+     *  so a contract without it hashes as before. */
+    buildVolumeMm: z.tuple([z.number().positive(), z.number().positive(), z.number().positive()]).optional(),
   }),
   ports: z.array(CadPort),
   envelope: z.object({
@@ -90,23 +188,50 @@ export const CadContractPayload = z.object({
   }),
   /** Symbolic bindings resolved by the kernel from upstream contracts (T1). */
   paramBindings: z.record(z.string()).default({}),
+  /** Yes/no questions about the render, YES = correct, for features no gate
+   *  measures. Asked by the engine's inspect judge after the gates pass.
+   *  Optional with no default, so a contract without them hashes as before. */
+  visualChecks: z.array(z.string()).optional(),
+  /** Spec-derived checks (G4b). Optional with no default, for the same reason. */
+  assertions: z.array(CadAssertion).max(6).optional(),
+  /** How many separate solids the part is. G2 fails anything but 1 unless this
+   *  says otherwise. Optional with no default, for the same reason. */
+  solids: z.number().int().positive().optional(),
+  /** How the part's geometry is made: generated build123d (parametric) or a
+   *  generated mesh (Phase 6.4, not configured yet). Optional with no default,
+   *  so absent reads as parametric and hashes as before. */
+  geometrySource: z.enum(["parametric", "mesh"]).optional(),
+  /** What this part looks like in the user's reference image(s): a sentence
+   *  on its region, read by THIS node's generator only. Optional, no default. */
+  visualRef: z.string().optional(),
+  /** buy | print | fabricate (+ process, material). Optional with no default,
+   *  so absent hashes as before; `sourcingOf` fills the default. */
+  sourcing: Sourcing.optional(),
 });
 export type CadContractPayload = z.infer<typeof CadContractPayload>;
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { KernelClient, type ExportResult, type KernelResult } from "./kernel.js";
 import { generatePrompt, repairPrompt } from "./prompts.js";
-import { FASTENING_HARDWARE, REGISTRY_HARDWARE, resolveDeterministic } from "./registry.js";
-import { solveAssembly, type AssemblyMate, type AssemblyNode } from "./assembly.js";
+import { FASTENING_HARDWARE, REGISTRY_HARDWARE, REGISTRY_SOLIDS, resolveDeterministic } from "./registry.js";
+import { CadJoint } from "./joints.js";
+import { CATALOG, skuFor } from "./catalog.js";
+import { cadJointRuleLint, expandJoints, isJointHardware, jointAxes } from "./expand.js";
+import { kinematicJoints, poseToMat, solveAssembly, type AssemblyMate, type AssemblyNode } from "./assembly.js";
 import { resolveDim, resolvePose } from "./bindings.js";
+import { clashFindings, contactQueries, fitFindings, hardwareAllowances, threadAllowances } from "./g5.js";
+import { cadPlanGeometryLint } from "./plan-geometry.js";
+import { silhouetteAdvisories } from "./silhouette.js";
+import { geometrySourceGuidance, isMeshNode, meshNodeCode, meshSourceLint, prepareMeshNode, type MeshSource } from "./mesh-source.js";
+import { Sourcing, cadSourcingLint } from "./sourcing.js";
+import { G4C_SCORE, kernelProcess } from "./dfm.js";
+import { WORKED_PLAN, WORKED_PLAN_GOAL } from "./worked-plan.js";
 import {
   BEARING_DIAMETER,
   SEAT_POSE,
-  engagementLength,
   groundingLines,
   seatBand,
-  threadEngagementVolume,
 } from "./grounding.js";
 
 /**
@@ -172,7 +297,10 @@ export const cadPortConsistencyLint = {
 };
 
 /** The hole-like ports a screw actually fastens into. */
-const FASTENED_PORT_TYPES = new Set(["CLEARANCE_HOLE", "SCREW_SEAT", "SCREW_BOSS", "BORE"]);
+const FASTENED_PORT_TYPES = new Set([
+  "CLEARANCE_HOLE", "SCREW_SEAT", "SCREW_BOSS", "BORE", "HOLE_PATTERN", "BOSS_PATTERN",
+  "THREADED_HOLE", "INSERT_POCKET", "NUT_TRAP", "COUNTERBORE", "COUNTERSINK", "DOWEL_HOLE",
+]);
 
 /**
  * Hardware has to fasten something. The vocabulary handed to the architect is
@@ -203,7 +331,7 @@ export const cadFastenerJustifiedLint = {
       }
       if (!neighbors.some((id) => holePorts(id).length > 0)) {
         problems.push(
-          `${n.id}: ${n.kind} connects only to ${neighbors.join(", ")}, none of which declare a CLEARANCE_HOLE / SCREW_SEAT / SCREW_BOSS / BORE port for it to fasten into. Add the hole ports to the parts being joined, or drop the ${n.kind}.`,
+          `${n.id}: ${n.kind} connects only to ${neighbors.join(", ")}, none of which declare a hole port (${[...FASTENED_PORT_TYPES].join(" / ")}) for it to fasten into. Declare a joint between the parts instead and the rules add the holes, or drop the ${n.kind}.`,
         );
       }
     }
@@ -231,15 +359,25 @@ interface Aabb {
   max: [number, number, number];
 }
 
-function envelopeAabb(graph: GraphDoc, vol: z.infer<typeof EnvelopePrimitive>): Aabb {
-  const o = resolvePose(graph, vol.pose).origin;
-  const half: [number, number, number] =
-    vol.kind === "box"
-      ? [resolveDim(graph, vol.dims[0]) / 2, resolveDim(graph, vol.dims[1]) / 2, resolveDim(graph, vol.dims[2]) / 2]
-      : [resolveDim(graph, vol.d) / 2, resolveDim(graph, vol.d) / 2, resolveDim(graph, vol.h) / 2];
+/** World AABB of a posed primitive, as G4 sees it: a box's dims lie along its
+ *  pose axes, a cylinder's height along its zAxis. */
+export function envelopeAabb(graph: GraphDoc, vol: z.infer<typeof EnvelopePrimitive>): Aabb {
+  const pose = resolvePose(graph, vol.pose);
+  const o = pose.origin;
+  let half: number[];
+  if (vol.kind === "box") {
+    const m = poseToMat(pose);
+    const h = vol.dims.map((d) => resolveDim(graph, d) / 2);
+    half = [0, 1, 2].map((i) => Math.abs(m[i]!) * h[0]! + Math.abs(m[4 + i]!) * h[1]! + Math.abs(m[8 + i]!) * h[2]!);
+  } else {
+    const n = Math.hypot(...pose.zAxis);
+    const r = resolveDim(graph, vol.d) / 2;
+    const h = resolveDim(graph, vol.h) / 2;
+    half = pose.zAxis.map((c) => Math.abs(c / n) * h + r * Math.sqrt(Math.max(0, 1 - (c / n) ** 2)));
+  }
   return {
-    min: [o[0] - half[0], o[1] - half[1], o[2] - half[2]],
-    max: [o[0] + half[0], o[1] + half[1], o[2] + half[2]],
+    min: [o[0] - half[0]!, o[1] - half[1]!, o[2] - half[2]!],
+    max: [o[0] + half[0]!, o[1] + half[1]!, o[2] + half[2]!],
   };
 }
 
@@ -323,6 +461,8 @@ const HOLE_PORT_TYPES = new Set(["CLEARANCE_HOLE", "SCREW_SEAT", "BORE", "HOLE_P
 const DIAMETER_KEYS = ["diameter", "dia", "holeDia", "hole_diameter", "d", "boreDia"];
 const FACE_SIZE_KEYS = ["size", "faceSize", "face_size", "width", "flatWidth", "flat_width"];
 const CHANNEL_PORT_TYPES = new Set(["GROOVE", "SLOT"]);
+const PATTERN_PORT_TYPES = new Set(["HOLE_PATTERN", "BOSS_PATTERN"]);
+const PATTERN_GRID_KEYS = ["nx", "ny", "pitch_x", "pitch_y"];
 // Mirrors gates.py's OUTER_D_KEYS across the language boundary, with no import
 // path between them. The drift is asymmetric: a lint list WIDER than the probe's
 // only lets a port through to fail at G3, while a lint list NARROWER than the
@@ -353,7 +493,7 @@ export const cadFlatFaceSizeLint = {
               `${n.id}: ${p.type} port "${p.name}" declares no diameter (params: ${JSON.stringify(keys)}). Add params.diameter in mm — probes measure the hole against it.`,
             );
           }
-        } else if (p.type === "SCREW_BOSS") {
+        } else if (p.type === "SCREW_BOSS" || p.type === "BOSS_PATTERN") {
           // The last probed type with no branch here, found by auditing the
           // probed set against this lint rather than by anything failing. Worse
           // than the SHAFT gap was: _probe_boss indexed params["outer_diameter"]
@@ -362,7 +502,7 @@ export const cadFlatFaceSizeLint = {
           // the alias helper now, and this stops it at plan time.
           if (!keys.some((k) => OUTER_DIAMETER_KEYS.includes(k))) {
             problems.push(
-              `${n.id}: SCREW_BOSS port "${p.name}" declares no outer diameter (params: ${JSON.stringify(keys)}). Add params.outer_diameter in mm — the boss wall diameter the probe measures.`,
+              `${n.id}: ${p.type} port "${p.name}" declares no outer diameter (params: ${JSON.stringify(keys)}). Add params.outer_diameter in mm — the boss wall diameter the probe measures.`,
             );
           }
         } else if (p.type === "SHAFT") {
@@ -383,43 +523,22 @@ export const cadFlatFaceSizeLint = {
             );
           }
         }
+        // Mirrors gates.py _pattern_offsets: `pcd` makes it polar, else a full grid.
+        if (PATTERN_PORT_TYPES.has(p.type)) {
+          const layout = keys.includes("pcd") ? ["count", "pcd"] : PATTERN_GRID_KEYS;
+          const missing = layout.filter((k) => !keys.includes(k));
+          if (missing.length > 0) {
+            problems.push(
+              `${n.id}: ${p.type} port "${p.name}" is missing ${missing.join(", ")} (params: ${JSON.stringify(keys)}). Declare a polar pattern {count, pcd, start_angle?} or a grid {nx, ny, pitch_x, pitch_y} centred on the port origin.`,
+            );
+          }
+        }
       }
     }
     return problems;
   },
 };
 
-/** The port types the kernel can actually MEASURE (gates.py: HOLE_LIKE, plus the
- * FLAT_FACE and SCREW_BOSS branches of g3_ports). Everything else in CadPortType
- * falls through g3_ports' else-branch and is recorded "skipped" — the job still
- * passes. A contract built from unprobed ports is verified by nothing: a solid
- * brick satisfies it, which is exactly how a 75x75x95 block once passed as a pen
- * cup holder with hexagonal cutouts.
- *
- * So the taxonomy is narrowed to what the gates can defend. Widen this set in
- * the same commit that adds a probe, NEVER before it — a type listed here with
- * nothing behind it re-opens the hole silently. */
-const PROBED_PORT_TYPES = new Set([
-  "CLEARANCE_HOLE",
-  "BORE",
-  "SCREW_SEAT",
-  "SCREW_BOSS",
-  "FLAT_FACE",
-  // Channel types, measured by _probe_channel: void at the pose, walls found by
-  // marching out to each side, width compared against the declaration. Added
-  // here in the same change that added the probe — this set is a claim about
-  // what the kernel can defend, so it must never run ahead of gates.py.
-  "GROOVE",
-  "SLOT",
-  // A peg standing out of a mating face, measured by _probe_shaft: diameter as
-  // the median over 8 outward rays at the peg's true mid-height, plus the tip.
-  // Added because --score-projects found 14 SHAFT ports live on disk, all
-  // reporting "no probe for this type yet". They got there without the
-  // architect: main.ts emits SHAFT directly for every peg joint on the IMPORT
-  // path, which never runs this lint, so the peg side of a peg joint was
-  // unverifiable by construction while its socket (a BORE) was measured.
-  "SHAFT",
-]);
 
 /** A FLAT_FACE cannot be solid where a hole passes through it.
  *
@@ -687,11 +806,14 @@ export const cadFaceHoleConflictLint = {
 export const cadProbedPortsLint = {
   run(graph: GraphDoc): string[] {
     const problems: string[] = [];
-    const verified = [...PROBED_PORT_TYPES].join(", ");
+    const verified = PROBED_PORT_TYPES.join(", ");
+    const probed = new Set<string>(PROBED_PORT_TYPES);
     for (const n of Object.values(graph.nodes)) {
       if (REGISTRY_HARDWARE.has(n.kind)) continue;
       for (const p of (n.contract.payload as CadContractPayload | undefined)?.ports ?? []) {
-        if (!PROBED_PORT_TYPES.has(p.type)) {
+        // Typed as probed by the schema, but graphs on disk predate it.
+        const type: string = p.type;
+        if (!probed.has(type)) {
           // LIP gets a named substitution rather than the generic list, because
           // it is the one unprobed type that graphs on disk actually use, and it
           // is not one feature. Its six live instances carry three different
@@ -703,12 +825,113 @@ export const cadProbedPortsLint = {
           // the joint it is. Every live instance is round, so each is already
           // expressible as the male or female type that IS measured.
           const hint =
-            p.type === "LIP"
+            type === "LIP"
               ? `A LIP is not one feature — on disk it means a raised rim, a recess that receives one, and a plug, all under one name, so no probe can know which side of the joint it is. Split it: the part that stands proud is a SHAFT (diameter, length), the part that receives it is a BORE (diameter). That names the fit, and both are measured.`
               : `Re-express this interface with a type the probes measure (${verified}), or drop the port and model the feature as part of one solid.`;
           problems.push(
-            `${n.id}: port "${p.name}" is a ${p.type}, which no gate can measure — a node whose ports are all unprobed passes verify even if the geometry is a featureless block. ${hint}`,
+            `${n.id}: port "${p.name}" is a ${type}, which no gate can measure — unchecked, a featureless block would satisfy it, so G3 fails it outright and no generated code can pass it. ${hint}`,
           );
+        }
+      }
+    }
+    return problems;
+  },
+};
+
+/** The round holes a port puts in its part, as G4b's counter sees them: a
+ *  counterbore over its pilot is one, a pattern is its members, a motor mount
+ *  is its pilot plus its screws. Hex traps and channels are not round. */
+function portHoles(graph: GraphDoc, p: CadContractPayload["ports"][number]): number {
+  const v = (k: string) => {
+    try {
+      return resolveDim(graph, p.params[k]!);
+    } catch {
+      return NaN;
+    }
+  };
+  // A motor's grid layout is its 2×2 square; an unreadable pattern counts as
+  // its one certain member, so the lint never rejects on a guess.
+  const grid = v("nx") * v("ny") || v("count") || (p.type === "MOTOR_MOUNT" ? 4 : 1);
+  switch (p.type) {
+    case "CLEARANCE_HOLE": case "SCREW_SEAT": case "BORE": case "THREADED_HOLE": case "INSERT_POCKET":
+    case "COUNTERBORE": case "COUNTERSINK": case "DOWEL_HOLE": case "BEARING_SEAT": case "BUSHING_BORE":
+    case "MAGNET_POCKET": case "HUB_BORE":
+      return 1;
+    case "HOLE_PATTERN":
+      return grid;
+    case "MOTOR_MOUNT":
+      return 1 + grid;
+    default:
+      return 0;
+  }
+}
+
+/** Assertions no geometry can satisfy, caught before a cook pays to find out.
+ *  Only true contradictions: a bbox_axis MAX beyond the envelope is merely
+ *  loose (G4 is the tighter bound and still holds), but a MIN beyond it asks
+ *  for a part bigger than the box it must fit in. Likewise a volume_range min
+ *  above the summed envelope volumes, which bound the union from above.
+ *
+ *  And one assertion that can only be gamed: a hole_count its own hole-like
+ *  ports already reach. The ports' probes check those holes exactly, so the
+ *  assertion adds nothing, and when the counter disagreed with a probe about
+ *  what a hole is (a D-bore, before it counted) a generator passed it by
+ *  drilling decorative holes the user never asked for. */
+export const cadAssertionsCoherentLint = {
+  run(graph: GraphDoc): string[] {
+    const problems: string[] = [];
+    for (const n of Object.values(graph.nodes)) {
+      if (REGISTRY_HARDWARE.has(n.kind)) continue;
+      const payload = n.contract.payload as CadContractPayload | undefined;
+      const assertions = payload?.assertions ?? [];
+      if (assertions.length === 0) continue;
+      let boxes: Aabb[] = [];
+      let capacity = Infinity;
+      try {
+        const volumes = payload?.envelope?.volumes ?? [];
+        boxes = volumes.map((v) => envelopeAabb(graph, v));
+        if (volumes.length > 0) {
+          capacity = volumes.reduce(
+            (sum, v) =>
+              sum +
+              (v.kind === "box"
+                ? v.dims.reduce<number>((p, d) => p * resolveDim(graph, d), 1)
+                : Math.PI * (resolveDim(graph, v.d) / 2) ** 2 * resolveDim(graph, v.h)),
+            0,
+          );
+        }
+      } catch {
+        boxes = []; // unresolvable expression — not this lint's business
+      }
+      for (const a of assertions) {
+        if (a.kind === "volume_range") {
+          if (a.min > a.max) problems.push(`${n.id}: assertion volume_range has min ${a.min} > max ${a.max} mm³.`);
+          else if (a.min > capacity * 1.01)
+            problems.push(
+              `${n.id}: assertion volume_range min ${a.min} mm³ exceeds the whole envelope (${capacity.toFixed(0)} mm³). The part cannot hold more material than the volume it must fit in; lower the min or grow the envelope.`,
+            );
+        } else if (a.kind === "bbox_axis") {
+          if (a.min === undefined && a.max === undefined)
+            problems.push(`${n.id}: assertion bbox_axis ${a.axis} declares neither min nor max.`);
+          if (a.min !== undefined && a.max !== undefined && a.min > a.max)
+            problems.push(`${n.id}: assertion bbox_axis ${a.axis} has min ${a.min} > max ${a.max} mm.`);
+          const i = { x: 0, y: 1, z: 2 }[a.axis];
+          if (boxes.length > 0 && a.min !== undefined) {
+            const extent = Math.max(...boxes.map((b) => b.max[i]!)) - Math.min(...boxes.map((b) => b.min[i]!));
+            if (a.min > extent + 2 * ENVELOPE_LINT_MARGIN)
+              problems.push(
+                `${n.id}: assertion bbox_axis ${a.axis} min ${a.min} mm is larger than the envelope's ${extent.toFixed(1)} mm along ${a.axis}. The part must fit the envelope, so one of the two is wrong.`,
+              );
+          }
+        } else if (a.kind === "hole_count") {
+          if (a.max !== undefined && a.min > a.max)
+            problems.push(`${n.id}: assertion hole_count has min ${a.min} > max ${a.max}.`);
+          const holePorts = (payload?.ports ?? []).filter((p) => portHoles(graph, p) > 0);
+          const declared = holePorts.reduce((k, p) => k + portHoles(graph, p), 0);
+          if (a.min > 0 && declared >= a.min)
+            problems.push(
+              `${n.id}: assertion hole_count min ${a.min} is already met by its hole-like ports (${holePorts.map((p) => `${p.name} ${p.type}`).join(", ")}), whose probes check them exactly. hole_count is for holes the user stated that are NOT interfaces (drain holes, a pegboard grid); drop it, or raise min to count those holes too.`,
+            );
         }
       }
     }
@@ -735,7 +958,7 @@ function resolvePortParams(graph: GraphDoc, params: Record<string, number | stri
 }
 
 /** Contract payload → the kernel's probe wire format, expressions resolved. */
-function kernelPorts(graph: GraphDoc, payload: CadContractPayload) {
+export function kernelPorts(graph: GraphDoc, payload: CadContractPayload) {
   return payload.ports.map((p) => ({
     key: p.name,
     type: p.type,
@@ -744,21 +967,13 @@ function kernelPorts(graph: GraphDoc, payload: CadContractPayload) {
   }));
 }
 
-function kernelEnvelope(graph: GraphDoc, payload: CadContractPayload) {
-  return payload.envelope.volumes.map((v) =>
-    v.kind === "box"
-      ? {
-          kind: "box",
-          center: resolvePose(graph, v.pose).origin,
-          size: v.dims.map((d) => resolveDim(graph, d)),
-        }
-      : {
-          kind: "cylinder",
-          center: resolvePose(graph, v.pose).origin,
-          radius: resolveDim(graph, v.d) / 2,
-          height: resolveDim(graph, v.h),
-        },
-  );
+export function kernelEnvelope(graph: GraphDoc, payload: CadContractPayload) {
+  return payload.envelope.volumes.map((v) => {
+    const { origin: center, zAxis, xAxis } = resolvePose(graph, v.pose);
+    return v.kind === "box"
+      ? { kind: "box", center, zAxis, xAxis, size: v.dims.map((d) => resolveDim(graph, d)) }
+      : { kind: "cylinder", center, zAxis, xAxis, radius: resolveDim(graph, v.d) / 2, height: resolveDim(graph, v.h) };
+  });
 }
 
 function mergedParams(node: NodeRecord): Record<string, ParamValue> {
@@ -767,34 +982,98 @@ function mergedParams(node: NodeRecord): Record<string, ParamValue> {
   return { ...out, ...node.params };
 }
 
-function failureReport(result: Extract<KernelResult, { ok: false }>): string {
-  return `${result.error}${result.hint ? `\nhint: ${result.hint}` : ""}`;
+type KernelFailed = Extract<KernelResult, { ok: false }>;
+
+/** One failure reads as before. Several (the contract gates report every
+ *  failing port and the envelope at once) become a numbered list, each with
+ *  its own hint, so one repair round can fix all of them. classifyFailure
+ *  reads the `[G4]` tags and `port "…"` names back out of this text. */
+function failureReport(result: KernelFailed): string {
+  const failures = result.failures ?? [];
+  if (failures.length <= 1) return `${result.error}${result.hint ? `\nhint: ${result.hint}` : ""}`;
+  const items = failures.map(
+    (f, i) => `${i + 1}. [${f.stage}] ${f.error}${f.hint ? `\n   hint: ${f.hint}` : ""}`,
+  );
+  return `${failures.length} gate failures — fix all of them in this attempt:\n${items.join("\n")}`;
 }
 
-export class CadBackend implements DomainBackend<CadContractPayload> {
-  id = "cad";
-  readonly kernel: KernelClient;
-  /** Higher than the engine default: a CAD gate failure hands the model a
-   *  measured number to correct against ("expected Ø4.5, measured Ø6.00"),
-   *  which converts to a fix far more often than a bare compiler error, so
-   *  extra rounds are worth buying here. */
-  readonly maxAttempts: number;
+const CONTRACT_STAGES = new Set(["G3", "G4", "G4b"]);
 
-  /** A build123d part is a few hundred tokens of code. Measured on real
-   *  projects, 89-98% of billed output was reasoning rather than emitted code,
-   *  and output is priced 5x input — so the top reasoning tier was most of the
-   *  bill for work the gates verify anyway. `medium` with room to answer:
-   *  thinking and code share one budget, so the ceiling has to clear both or a
-   *  long think returns no part at all. */
-  readonly generation = { effort: "medium", maxTokens: 24000 } as const;
-
-
-  constructor(opts: { kernel?: KernelClient; maxAttempts?: number } = {}) {
-    this.kernel = opts.kernel ?? new KernelClient();
-    this.maxAttempts = opts.maxAttempts ?? 5;
+/** Higher = closer to passing, so the engine can repair from the best attempt.
+ *  G3 earns partial credit for the fraction of ports that measured right. */
+function gateScore(result: KernelResult, totalPorts: number): number {
+  if (result.ok) return 5;
+  if (result.stage === "G3") {
+    const failing = new Set(
+      (result.failures ?? []).filter((f) => f.stage === "G3").map((f) => f.port ?? f.error),
+    ).size;
+    return 3 + (totalPorts > 0 ? Math.max(0, totalPorts - Math.max(failing, 1)) / totalPorts : 0);
   }
+  if (result.stage === "G4") {
+    // Graded by the worst overshoot, inside (4, 4.5]: a flat G4 score made the
+    // engine pick the first of three candidates over a closer one, and counted
+    // a shrinking overshoot as a stale repair.
+    const worst = (result.failures ?? []).find((f) => f.stage === "G4")?.measured;
+    return typeof worst === "number" ? 4 + 0.5 / (1 + worst) : 4.25;
+  }
+  const rank: Record<string, number> = { G0: 0, G1: 1, G2: 2, G4b: 4.75, G4c: G4C_SCORE, TIMEOUT: 0.5, KERNEL_CRASH: 0.5 };
+  return rank[result.stage] ?? 0;
+}
 
-  planning = {
+/** Replaces the engine's web-flavoured decomposition rules ("prefer header,
+ *  grid, theme"), which contradict ONE PART IS A COMPLETE ANSWER. */
+const CAD_ARCHITECT_RULES = [
+  "- Declare a param for every dimension a user might slide: overall sizes,",
+  "  wall thickness, hole diameters, counts. Never colours or labels.",
+  "- Fewest parts wins. Split only for a reason the ONE PART rule names, and",
+  "  never along the features of one printed object.",
+];
+
+/** Reprompt routing in CAD words. A port's pose and diameter are pinned and
+ *  probed, so "make the mount hole 5mm" is a contract change only T3 can make,
+ *  while "rounder", "add a fillet" or "smoother" reshape inside the ports. */
+export const CAD_TIER_HINTS: TierHints = {
+  addsInterface: /\b(?:add|cut|drill)\s+(?:a|an|another|one|two|three|four|\d+)?\s*(?:new\s+)?(?:\w+\s+)?(?:holes?|ports?|mounts?|mounting points?|bores?)\b/i,
+  sizeWords:
+    /\b(?:holes?|diameter|thick|thickness|thicker|thinner|wider|narrower|taller|shorter|longer|bigger|smaller|larger|size|mount|bore|envelope)\b|[Øø]|\d\s*mm\b|\bmm\b/i,
+  classifierGuide: [
+    "T2 — the request reshapes the part INSIDE its pinned interface: fillets,",
+    "     chamfers, smoothness, internal ribs, styling, anything that leaves",
+    "     every port's position, axis and diameter and the envelope as they are.",
+    "T3 — the request moves the interface: a port's position, axis or size",
+    "     (hole/bore diameter, face size), adding or removing a hole, mount or",
+    "     port, or growing the part past its envelope. Neighbours mate to these.",
+  ].join("\n"),
+};
+
+/** Kinds the joint rules mint. The architect never declares them: it declares
+ *  a joint and gets them. */
+const JOINT_HARDWARE_KINDS = new Set(["washer", "dowel", "bearing", "bushing", "shaft", "collar", "eclip", "linear_bearing", "rail", "carriage", "motor"]);
+
+/** Every other catalog kind, from the catalog, so a new family is plannable. */
+function catalogKinds() {
+  const listed = new Set(["part", "fastener", "nut", "insert", "threaded_rod", "gear"]);
+  const byKind = new Map<string, string[]>();
+  for (const [name, f] of Object.entries(CATALOG.families)) {
+    if (!listed.has(f.kind)) byKind.set(f.kind, [...(byKind.get(f.kind) ?? []), name]);
+  }
+  return [...byKind].map(([kind, families]) => {
+    const f = CATALOG.families[families[0]!]!;
+    const example = skuFor(families[0]!, Object.keys(f.dims)[0]!)!.id;
+    return {
+      kind,
+      description: `Registry ${families.join(" / ")} (never LLM-generated).`,
+      guidance: JOINT_HARDWARE_KINDS.has(kind)
+        ? "Minted by the joint rules: declare a joint with intent and motion, never this node."
+        : `Param: sku, a catalog id such as ${example}.`,
+    };
+  });
+}
+
+/** The architect's view of CAD. Mesh availability is the only input, so the
+ *  system prompt is stable for a given configuration. */
+function cadPlanning(meshAvailable: boolean) {
+  return {
     nodeKinds: [
       { kind: "part", description: "A single printed part.", guidance: "One build(p) function; ports declared in the contract, never in code." },
       { kind: "fastener", description: "Registry socket-head cap screw (never LLM-generated).", guidance: "One node per screw spec; resolved from the fastener registry." },
@@ -802,7 +1081,10 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       { kind: "insert", description: "Registry heat-set threaded insert (never LLM-generated).", guidance: "Use for screws threading into printed plastic — the durable choice over tapping the plastic directly. One param: thread." },
       { kind: "threaded_rod", description: "Registry threaded rod / stud, real ISO profile (never LLM-generated).", guidance: "Use for a stud captured by nuts at both ends. Params: thread and length." },
       { kind: "gear", description: "Registry involute spur gear (never LLM-generated).", guidance: "Params: module, teeth, pressure_angle, thickness, bore. Mesh distance between two gears is module * (teeth_a + teeth_b) / 2." },
+      ...catalogKinds(),
     ],
+    jointSchema: CadJoint,
+    expandPlan: expandJoints,
     paramUnit: "mm",
     payloadSchema: CadContractPayload as z.ZodType<CadContractPayload>,
     graphLints: [
@@ -811,9 +1093,14 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       cadEnvelopeCoherentLint,
       cadFlatFaceSizeLint,
       cadProbedPortsLint,
+      cadAssertionsCoherentLint,
       cadFaceHoleConflictLint,
       cadHardwareSeatLint,
       cadMateConnectivityLint,
+      cadPlanGeometryLint,
+      meshSourceLint(meshAvailable),
+      cadSourcingLint,
+      cadJointRuleLint,
     ],
     architectGuidance: [
       "ONE PART IS A COMPLETE ANSWER. Decomposing is a cost, not a virtue: every",
@@ -831,17 +1118,28 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       "it invents joinery the user never asked for, and every joint is a fit the",
       "user has to assemble and a tolerance that can be wrong.",
       "",
+      "SOURCING: every part is buy (catalog hardware kinds, implied), print (FDM, the",
+      "default — omit payload.sourcing) or fabricate. Class a part fabricate only when",
+      "FDM cannot meet the requirement, or the user asks for it: metal for load, wear or",
+      "heat; fits tighter than ~0.1mm; a shaft with a flat or keyway; a sheet-metal",
+      'bracket. Then write payload.sourcing {"class": "fabricate", "process": cnc |',
+      'sheet_metal | laser_cut | sls | mjf | resin, "material": "6061-T6 aluminium",',
+      '"finish"?, "qty"?} — process AND material are required — and set process.kind',
+      '"CNC" exactly when the process is cnc. A fabricated part is still generated and',
+      "gated like any other, plus that process's manufacturability rules.",
+      "",
       "FRAME CONVENTION (critical): every part is modeled in its OWN LOCAL frame,",
       "roughly centered on the origin — the assembly places parts later via port",
       "mates. Never author ports or envelopes in assembly/world coordinates.",
       "Port poses: +z points OUT of the part's mating surface (out of material).",
       "",
-      "ONLY THESE PORT TYPES MAY BE USED: CLEARANCE_HOLE, BORE, SCREW_SEAT,",
-      "SCREW_BOSS, FLAT_FACE, GROOVE, SLOT. These are the ones the gates can",
-      "measure against the real solid. Any other type is rejected at plan time,",
-      "because a port nothing can probe makes the whole node unverifiable. If an",
-      "interface wants a lip or a snap, express it with the types above, or model",
-      "both sides as ONE part and declare no port at all.",
+      // Derived, so it can never again disagree with the schema or the lint.
+      `ONLY THESE PORT TYPES MAY BE USED: ${PROBED_PORT_TYPES.join(", ")}.`,
+      "These are the ones the gates can measure against the real solid. Any",
+      "other type is rejected at plan time, because a port nothing can probe",
+      "makes the whole node unverifiable. If an interface wants a lip or a snap,",
+      "express it with the types above, or model both sides as ONE part and",
+      "declare no port at all.",
       "GROOVE and SLOT ports MUST carry params: {\"width\": <mm>} — the gap a",
       "  mating tongue or plate sits in, which is the number the other part is cut",
       "  to. Add params.depth only for a channel with a floor; omit it for a cut",
@@ -858,6 +1156,32 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       "FLAT_FACE ports MUST carry params: {\"size\": <mm>} — the width of the flat",
       "  the mating part sits on (or {\"ring_diameter\": <mm>} for an annular seat).",
       "  A probe with no size to measure against cannot check the port at all.",
+      "SCREW_BOSS ports MUST carry params.outer_diameter (and pilot_diameter if",
+      "  it has a pilot hole). SHAFT ports (a peg standing out of the face along",
+      "  +z) MUST carry params.diameter, plus params.length to check its tip.",
+      "HOLE_PATTERN / BOSS_PATTERN: ONE port for N identical holes or bosses,",
+      "  each probed on its own. Same diameter params as the single feature, plus",
+      "  a layout in the port frame (x along xAxis, centred on the origin):",
+      '    polar: {"count": 4, "pcd": 50, "start_angle": 45} (pcd = bolt-circle',
+      "           DIAMETER, start_angle in degrees from xAxis, default 0)",
+      '    grid:  {"nx": 2, "ny": 2, "pitch_x": 40, "pitch_y": 40}',
+      "  Members are probed like a BORE: they must exist at the right Ø, but a",
+      "  pattern does not assert that its holes pass through.",
+      "HARDWARE HOST FEATURES, one per catalog part, all centred on the origin, axis on +z:",
+      '  THREADED_HOLE {"thread": "M3", "depth"}: tapped into metal, cut at the tap drill.',
+      '  INSERT_POCKET {"diameter", "depth"}: heat-set insert hole, cut depth+0.3, 1.2mm wall around it.',
+      '  NUT_TRAP {"af", "depth", "entry": "axial"|"side"}: hex, a CORNER on xAxis; side entry opens toward +x.',
+      '  COUNTERBORE {"diameter", "depth", "through_diameter"}: head recess over a through bore.',
+      '  COUNTERSINK {"diameter", "angle", "through_diameter"}: cone Ø at the face, included angle.',
+      '  DOWEL_HOLE {"diameter", "depth", "fit": "press"|"slip"}: nominal dowel Ø; the probe applies the fit.',
+      '  BEARING_SEAT {"od", "width", "fit": "press"|"slip"}: outer-ring pocket with a shoulder below it so the bearing stops.',
+      '  DOWEL_HOLE and BEARING_SEAT MUST carry a literal "fit"; without it G3 fails the port.',
+      '  BUSHING_BORE {"od", "length"}: press-fit pocket for a plain bushing.',
+      '  MOTOR_MOUNT {"pilot_diameter", "hole_diameter", "pcd"+"count" | "pitch_x"+"pitch_y"}: pilot + screw pattern.',
+      '  MAGNET_POCKET {"diameter", "depth"}: disc magnet pocket, 0.05-0.2 over the magnet Ø.',
+      '  HUB_BORE {"diameter", "flat"?}: slip bore on a shaft; flat = axis-to-flat distance along +xAxis.',
+      "  For DOWEL_HOLE, BEARING_SEAT, BUSHING_BORE, MAGNET_POCKET, HUB_BORE and the MOTOR_MOUNT",
+      "  pilot, declare the PART's nominal size (the dowel, bearing, magnet); the gate adds the fit.",
       "",
       "THE ENVELOPE MUST DESCRIBE WHERE THE PART ACTUALLY IS. Two rules, both",
       "checked at plan time, both fatal to a cook if wrong because the generator",
@@ -869,6 +1193,9 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       "    with a gap between them ask for a part that spans empty space.",
       "  Size each volume around the geometry it bounds and centre it there —",
       "  an envelope offset by half its own height leaves the part hanging out.",
+      "  A volume's pose orients it: box dims run along its xAxis, y = z × x and",
+      "  zAxis, and a cylinder's height runs along its zAxis, so a horizontal rod",
+      "  is a cylinder with zAxis [1,0,0], not an upright one.",
       "Prefer axis-aligned frames (zAxis one of ±x/±y/±z) and simple orientations:",
       "plates flat in XY, height along Z.",
       "",
@@ -883,39 +1210,43 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       "same node still mean one part held at two points, so do not reuse a port",
       "name to mean two features.",
       "Features repeated WITHIN one part — a bolt circle, four blades on a hub,",
-      "a hole pattern — are not nodes at all: the generator writes a loop.",
+      "a hole pattern — are not nodes at all: the generator writes a loop, and",
+      "the contract declares them as one HOLE_PATTERN or BOSS_PATTERN port.",
       "",
-      "FASTENERS ARE OPTIONAL, and never decorative. Emit one only when separate",
-      "parts are genuinely bolted together, and only alongside the hole ports on",
-      "the parts it joins — every fastener must be wired to a CLEARANCE_HOLE,",
-      "SCREW_SEAT, SCREW_BOSS or BORE port that it seats into. A one-piece part, a",
-      "press fit, a snap fit, or a printed-in-place hinge needs ZERO fastener",
-      "nodes. Do not add a screw to satisfy the taxonomy; most designs need none.",
-      "",
-      "HARDWARE NODES (fastener | nut | insert) are resolved from a registry —",
-      "standards-exact, never generated. Give each ONE port: the seat face where",
-      "it bears on the part, a FLAT_FACE with params.ring_diameter (an annulus",
-      "around its own shank, not a solid disc). The edge that wires the fastener",
-      "MUST name that port, so it has to exist — an edge naming a port the node",
-      "does not declare fails the port-consistency lint, and the mate will not",
-      "solve. examples/cad-clamp is the pattern: m4-screw declares head_seat as a",
-      "FLAT_FACE with ring_diameter 5.5, and the edge reads",
-      "base-plate.back_right_hole -> m4-screw.head_seat. Declare no OTHER ports,",
-      "and a small cylinder envelope around the origin.",
-      "Put ring_diameter in the MIDDLE of the bearing annulus, between the thread",
-      "diameter and the head or across-flats width, not at either edge: the probe",
-      "samples that exact ring, and on the rim tessellation decides whether it",
-      "finds material. For an M4 screw the band is Ø4 to Ø7, so 5.5.",
-      "Emit one node per hardware ROLE, not per physical piece — counts and",
-      "patterns belong to the consuming part's HOLE_PATTERN port params.",
-      "  fastener      SHCS, head base at origin, shank hanging -z.",
-      "                Params: thread (enum M3|M4|M5) AND length (mm).",
-      "  nut           hex nut, seating face on z=0, body +z. Param: thread only.",
-      "  insert        heat-set threaded insert, flange on z=0, body +z. Param: thread only.",
-      "  threaded_rod  ISO threaded stud from z=0 up. Params: thread AND length.",
-      "Pick the mating half deliberately: a screw into printed plastic wants an",
-      "`insert` (tapped plastic strips); a screw through both parts wants a `nut`;",
-      "a screw into a SCREW_BOSS needs neither.",
+      // Intent in, hardware out (joints.ts, expand.ts). The architect used to
+      // pick screws and inserts itself, and a plausible wrong pick cost a
+      // cook; a rule costs nothing to run again.
+      "JOINTS, NOT HARDWARE. Wherever two parts are held, aligned, spun or slid",
+      "against each other, declare a joint in `joints` and NO hardware nodes. The",
+      "rules choose the screw, insert, nut, washers, dowel, bearings, shaft,",
+      "collars, rail or motor, add the host features (counterbore, insert pocket,",
+      "nut trap, bearing seat, hub bore, ...) to both parts' contracts with exact",
+      "catalog sizes, and wire every edge. You state what the joint must DO:",
+      '  {"id": "j1", "a": {"node": "base", "port": "lid_face"}, "b": {"node": "lid", "port": "base_face"},',
+      '   "intent": "removable", "motion": "fixed", "load": "light", "access": "both_sides",',
+      '   "count": 4, "pitch": 40, "wallA": "param(base.wall)", "wallB": "param(lid.thickness)"}',
+      "  a is the part that stays put; b is the part joined to it, and the part",
+      "  that MOVES for revolute and prismatic joints. a.port and b.port are",
+      "  FLAT_FACE ports where the joint sits, +z toward the other part, sized to",
+      "  leave flat around what the rules cut there. A fixed joint's two ports are",
+      "  also the a-b face mate (wire that edge as usual). A moving b is placed",
+      "  through its hardware, so never wire a to b directly for motion.",
+      "  wallA / wallB: each part's thickness at the joint, along the joint axis,",
+      "  as a number or a param expression. A wall too thin for every rule comes",
+      "  back as a lint naming the wall and how thick it must be.",
+      "  intent: permanent | removable | serviceable | alignment (dowels).",
+      "  motion: fixed | revolute | prismatic, duty: occasional | continuous,",
+      "  load: none | light | medium | heavy, access: one_side | both_sides.",
+      "  Optional: flush (countersunk), count and pitch (a pattern of N, spacing",
+      "  mm), driven + speedClass/torqueClass low|medium|high (adds a motor),",
+      "  strokeMm (prismatic), shaftHint/threadHint (mm / M3..M8), allowPrinted",
+      "  (a printed pin pivot), lateral (room for a side nut trap).",
+      "  A rotor that spins freely is revolute/continuous: a gets two bearing seats",
+      "  (wallA must hold two bearings and a shoulder), b gets a hub bore on the",
+      "  shaft, and the swept clearance of b around the axis is checked.",
+      "Never emit a fastener, nut, insert, washer, dowel, bearing, shaft, collar,",
+      "rail or motor node for a joint: the rules mint them, with ids like",
+      "j1_screw. Hardware no joint owns must still be justified by a host port.",
       "",
       "",
       // THE RULE THE ARCHITECT TRIPPED ON 14 OF 15 PLANS. It lived only in the
@@ -948,6 +1279,59 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       "the mating faces, and size hole/boss diameters from the fastener registry",
       "(M3 clearance 3.4 / M4 4.5 / M5 5.5).",
       "",
+      "REFERENCE IMAGES. When the goal arrives with reference images, they are",
+      "the user's spec: match the silhouette and proportions they show. A view",
+      "label says where the camera stood: front = seen from -y (+x to the right,",
+      "+z up), side = seen from +x (+y to the right), back = seen from +y, top =",
+      "seen from +z (+x right, +y up). Pose the assembly so its world frame",
+      "matches, since the assembly's silhouette is compared against each",
+      "labelled image. If a target height is given, it is the assembly's overall",
+      "Z extent: derive every dimension from it and the image's proportions.",
+      "For every non-hardware part also write payload.visualRef: one or two",
+      "sentences describing that part's region of the image (where it sits,",
+      "its outline, its taper or curvature). It is the ONLY sight of the image",
+      "that part's generator gets, so describe the shape, not the photo.",
+      "Tie that part's visualChecks to the image too (\"Does the tail fin sweep",
+      "back as in the reference?\").",
+      ...geometrySourceGuidance(meshAvailable),
+      "",
+      "VISUAL CHECKS: give every part that is NOT registry hardware",
+      "payload.visualChecks, 2 to 5 yes/no questions a reviewer answers by looking",
+      "at renders of the finished part (iso, front, right and top views). Ask about",
+      "what the ports and envelope cannot pin: where a feature sits, its shape,",
+      "how many there are, which way it faces. Phrase each so YES means correct:",
+      '  "Is the cockpit opening on the top face?"',
+      '  "Does the tail boom taper toward the tail?"',
+      '  "Are there exactly two skids, one on each side?"',
+      "One fact per question, visible from outside. Never ask about a measured",
+      "size (the gates already check every declared dimension), and never ask",
+      "anything that a correct part could leave hidden from all four views.",
+      "",
+      "ASSERTIONS PIN THE USER'S NUMBERS. Give every non-hardware part 1-4",
+      "payload.assertions that capture what the user actually stated, measured on",
+      "the finished solid in its own frame:",
+      '  {"kind": "bbox_axis", "axis": "x", "min": 79.5, "max": 80.5}  overall size, mm',
+      '  {"kind": "hole_count", "min": 6, "max": 6}   closed round holes, blind or',
+      "      through; a counterbore over its pilot counts once. ONLY for holes the",
+      "      user stated that are NOT ports: every hole a port declares (bores,",
+      "      seats, hub bores, screw holes, pattern members) is already probed, and",
+      "      a hole_count those ports alone satisfy is rejected. The count covers",
+      "      the port holes too, so min = port holes + the stated ones.",
+      '  {"kind": "symmetry", "plane": "yz"}           mirror plane through the part\'s',
+      "      bounding-box centre",
+      '  {"kind": "volume_range", "min": ..., "max": ...}  mm³, only for a stated',
+      "      weight or material budget",
+      '  {"kind": "min_wall", "mm": 2}                  only for a stated wall',
+      '  {"kind": "solids", "count": 2}                 only when the user wants',
+      "      several separate bodies printed as one part",
+      "NEVER assert anything the user did not say or clearly imply: a guessed",
+      "number fails a correct part. \"An 80mm soap dish with six drain holes\"",
+      "earns a bbox_axis on its length and a hole_count of 6; \"an 80mm plate",
+      "with four M4 mounting holes\" earns the bbox_axis and a HOLE_PATTERN port,",
+      "not a hole_count. Neither earns a thickness, a volume or a symmetry.",
+      "Every assertion must fit inside the",
+      "envelope, which is checked at plan time.",
+      "",
       "PARAMS ARE THE USER'S CONTROL PANEL — write them for a person, not a",
       "compiler. Every param needs a `description` saying what it does in plain",
       "words (\"how thick the plate prints\", not \"thickness\"); a blank one leaves",
@@ -976,12 +1360,74 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       '  derived dimension:      "boreDia": "expr: param(fan-plate.fanSize) - 4"',
       "Bind fastener thread + length this way whenever the joint's stack or holes",
       "are parametric — a user resizing one part must never leave a stale screw.",
+      "",
+      `WORKED PLAN for "${WORKED_PLAN_GOAL}" (the shape of a good answer, not a`,
+      "template — copy its conventions, never its numbers or its part count):",
+      JSON.stringify(WORKED_PLAN),
     ].join("\n"),
+    architectRules: CAD_ARCHITECT_RULES,
+    tierHints: CAD_TIER_HINTS,
   };
+}
+
+export class CadBackend implements DomainBackend<CadContractPayload> {
+  id = "cad";
+  readonly kernel: KernelClient;
+  /** Higher than the engine default: a CAD gate failure hands the model a
+   *  measured number to correct against ("expected Ø4.5, measured Ø6.00"),
+   *  which converts to a fix far more often than a bare compiler error, so
+   *  extra rounds are worth buying here. */
+  readonly maxAttempts: number;
+
+  /** A build123d part is a few hundred tokens of code. Measured on real
+   *  projects, 89-98% of billed output was reasoning rather than emitted code,
+   *  and output is priced 5x input — so the top reasoning tier was most of the
+   *  bill for work the gates verify anyway. `medium` with room to answer:
+   *  thinking and code share one budget, so the ceiling has to clear both or a
+   *  long think returns no part at all. Round 1 drafts three candidates in
+   *  parallel because the gates are a free oracle; from round 3 the model
+   *  thinks harder, since cheap rounds have already failed twice. */
+  readonly generation = {
+    effort: "medium",
+    maxTokens: 24000,
+    firstRoundCandidates: 3,
+    escalate: { fromAttempt: 3, effort: "high", maxTokens: 32000 },
+  } as const;
+
+
+  /** Makes the surface of `geometrySource: "mesh"` nodes; absent = none. */
+  readonly meshSource?: MeshSource;
+  readonly planning: ReturnType<typeof cadPlanning>;
+
+  constructor(opts: { kernel?: KernelClient; maxAttempts?: number; meshSource?: MeshSource } = {}) {
+    this.kernel = opts.kernel ?? new KernelClient();
+    this.maxAttempts = opts.maxAttempts ?? 5;
+    this.meshSource = opts.meshSource;
+    this.planning = cadPlanning(opts.meshSource !== undefined);
+  }
+
 
   deterministicArtifact(node: NodeRecord): { code: string } | null {
+    // A mesh node loads its fitted surface, like an imported piece, until a
+    // reprompt routes it to the generator to edit that mesh.
+    if (isMeshNode(node)) return node.thread.length > 0 ? null : { code: meshNodeCode(node) };
     const code = resolveDeterministic(node);
     return code ? { code } : null;
+  }
+
+  /** Mesh nodes need their surface on disk before `meshNodeCode` builds:
+   *  generated once (billed), re-fitted into the envelope when it moves. */
+  prepareArtifact(node: NodeRecord, ws: Workspace, graph: GraphDoc, signal?: AbortSignal, log?: (line: string) => void) {
+    if (!isMeshNode(node) || node.thread.length > 0) return null;
+    return prepareMeshNode({
+      node,
+      graph,
+      projectDir: path.resolve(ws.root, ".."),
+      kernel: this.kernel,
+      source: this.meshSource,
+      signal,
+      log,
+    });
   }
 
   /**
@@ -1018,7 +1464,7 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     ws: Workspace,
     opts: { nodeId?: string; format: string },
   ): Promise<ExportResult> {
-    const { world } = this.solveScene(graph);
+    const { world, instances } = this.solveScene(graph);
     // Hidden parts drop out of the EXPORT here. solveScene above still sees
     // them, so hiding a base plate does not unmoor the bracket bolted to it.
     // The viewport's mesh list is filtered separately, in the cad-scene route.
@@ -1029,6 +1475,9 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       code: n.artifact!.code,
       params: mergedParams(n),
       matrix: opts.nodeId ? [] : (world[n.id] ?? []),
+      // Each placed copy is its own STEP child / 3MF build item, named by node.
+      matrices: opts.nodeId ? [] : (instances[n.id] ?? []),
+      name: n.id,
     }));
     return this.kernel.export(parts, opts.format, { importDir: this.importDir(ws) });
   }
@@ -1045,26 +1494,77 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     return path.resolve(ws.root, "..", "imports");
   }
 
-  /** G0–G2 kernel-side: static scan, execution, validity. */
-  async execute(node: NodeRecord, ws: Workspace): Promise<ExecuteResult> {
-    const result = await this.kernel.execute(node.artifact?.code ?? "", mergedParams(node), {
+  /** One kernel build per attempt: execute runs every gate and leaves the
+   *  result here for verify, slotted per node AND code (concurrent candidates
+   *  of one node must not evict each other) and checked against the exact
+   *  request so a changed code, param or contract never reads a stale verdict. */
+  private lastRun = new Map<string, { key: string; result: KernelResult }>();
+
+  private kernelRequest(node: NodeRecord, graph: GraphDoc, ws: Workspace) {
+    const payload = node.contract.payload as CadContractPayload;
+    const code = node.artifact?.code ?? "";
+    const params = mergedParams(node);
+    // A solids assertion is the same claim as payload.solids, which G2 checks
+    // first; left in the array, a count of 2 would fail G2 at the default of 1
+    // before G4b ever saw it. So it feeds the count and leaves the array.
+    const solidsAssertion = payload.assertions?.find((a) => a.kind === "solids");
+    const hardware = REGISTRY_HARDWARE.has(node.kind);
+    const contract = {
+      // A joint's hardware ports are mate frames the expansion derived, not
+      // features of the part: the registry builds it exactly (expand.ts).
+      ports: isJointHardware(graph, node.id) ? [] : kernelPorts(graph, payload),
+      // Fastener geometry comes from the registry and is exact by construction,
+      // so G4 would only be grading the architect's envelope guess — skip it.
+      envelope: REGISTRY_HARDWARE.has(node.kind) ? [] : kernelEnvelope(graph, payload),
+      assertions: REGISTRY_HARDWARE.has(node.kind) ? [] : (payload.assertions ?? []).filter((a) => a.kind !== "solids"),
+      // Hardware is one solid unless REGISTRY_SOLIDS says otherwise; null there
+      // means uncountable, so the check is skipped.
+      solids: hardware
+        ? (REGISTRY_SOLIDS[node.kind] === null ? undefined : (REGISTRY_SOLIDS[node.kind] ?? 1))
+        : (payload.solids ?? (solidsAssertion?.kind === "solids" ? solidsAssertion.count : undefined) ?? 1),
+      // G4c: a fabricate part is also held to its process's DFM rules.
+      process: kernelProcess(node),
       importDir: this.importDir(ws),
-    });
-    if (!result.ok) return { ok: false, stage: result.stage, report: failureReport(result) };
-    return { ok: true, stage: "execute", report: `volume ${result.measurements.volume_mm3.toFixed(0)} mm³` };
+    };
+    return { code, params, contract, key: JSON.stringify([code, params, contract]) };
   }
 
-  /** G3+G4: the contract's postconditions probed against the actual solid.
-   * Fastener geometry comes from the registry and is exact by construction,
-   * so G4 would only be grading the architect's envelope guess — skip it. */
-  async verify(node: NodeRecord, _graph: GraphDoc, ws: Workspace): Promise<VerifyResult> {
-    const payload = node.contract.payload as CadContractPayload;
-    const result = await this.kernel.execute(node.artifact?.code ?? "", mergedParams(node), {
-      ports: kernelPorts(_graph, payload),
-      envelope: REGISTRY_HARDWARE.has(node.kind) ? [] : kernelEnvelope(_graph, payload),
-      importDir: this.importDir(ws),
-    });
-    if (!result.ok) return { ok: false, stage: result.stage, report: failureReport(result) };
+  private async runGates(node: NodeRecord, graph: GraphDoc, ws: Workspace) {
+    const req = this.kernelRequest(node, graph, ws);
+    const cached = this.lastRun.get(`${node.id}:${node.artifact?.hash}`);
+    this.lastRun.delete(`${node.id}:${node.artifact?.hash}`);
+    const result =
+      cached?.key === req.key ? cached.result : await this.kernel.execute(req.code, req.params, req.contract);
+    return { result, req, score: gateScore(result, req.contract.ports.length) };
+  }
+
+  /** G0–G2 kernel-side: static scan, execution, validity. Given the graph,
+   *  the contract gates run in the same build and their verdict waits for
+   *  verify; without it (contract expressions need the graph) this builds
+   *  G0–G2 alone and verify pays for a second build. */
+  async execute(node: NodeRecord, ws: Workspace, graph?: GraphDoc): Promise<ExecuteResult> {
+    if (!graph) {
+      const result = await this.kernel.execute(node.artifact?.code ?? "", mergedParams(node), {
+        importDir: this.importDir(ws),
+      });
+      // A G0–G2 pass has not met the contract yet, so it ranks as reaching G3.
+      const score = result.ok ? 3 : gateScore(result, 0);
+      if (!result.ok) return { ok: false, stage: result.stage, report: failureReport(result), score };
+      return { ok: true, stage: "execute", report: `volume ${result.measurements.volume_mm3.toFixed(0)} mm³`, score };
+    }
+    const { result, req, score } = await this.runGates(node, graph, ws);
+    if (!result.ok && !CONTRACT_STAGES.has(result.stage)) {
+      return { ok: false, stage: result.stage, report: failureReport(result), score };
+    }
+    this.lastRun.set(`${node.id}:${node.artifact?.hash}`, { key: req.key, result });
+    const volume = result.measurements?.volume_mm3;
+    return { ok: true, stage: "execute", report: `volume ${volume?.toFixed(0) ?? "?"} mm³`, score };
+  }
+
+  /** G3+G4: the contract's postconditions probed against the actual solid. */
+  async verify(node: NodeRecord, graph: GraphDoc, ws: Workspace): Promise<VerifyResult> {
+    const { result, score } = await this.runGates(node, graph, ws);
+    if (!result.ok) return { ok: false, stage: result.stage, report: failureReport(result), score };
     return {
       ok: true,
       stage: "verify",
@@ -1072,6 +1572,7 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       // The probe results the gates just agreed with. They used to end here,
       // stringified into a report nothing read on success.
       measurements: result.measurements,
+      score,
     };
   }
 
@@ -1085,11 +1586,12 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     // a minority, and treating it as persistent would send a part the model
     // was still converging on to the architect as unbuildable.
     const persistent = Math.max(2, Math.ceil((evidence.attempts * 2) / 3));
-    const stages = evidence.failures.map((f) => f.stage);
 
     // A persistent envelope escape means the box the architect drew is too
     // small for the features it demanded — only the architect can fix that.
-    if (stages.filter((s) => s === "G4").length >= persistent) return "contract-infeasible";
+    // A combined G3 report carries the envelope verdict too, tagged `[G4]`.
+    const g4 = evidence.failures.filter((f) => f.stage === "G4" || /\[G4\]/.test(f.report));
+    if (g4.length >= persistent) return "contract-infeasible";
     // The same port failing G3 across materially different attempts points at
     // the declared pose/dims, not the code (design doc heuristic). Judged on
     // the worst single port, not on every G3 failure agreeing: over more
@@ -1102,17 +1604,37 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     // repair loop that would have fixed it and asks the user to re-plan a part
     // that was never impossible. A dimension MISMATCH still escalates — that
     // one really can be a contract no geometry satisfies.
-    const g3 = evidence.failures.filter(
-      (f) => f.stage === "G3" && !/the channel is open/.test(f.report),
-    );
-    if (g3.length >= persistent) {
-      const counts = new Map<string, number>();
-      for (const f of g3) {
-        const port = /port "([^"]+)"/.exec(f.report)?.[1];
-        if (port) counts.set(port, (counts.get(port) ?? 0) + 1);
+    // A report can name several ports, one per line; each counts once per round.
+    // The engine hands back report text only, so the port names are read from it.
+    const counts = new Map<string, number>();
+    for (const f of evidence.failures) {
+      if (f.stage !== "G3") continue;
+      const ports = new Set<string>();
+      for (const line of f.report.split("\n")) {
+        const [, port, type] = /port "([^"]+)"(?: \((\w+))?/.exec(line) ?? [];
+        if (!port || /the channel is open/.test(line)) continue;
+        // A hardware feature's size comes from the catalog, so a persistent
+        // miss is a cut the generator keeps getting wrong, not a bad contract,
+        // unless the feature cannot fit inside the envelope at all.
+        if (type && HARDWARE_PORT_TYPES.has(type) && !outgrowsEnvelope(evidence.node, port)) continue;
+        ports.add(port);
       }
-      for (const n of counts.values()) if (n >= persistent) return "contract-infeasible";
+      for (const port of ports) counts.set(port, (counts.get(port) ?? 0) + 1);
     }
+    for (const n of counts.values()) if (n >= persistent) return "contract-infeasible";
+    // G4b: an overall size or material volume that stays wrong across rounds is
+    // usually the stated number fighting the envelope or the ports, which only
+    // the architect can reconcile. Hole count, symmetry, solids and wall
+    // thickness stay with the generator: a part can always gain a hole, a
+    // mirror, a union or a thicker wall without touching its contract.
+    const budget = new Map<string, number>();
+    for (const f of evidence.failures) {
+      const hit = new Set(
+        [...f.report.matchAll(/assertion "((?:volume_range|bbox_axis)[^"]*)"/g)].map((m) => m[1]!),
+      );
+      for (const label of hit) budget.set(label, (budget.get(label) ?? 0) + 1);
+    }
+    for (const n of budget.values()) if (n >= persistent) return "contract-infeasible";
     return "code-invalid";
   }
 
@@ -1140,7 +1662,11 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     const mates: AssemblyMate[] = graph.edges.map((e) => {
       return { fromNode: e.from, fromPort: e.fromPort, toNode: e.to, toPort: e.toPort };
     });
-    const { world, instances, problems } = solveAssembly(nodes, mates, graph.assembly.entryNodeId);
+    const { world, instances, problems, mateOrigins } = solveAssembly(nodes, mates, graph.assembly.entryNodeId);
+    // Motion joints are kinematic, not rigid: the poses above are each joint
+    // at 0, and this says which axis it turns or slides along, how far, and
+    // which parts go with it (G5 sweeps them).
+    const joints = kinematicJoints(jointAxes(graph), world);
     const scene = {
       nodes: Object.fromEntries(
         Object.values(graph.nodes).map((n) => [
@@ -1157,8 +1683,9 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
         ]),
       ),
       problems,
+      joints,
     };
-    return { scene, world, instances, problems };
+    return { scene, world, instances, problems, mateOrigins, joints };
   }
 
   async globalCheck(graph: GraphDoc, ws: Workspace): Promise<CheckResult> {
@@ -1172,14 +1699,14 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       if (to && !to.ports.some((p) => p.name === e.toPort))
         problems.push(`edge ${e.id}: ${e.to} has no port "${e.toPort}"`);
     }
-    const { world, problems: sceneProblems } = this.solveScene(graph);
+    const { world, instances, mateOrigins, joints, problems: sceneProblems } = this.solveScene(graph);
     problems.push(...sceneProblems);
 
-    // G5: two parts in the same space. Every other gate grades ONE part against
-    // its own contract, so none of them can see this — a collar passed every
-    // probe and every envelope while sitting 1.5mm inside its base. Reported
-    // here rather than failing a node's verify because no single part is at
-    // fault; failing one arbitrarily would send a generator to fix correct code.
+    // G5: the parts against each other (g5.ts). Every other gate grades ONE
+    // part against its own contract, so none of them can see this — a collar
+    // passed every probe and every envelope while sitting 1.5mm inside its base.
+    // Each verdict names its two nodes, and the engine blocks exactly those
+    // (applyCheck), so the user is pointed at a pair instead of a problem bar.
     //
     // Best-effort, but NOT SILENT. A kernel that is down must not turn a clean
     // assembly into a failing one — and a bare catch here made "did not run"
@@ -1188,64 +1715,70 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     // perfectly convincing false all-clear. That is the third silence of this
     // shape in this file, one commit after two were deleted, so the reason is
     // reported as a problem of its own.
+    const findings: CheckFinding[] = fitFindings(graph);
+    // Every placed copy, keyed node#i past the first: a second arm hung off
+    // the same seat is a part in space like any other.
     const posed = Object.values(graph.nodes)
       .filter((n) => n.artifact?.code && world[n.id])
-      .map((n) => ({
-        key: n.id,
-        code: n.artifact!.code,
-        params: mergedParams(n) as Record<string, unknown>,
-        matrix: world[n.id]!,
-      }));
+      .flatMap((n) =>
+        (instances[n.id] ?? [world[n.id]!]).map((matrix, i) => ({
+          key: i === 0 ? n.id : `${n.id}#${i}`,
+          code: n.artifact!.code,
+          params: mergedParams(n) as Record<string, unknown>,
+          matrix,
+        })),
+      );
     if (posed.length >= 2) {
       try {
-            const res = await this.kernel.clash(posed, { importDir: this.importDir(ws) });
-        for (const e of res.clash?.errors ?? []) {
+        const res = await this.kernel.clash(posed, {
+          importDir: this.importDir(ws),
+          allow: [...threadAllowances(graph), ...hardwareAllowances(graph)],
+          contacts: contactQueries(graph, mateOrigins, new Set(posed.map((p) => p.key))),
+          sweeps: joints.map(({ id, ...j }) => ({ joint: id, ...j })),
+        });
+        if (!res.ok || !res.clash) throw new Error(res.error ?? "the kernel returned no clash report");
+        for (const e of res.clash.errors ?? []) {
           problems.push(`clash check incomplete — ${e}. Those two parts were not compared.`);
         }
-        for (const c of res.clash?.clashes ?? []) {
-          // A SCREW IS SUPPOSED TO INTERFERE WITH ITS NUT. Solid models of a
-          // thread engagement always interpenetrate: the screw carries its
-          // MAJOR diameter and the nut is bored to the TAP (minor) diameter, so
-          // the difference is the thread itself. Measured on two-plate-bolted:
-          // G5 reported 12.8 mm³ between an M4 screw and its nut, and
-          // pi/4 * (4.0² - 3.3²) * 3.2 is 12.8 to the tenth. The assembly is
-          // correct; the gate was describing a modelling convention.
-          //
-          // Left unfiltered this is a false clash on every screw-into-nut,
-          // screw-into-insert and screw-into-tapped-boss design in the domain,
-          // which is most of them. Two fastening parts are DESIGNED to occupy
-          // the same space; two printed parts are not, and those still report.
-          // Exempt the EXPECTED volume, not the pair. Muting every
-          // hardware-to-hardware clash also mutes a nut driven 3mm into a screw
-          // head, which is a real defect. The thread engagement is computable:
-          // pi/4 * (major² - tap²) * engagement, which returns 12.8 mm³ for an
-          // M4 nut and is what G5 measured to the tenth. Anything materially
-          // beyond it is not a thread.
-          const a = graph.nodes[c.a];
-          const b = graph.nodes[c.b];
-          const mating = [a, b].find((n) => n && (n.kind === "nut" || n.kind === "insert"));
-          const screw = [a, b].find((n) => n && n.kind === "fastener");
-          if (mating && screw) {
-            const thread = screw.contract.params.find((p) => p.name === "thread")?.default;
-            const len = typeof thread === "string" ? engagementLength(mating.kind, thread) : null;
-            if (typeof thread === "string" && len != null) {
-              // 1.5x, because the engagement can be longer than the table's
-              // nominal when a screw runs past a nut, and a thread is the only
-              // thing that overlaps at all at this scale.
-              const expected = threadEngagementVolume(thread, len) * 1.5;
-              if (c.volume_mm3 <= expected) continue;
-            }
-          }
-          problems.push(
-            `${c.a} and ${c.b} occupy the same space: ${c.volume_mm3.toFixed(1)} mm³ of shared material near [${c.at.join(", ")}]. Both parts pass their own gates, so the fault is in a mate offset or a port pose, not in either part's code.`,
-          );
-        }
+        findings.push(...clashFindings(graph, res.clash));
       } catch (err) {
         problems.push(
           `clash check did not run: ${(err as Error).message}. Parts may overlap without this reporting it — the gate is skipped, not passed.`,
         );
       }
     }
-    return { ok: problems.length === 0, problems };
+    problems.push(...findings.map((f) => f.message));
+    const ok = problems.length === 0;
+    // G6 against the user's reference image. Advisory (see silhouette.ts), so
+    // it never sets ok; in `problems` too so the user actually reads it.
+    const advisories = await this.silhouetteCheck(graph, ws, posed, problems);
+    problems.push(...advisories.map((a) => a.message));
+    return { ok, problems, findings, advisories };
+  }
+
+  private async silhouetteCheck(
+    graph: GraphDoc,
+    ws: Workspace,
+    posed: { key: string; code: string; params: Record<string, unknown>; matrix: number[] }[],
+    problems: string[],
+  ): Promise<CheckAdvisory[]> {
+    const refs = (graph.brief.refs ?? []).filter((r) => r.mask && r.view);
+    if (refs.length === 0 || posed.length === 0) return [];
+    const dir = path.resolve(ws.root, "..", "refs");
+    try {
+      const views = await Promise.all(
+        refs.map(async (r) => ({
+          view: r.view!,
+          ref: r.hash,
+          mask_b64: (await readFile(path.join(dir, `${r.hash}.mask.png`))).toString("base64"),
+        })),
+      );
+      const res = await this.kernel.silhouette(posed, views, { importDir: this.importDir(ws) });
+      if (!res.ok || !res.silhouette) throw new Error(res.error ?? "the kernel returned no silhouette report");
+      return silhouetteAdvisories(graph, res.silhouette.views);
+    } catch (err) {
+      problems.push(`silhouette check did not run: ${(err as Error).message}. The assembly was not compared against the reference image.`);
+      return [];
+    }
   }
 }

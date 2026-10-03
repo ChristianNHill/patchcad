@@ -8,8 +8,10 @@ thousand triangles, z-buffered in numpy, costs milliseconds and cannot fail that
 way. Pillow is here only to encode the PNG.
 
 The gates can prove a part has the declared bore and fits its envelope. They
-cannot see that it looks wrong. This is the first step at closing that: for now
-a human looks at it.
+cannot see that it looks wrong. The sheet is what the engine's inspect judge
+answers its yes/no visual checks from, so every tile carries what a question
+about place and size needs: an axis triad, a millimetre scale bar, and dark
+silhouette and crease lines over flat shading.
 """
 
 from __future__ import annotations
@@ -31,8 +33,21 @@ MARGIN = 0.08  # fraction of the frame left empty around the part
 # and shape reads identically at a few thousand faces.
 MAX_TRIANGLES = 4000
 
-BACKGROUND = (24, 26, 29)
-INK = (232, 236, 240)
+# Light and neutral, in the studio's warm-paper key. The sheet is model-facing,
+# so what matters is contrast: a mid-grey part, dark edge lines, pale ground.
+BACKGROUND = (240, 238, 233)
+PART = (200, 204, 210)
+EDGE = (34, 36, 40)
+LABEL = (90, 92, 96)
+DIVIDER = (214, 210, 202)
+AXIS_COLOURS = ((200, 56, 44), (48, 150, 70), (44, 92, 200))  # x red, y green, z blue
+
+# Adjacent pixels whose faces differ by more than this get a crease line. OCP
+# tessellates curves at 0.1 rad, so facets of one smooth surface stay far below.
+CREASE_COS = math.cos(math.radians(30))
+# Rasterize in chunks of this many (triangle, pixel) candidates, to bound memory
+# when a few big triangles cover most of the frame.
+CHUNK = 1_000_000
 
 # (name, eye direction, up) — the four a machinist asks for, plus two isos so
 # the sheet shows both front corners.
@@ -149,10 +164,6 @@ def _render_view(
     sy = px / 2 - p[:, 1] * scale
     depth = p[:, 2]
 
-    img = np.zeros((px, px, 3), dtype=np.float64)
-    img[:] = BACKGROUND
-    zbuf = np.full((px, px), -np.inf)
-
     a, b, c = t[:, 0], t[:, 1], t[:, 2]
     # Face normals in camera space: z component alone gives the headlight term.
     e1 = p[b] - p[a]
@@ -160,52 +171,115 @@ def _render_view(
     nrm = np.cross(e1, e2)
     ln = np.linalg.norm(nrm, axis=1)
     ok = ln > 1e-12
-    facing = np.zeros(len(t))
-    facing[ok] = nrm[ok, 2] / ln[ok]
+    unit = np.zeros_like(nrm)
+    unit[ok] = nrm[ok] / ln[ok, None]
+    facing = unit[:, 2]
     # Backfaces point away; drawing only front faces is both faster and correct
     # for the closed solids the gates have already validated.
     visible = np.where(facing > 0)[0]
 
-    for i in visible:
-        ia, ib, ic = t[i]
-        x0, x1 = sx[[ia, ib, ic]].min(), sx[[ia, ib, ic]].max()
-        y0, y1 = sy[[ia, ib, ic]].min(), sy[[ia, ib, ic]].max()
-        px0, px1 = max(0, int(math.floor(x0))), min(px - 1, int(math.ceil(x1)))
-        py0, py1 = max(0, int(math.floor(y0))), min(px - 1, int(math.ceil(y1)))
-        if px1 < px0 or py1 < py0:
-            continue
+    zbuf, ids = _rasterize(sx, sy, depth, t, visible, px)
+    covered = ids >= 0
 
-        xs = np.arange(px0, px1 + 1) + 0.5
-        ys = np.arange(py0, py1 + 1) + 0.5
-        gx, gy = np.meshgrid(xs, ys)
-
-        ax, ay = sx[ia], sy[ia]
-        bx, by = sx[ib], sy[ib]
-        cx, cy = sx[ic], sy[ic]
-        det = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
-        if abs(det) < 1e-12:
-            continue
-        w0 = ((by - cy) * (gx - cx) + (cx - bx) * (gy - cy)) / det
-        w1 = ((cy - ay) * (gx - cx) + (ax - cx) * (gy - cy)) / det
-        w2 = 1.0 - w0 - w1
-        inside = (w0 >= 0) & (w1 >= 0) & (w2 >= 0)
-        if not inside.any():
-            continue
-
-        z = w0 * depth[ia] + w1 * depth[ib] + w2 * depth[ic]
-        sub = zbuf[py0 : py1 + 1, px0 : px1 + 1]
-        win = inside & (z > sub)
-        if not win.any():
-            continue
-        sub[win] = z[win]
-
-        # Headlight plus ambient: enough to read form, no scene setup to get wrong.
-        shade = 0.25 + 0.75 * float(facing[i])
-        colour = np.array(INK, dtype=np.float64) * shade
-        tile = img[py0 : py1 + 1, px0 : px1 + 1]
-        tile[win] = colour
-
+    img = np.empty((px, px, 3), dtype=np.float64)
+    img[:] = BACKGROUND
+    # Headlight plus ambient: enough to read form, no scene setup to get wrong.
+    shade = 0.35 + 0.65 * facing[ids[covered]]
+    img[covered] = np.asarray(PART, dtype=np.float64) * shade[:, None]
+    img[_edges(zbuf, ids, unit, scale)] = EDGE
     return img.astype(np.uint8)
+
+
+def _rasterize(
+    sx: np.ndarray, sy: np.ndarray, depth: np.ndarray, t: np.ndarray, visible: np.ndarray, px: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Z-buffer every visible triangle at once. Returns (depth, triangle id),
+    each px*px, id -1 where nothing was drawn.
+
+    Vectorised over (triangle, pixel-in-its-bbox) pairs instead of a Python loop
+    per triangle, which cost 414ms for 520 triangles. The nearest candidate per
+    pixel wins after one sort, which is the same answer the loop reached by
+    overwriting."""
+    zbuf = np.full(px * px, -np.inf)
+    ids = np.full(px * px, -1, dtype=np.int64)
+    if len(visible) == 0:
+        return zbuf.reshape(px, px), ids.reshape(px, px)
+
+    tv = t[visible]
+    X, Y, Z = sx[tv], sy[tv], depth[tv]  # (m, 3) each
+    x0 = np.clip(np.floor(X.min(axis=1)), 0, px - 1).astype(np.int64)
+    x1 = np.clip(np.ceil(X.max(axis=1)), 0, px - 1).astype(np.int64)
+    y0 = np.clip(np.floor(Y.min(axis=1)), 0, px - 1).astype(np.int64)
+    y1 = np.clip(np.ceil(Y.max(axis=1)), 0, px - 1).astype(np.int64)
+    det = (Y[:, 1] - Y[:, 2]) * (X[:, 0] - X[:, 2]) + (X[:, 2] - X[:, 1]) * (Y[:, 0] - Y[:, 2])
+    flat = np.abs(det) < 1e-12
+    det[flat] = 1.0
+    # Barycentrics as per-triangle linear functions of the pixel centre, so the
+    # per-pair work is two multiply-adds instead of six gathers.
+    a0, b0 = (Y[:, 1] - Y[:, 2]) / det, (X[:, 2] - X[:, 1]) / det
+    a1, b1 = (Y[:, 2] - Y[:, 0]) / det, (X[:, 0] - X[:, 2]) / det
+    w = x1 - x0 + 1
+    n = np.where(flat, 0, w * (y1 - y0 + 1))
+    ends = np.cumsum(n)
+
+    pix_all: list[np.ndarray] = []
+    z_all: list[np.ndarray] = []
+    tri_all: list[np.ndarray] = []
+    i = 0
+    while i < len(tv):
+        j = max(i + 1, int(np.searchsorted(ends, ends[i] - n[i] + CHUNK, side="right")))
+        k = np.repeat(np.arange(i, j), n[i:j])
+        if len(k):
+            off = np.arange(ends[i] - n[i], ends[j - 1]) - np.repeat(ends[i:j] - n[i:j], n[i:j])
+            gx = x0[k] + off % w[k]
+            gy = y0[k] + off // w[k]
+            dx = gx + 0.5 - X[k, 2]
+            dy = gy + 0.5 - Y[k, 2]
+            w0 = a0[k] * dx + b0[k] * dy
+            w1 = a1[k] * dx + b1[k] * dy
+            inside = (w0 >= 0) & (w1 >= 0) & (w0 + w1 <= 1)
+            ki = k[inside]
+            w0, w1 = w0[inside], w1[inside]
+            pix_all.append(gy[inside] * px + gx[inside])
+            z_all.append(Z[ki, 2] + w0 * (Z[ki, 0] - Z[ki, 2]) + w1 * (Z[ki, 1] - Z[ki, 2]))
+            tri_all.append(visible[ki])
+        i = j
+
+    pix, z, tri = np.concatenate(pix_all), np.concatenate(z_all), np.concatenate(tri_all)
+    if len(pix):
+        order = np.lexsort((z, pix))  # by pixel, nearest (largest z) last
+        pix, z, tri = pix[order], z[order], tri[order]
+        last = np.append(pix[1:] != pix[:-1], True)
+        zbuf[pix[last]] = z[last]
+        ids[pix[last]] = tri[last]
+    return zbuf.reshape(px, px), ids.reshape(px, px)
+
+
+def _edges(zbuf: np.ndarray, ids: np.ndarray, unit: np.ndarray, scale: float) -> np.ndarray:
+    """Silhouettes, creases and depth steps, found in image space: a pixel is on
+    an edge when its neighbour is background and it is not, faces a different
+    way by more than the crease angle, or sits at a different depth than the
+    slope of its own face explains. Both pixels of a pair are marked, so lines
+    are two supersampled pixels wide and survive the box filter."""
+    covered = ids >= 0
+    nrm = np.zeros(ids.shape + (3,))
+    nrm[covered] = unit[ids[covered]]
+    # Depth change per pixel a face explains on its own, from its slope.
+    nz = np.maximum(nrm[..., 2], 0.05)
+    mark = np.zeros(ids.shape, dtype=bool)
+    for axis, comp in ((1, 0), (0, 1)):
+        sl_a = (slice(None), slice(None, -1)) if axis == 1 else (slice(None, -1), slice(None))
+        sl_b = (slice(None), slice(1, None)) if axis == 1 else (slice(1, None), slice(None))
+        ca, cb = covered[sl_a], covered[sl_b]
+        both = ca & cb
+        crease = (nrm[sl_a] * nrm[sl_b]).sum(axis=-1) < CREASE_COS
+        slope = np.maximum(np.abs(nrm[sl_a][..., comp]) / nz[sl_a], np.abs(nrm[sl_b][..., comp]) / nz[sl_b])
+        gap = np.abs(np.where(both, zbuf[sl_a], 0.0) - np.where(both, zbuf[sl_b], 0.0))
+        step = gap > (1.5 + 2.0 * slope) / scale
+        hit = (ca != cb) | (both & (crease | step))
+        mark[sl_a] |= hit
+        mark[sl_b] |= hit
+    return mark
 
 
 def _downsample(img: np.ndarray, factor: int) -> np.ndarray:
@@ -239,8 +313,38 @@ def combine(parts: list[tuple[np.ndarray, np.ndarray]]) -> tuple[np.ndarray, np.
     return np.vstack(verts), np.vstack(tris)
 
 
+def _draw_triad(draw: Any, font: Any, cam: np.ndarray, ox: int, oy: int, length: float = 15.0) -> None:
+    """World x/y/z as this view sees them, so "top face" and "toward the tail"
+    can be read off any tile. An axis along the line of sight draws as a dot
+    when it points at the viewer and a ring when it points away."""
+    for k, (label, colour) in enumerate(zip("xyz", AXIS_COLOURS)):
+        dx, dy = cam[0][k] * length, -cam[1][k] * length
+        if math.hypot(dx, dy) < 0.25 * length:
+            toward = cam[2][k] > 0
+            draw.ellipse((ox - 3, oy - 3, ox + 3, oy + 3), outline=colour, width=2, fill=colour if toward else None)
+            draw.text((ox + 5, oy - 13), label, fill=colour, font=font)
+            continue
+        draw.line((ox, oy, ox + dx, oy + dy), fill=colour, width=2)
+        draw.text((ox + dx * 1.3 - 3, oy + dy * 1.3 - 6), label, fill=colour, font=font)
+
+
+def _draw_scale_bar(draw: Any, font: Any, mm_per_px: float, right: int, base: int) -> None:
+    """A round-number bar (1/2/5 x 10^n mm) about a quarter of the tile wide.
+    Every tile shares one magnification, so each bar reads the same."""
+    target = 0.28 * VIEW_PX * mm_per_px
+    mag = 10 ** math.floor(math.log10(target))
+    mm = max(m * mag for m in (1, 2, 5) if m * mag <= target)
+    bar = mm / mm_per_px
+    left = right - bar
+    draw.line((left, base, right, base), fill=EDGE, width=2)
+    draw.line((left, base - 4, left, base + 2), fill=EDGE, width=1)
+    draw.line((right, base - 4, right, base + 2), fill=EDGE, width=1)
+    text = f"{mm:g} mm"
+    draw.text((right - draw.textlength(text, font=font), base - 16), text, fill=LABEL, font=font)
+
+
 def _sheet_from_mesh(v: np.ndarray, t: np.ndarray, path: str, views: int) -> dict[str, Any]:
-    from PIL import Image, ImageDraw
+    from PIL import Image, ImageDraw, ImageFont
 
     chosen = VIEWS[: max(1, min(views, len(VIEWS)))]
 
@@ -261,10 +365,15 @@ def _sheet_from_mesh(v: np.ndarray, t: np.ndarray, path: str, views: int) -> dic
     rows = math.ceil(len(tiles) / cols)
     sheet = Image.new("RGB", (cols * VIEW_PX, rows * VIEW_PX), BACKGROUND)
     draw = ImageDraw.Draw(sheet)
-    for i, (name, tile) in enumerate(tiles):
+    font = ImageFont.load_default(size=11)
+    mm_per_px = SUPERSAMPLE / scale
+    for i, ((name, tile), (_, eye, up)) in enumerate(zip(tiles, chosen)):
         x, y = (i % cols) * VIEW_PX, (i // cols) * VIEW_PX
         sheet.paste(Image.fromarray(tile), (x, y))
-        draw.text((x + 6, y + 5), name, fill=(120, 128, 136))
+        draw.rectangle((x, y, x + VIEW_PX - 1, y + VIEW_PX - 1), outline=DIVIDER)
+        draw.text((x + 6, y + 4), name, fill=LABEL, font=font)
+        _draw_triad(draw, font, _basis(eye, up), x + 22, y + VIEW_PX - 22)
+        _draw_scale_bar(draw, font, mm_per_px, x + VIEW_PX - 10, y + VIEW_PX - 12)
 
     sheet.save(path, "PNG", optimize=True)
     return {"views": [n for n, _ in tiles], "triangles": int(len(t)), "size": list(sheet.size)}

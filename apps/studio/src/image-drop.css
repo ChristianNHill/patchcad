@@ -1,0 +1,74 @@
+/* Reference images (ImageDrop.tsx). Tokens only. */
+
+.image-drop { width: 100%; }
+
+.image-drop__zone {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  padding: var(--space-xs);
+  border: 1px dashed var(--color-rule);
+  border-radius: var(--radius-input);
+  background: var(--color-well);
+  transition: border-color var(--dur-micro) var(--ease-out);
+}
+.image-drop__zone[data-over] { border-color: var(--color-accent); }
+.image-drop__zone[data-disabled] { opacity: 0.55; }
+
+.image-drop__thumb {
+  position: relative;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+  width: 5.5rem;
+}
+.image-drop__thumb img {
+  width: 5.5rem;
+  height: 5.5rem;
+  object-fit: contain;
+  background: var(--color-paper-2);
+  border-radius: var(--radius-input);
+  box-shadow: var(--shadow-card);
+}
+
+.image-drop__remove {
+  position: absolute;
+  top: var(--space-3xs);
+  right: var(--space-3xs);
+  width: 1.25rem;
+  height: 1.25rem;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--color-paper-2);
+  color: var(--color-ink);
+  font-size: var(--text-sm);
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: var(--shadow-card);
+}
+.image-drop__remove:focus-visible { outline: 2px solid var(--color-focus); }
+
+.image-drop__view {
+  font-family: var(--font-body);
+  font-size: var(--text-2xs);
+  color: var(--color-ink-2);
+  background: var(--color-paper-2);
+  border: 1px solid var(--color-ash);
+  border-radius: var(--radius-input);
+}
+
+.image-drop__add { align-self: center; }
+
+.plan-refs { display: flex; flex-direction: column; gap: var(--space-xs); width: 100%; }
+.plan-refs__options { display: flex; flex-wrap: wrap; gap: var(--space-md); align-items: center; }
+.plan-refs__field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  font-size: var(--text-xs);
+  color: var(--color-ink-2);
+}
+.plan-refs__size { width: 5rem; }

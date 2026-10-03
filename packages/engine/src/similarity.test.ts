@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { Contract, ParamDecl } from "@patchcad/shared";
-import { contractSimilarity, findReusable, paramsCompatible, paramsInRange } from "./similarity.js";
+import {
+  contractSimilarity,
+  featureTags,
+  findReusable,
+  nodeSimilarity,
+  paramsCompatible,
+  paramsInRange,
+  titleSimilarity,
+} from "./similarity.js";
+import { codeDiff, failureSignature, minePitfalls, type RepairFix } from "./library.js";
 import type { LibraryEntry, LibraryListing, NodeLibrary } from "./library.js";
 
 const num = (name: string, def = 5, min?: number, max?: number): ParamDecl =>
@@ -104,7 +113,7 @@ describe("findReusable", () => {
         contract: contract({ params: [num("width", 60, 30, 120)], provides: [port("h", "CLEARANCE_HOLE")] }),
       }),
     ]);
-    const got = await findReusable({ library, backendId: "cad", contract: target, kind: "part", exclude: new Set() });
+    const got = await findReusable({ library, backendId: "cad", contract: target, kind: "part", title: "Base plate", exclude: new Set() });
     expect(got.map((c) => c.entry.title)).toEqual(["Near Plate"]);
   });
 
@@ -113,7 +122,7 @@ describe("findReusable", () => {
       entry({ contractHash: "already", contract: contract({ provides: [port("h", "CLEARANCE_HOLE")] }) }),
     ]);
     const got = await findReusable({
-      library, backendId: "cad", contract: target, kind: "part", exclude: new Set(["already"]),
+      library, backendId: "cad", contract: target, kind: "part", title: "Base plate", exclude: new Set(["already"]),
     });
     expect(got).toEqual([]);
   });
@@ -123,7 +132,7 @@ describe("findReusable", () => {
       entry({ contractHash: "other", contract: contract({ provides: [port("s", "SLOT")] }) }),
     ]);
     expect(
-      await findReusable({ library, backendId: "cad", contract: target, kind: "part", exclude: new Set() }),
+      await findReusable({ library, backendId: "cad", contract: target, kind: "part", title: "Base plate", exclude: new Set() }),
     ).toEqual([]);
   });
 
@@ -138,7 +147,7 @@ describe("findReusable", () => {
       }),
     ]);
     expect(
-      await findReusable({ library, backendId: "cad", contract: target, kind: "part", exclude: new Set() }),
+      await findReusable({ library, backendId: "cad", contract: target, kind: "part", title: "Base plate", exclude: new Set() }),
     ).toEqual([]);
   });
 
@@ -148,7 +157,7 @@ describe("findReusable", () => {
         entry({ contractHash: `h${i}`, contract: contract({ provides: [port("h", "CLEARANCE_HOLE")] }) }),
       ),
     );
-    const got = await findReusable({ library, backendId: "cad", contract: target, kind: "part", exclude: new Set() });
+    const got = await findReusable({ library, backendId: "cad", contract: target, kind: "part", title: "Base plate", exclude: new Set() });
     expect(got).toHaveLength(2);
   });
 
@@ -163,8 +172,80 @@ describe("findReusable", () => {
     };
     for (const library of [noList, broken]) {
       expect(
-        await findReusable({ library, backendId: "cad", contract: target, kind: "part", exclude: new Set() }),
+        await findReusable({ library, backendId: "cad", contract: target, kind: "part", title: "Base plate", exclude: new Set() }),
       ).toEqual([]);
     }
+  });
+});
+
+describe("nodeSimilarity ranks by what the part is, not its port multiset", () => {
+  const holes = contract({ provides: [port("a", "CLEARANCE_HOLE"), port("b", "FLAT_FACE")] });
+  const target = { contract: holes, title: "Fan bracket", spec: "a lofted bracket that holds a 40mm fan" };
+
+  it("puts shared title words ahead of identical ports", () => {
+    const sameWords = entry({ title: "Fan bracket", contract: contract() });
+    const samePorts = entry({ title: "Drawer pull", contract: holes });
+    expect(nodeSimilarity(target, sameWords)).toBeGreaterThan(nodeSimilarity(target, samePorts));
+  });
+
+  it("counts modelling techniques the code shares with the spec", () => {
+    const lofted = entry({ title: "Fan bracket", code: "body = loft([a, b])" });
+    const boxy = entry({ title: "Fan bracket", code: "body = Box(1, 1, 1)" });
+    expect(nodeSimilarity(target, lofted)).toBeGreaterThan(nodeSimilarity(target, boxy));
+    expect([...featureTags("fillet(shell(x)); revolve(p); sweep(s, path); IsoThread(...)")].sort()).toEqual(
+      ["fillet", "revolve", "shell", "sweep", "threads"],
+    );
+  });
+
+  it("breaks a tie toward code that passed first time", () => {
+    const easy = entry({ title: "Fan bracket", attemptsToPass: 1 });
+    const hard = entry({ title: "Fan bracket", attemptsToPass: 4 });
+    expect(nodeSimilarity(target, easy)).toBeGreaterThan(nodeSimilarity(target, hard));
+  });
+});
+
+describe("findReusable title threshold", () => {
+  const target = contract({ provides: [port("hole", "CLEARANCE_HOLE")] });
+  const same = contract({ provides: [port("h", "CLEARANCE_HOLE")] });
+
+  it("will not offer a different part that happens to share ports", async () => {
+    const library = new StubLibrary([entry({ contractHash: "lid", title: "Battery lid", contract: same })]);
+    expect(
+      await findReusable({ library, backendId: "cad", contract: target, kind: "part", title: "Fan bracket", exclude: new Set() }),
+    ).toEqual([]);
+  });
+
+  it("offers one whose title reads as the same part", async () => {
+    const library = new StubLibrary([entry({ contractHash: "b", title: "Bracket for fans", contract: same })]);
+    const got = await findReusable({ library, backendId: "cad", contract: target, kind: "part", title: "Fan bracket", exclude: new Set() });
+    expect(got.map((c) => c.entry.contractHash)).toEqual(["b"]);
+    expect(titleSimilarity("Fan bracket", "Bracket for fans")).toBe(1);
+  });
+});
+
+describe("pitfall mining", () => {
+  const fix = (report: string, diff = "- Cylinder(d, h)\n+ Cylinder(d / 2, h)"): RepairFix => ({ stage: "G3", report, diff });
+
+  it("blanks numbers and names so the same miss on different parts groups", () => {
+    expect(failureSignature('port "bolt" (BORE): expected Ø4.5, measured Ø9.00\nhint: x')).toBe(
+      failureSignature('port "mount" (BORE): expected Ø3, measured Ø6.00'),
+    );
+  });
+
+  it("needs three occurrences, and the pattern matches the raw report", () => {
+    const pairs = [
+      fix('port "a" (BORE): expected Ø4.5, measured Ø9.00'),
+      fix('port "b" (BORE): expected Ø3, measured Ø6.00'),
+    ];
+    expect(minePitfalls(pairs)).toEqual([]);
+    const [mined] = minePitfalls([...pairs, fix('port "c" (BORE): expected Ø5, measured Ø10.00')]);
+    expect(mined!.occurrences).toBe(3);
+    expect(mined!.stage).toBe("G3");
+    expect(new RegExp(mined!.pattern).test('port "z" (BORE): expected Ø8, measured Ø16.00')).toBe(true);
+    expect(mined!.fix).toContain("+ Cylinder(d / 2, h)");
+  });
+
+  it("diffs only the lines a repair changed", () => {
+    expect(codeDiff("a\nb\nc", "a\nB\nc")).toBe("- b\n+ B");
   });
 });
