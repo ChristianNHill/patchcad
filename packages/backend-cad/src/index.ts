@@ -244,7 +244,7 @@ import { generatePrompt, repairPrompt } from "./prompts.js";
 import { FASTENING_HARDWARE, REGISTRY_HARDWARE, REGISTRY_SOLIDS, resolveDeterministic, skuOf, unresolvedHardware } from "./registry.js";
 import { CadJoint } from "./joints.js";
 import { CATALOG, skuFor } from "./catalog.js";
-import { cadJointRuleLint, expandJoints, isJointHardware, jointAxes } from "./expand.js";
+import { cadJointRuleLint, expandJoints, gearMeshJoints, isJointHardware, jointAxes } from "./expand.js";
 import { kinematicJoints, poseToMat, solveAssembly, type AssemblyMate, type AssemblyNode } from "./assembly.js";
 import { resolveDim, resolvePose } from "./bindings.js";
 import { DIAMETER_KEYS, clashFindings, contactQueries, fitFindings, hardwareAllowances, threadAllowances } from "./g5.js";
@@ -1314,7 +1314,11 @@ function cadPlanning(meshAvailable: boolean) {
       "  Optional: flush (countersunk), count and pitch (a pattern of N, spacing",
       "  mm), driven + speedClass/torqueClass low|medium|high (adds a motor),",
       "  strokeMm (prismatic), shaftHint/threadHint (mm / M3..M8), allowPrinted",
-      "  (a printed pin pivot), lateral (room for a side nut trap).",
+      "  (a printed pin pivot), lateral (room for a side nut trap), hubFit press",
+      "  (b pressed onto the shaft: a wheel onto its axle; default slip).",
+      "  One part placed several times (four identical wheels) is one node whose",
+      "  joints all name the SAME b.port; joints on opposite faces of a on one",
+      "  axis line share one axle.",
       "  A driven revolute joint with ratio (motor turns per output turn) or",
       "  centerMm (motor axis to driven axis) gets a NEMA 17 beside the axis and a",
       "  GT2 belt, or a spur pair at high torque / low speed / a short centre;",
@@ -1781,7 +1785,8 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     // Motion joints are kinematic, not rigid: the poses above are each joint
     // at 0, and this says which axis it turns or slides along, how far, and
     // which parts go with it (G5 sweeps them).
-    const joints = kinematicJoints(jointAxes(graph), world, instances);
+    // A gear pair meshed without a drive joint turns too (gearMeshes).
+    const joints = [...kinematicJoints(jointAxes(graph), world, instances), ...gearMeshJoints(graph, world)];
     const scene = {
       nodes: Object.fromEntries(
         Object.values(graph.nodes).map((n) => [

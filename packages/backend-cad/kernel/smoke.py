@@ -1115,6 +1115,8 @@ def build(p):
         ("HUB_BORE Ø5 D-bore", {"case": "dbore", "d": 5.15, "flat": 2.0}, "HUB_BORE", {"diameter": 5, "flat": 2.0}, None),
         ("HUB_BORE flat in the wrong place", {"case": "dbore", "d": 5.15, "flat": 2.0}, "HUB_BORE", {"diameter": 5, "flat": 1.5}, "the flat at 2.00mm"),
         ("HUB_BORE round", {"case": "tap", "d": 5.15, "depth": 10}, "HUB_BORE", {"diameter": 5}, None),
+        ("HUB_BORE pressed onto its axle", {"case": "tap", "d": 4.95, "depth": 10}, "HUB_BORE", {"diameter": 5, "fit": "press"}, None),
+        ("HUB_BORE press hub cut slip", {"case": "tap", "d": 5.15, "depth": 10}, "HUB_BORE", {"diameter": 5, "fit": "press"}, "expected Ø4.90..5.00"),
         ("LINEAR_BEARING_SEAT LM6UU over a lip", {"case": "seat", "d": 11.95, "depth": 19.5, "lip": 8}, "LINEAR_BEARING_SEAT", {"od": 12, "length": 19, "fit": "press"}, None),
         ("LINEAR_BEARING_SEAT shorter than its bushing", {"case": "seat", "d": 11.95, "depth": 15, "lip": 8}, "LINEAR_BEARING_SEAT", {"od": 12, "length": 19, "fit": "press"}, "the seat is 15.00mm deep"),
         ("CLIP_GROOVE Ø4 e-clip groove on a Ø5 shaft", {"case": "groove", "d": 4, "w": 0.74, "at": 0}, "CLIP_GROOVE", {"diameter": 4, "width": 0.74, "shaft_diameter": 5}, None),

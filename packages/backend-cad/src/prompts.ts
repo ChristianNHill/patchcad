@@ -71,6 +71,12 @@ RULES:
     than after, keep loft sections in single digits, and leave cosmetic edges
     sharp. A measured helicopter fuselage burned all five attempts on exactly
     this, every one at 20s.
+  - MANY IDENTICAL CUTOUTS (a honeycomb, a vent grid, a bolt ring): build ONE
+    cutter and subtract them all in one call, a row or ring at a time:
+    shape - [Pos(x, 0, z) * cutter for x, z in centres], or on the XY plane
+    shape - GridLocations(dx, dy, nx, ny) * cutter / PolarLocations(r, n) * cutter.
+    Never union the cutters one by one first (u = u + c): each union re-solves
+    the growing compound, which is what takes a hexagon-cutout cup past 20s.
   - CHAMFERS: use chamfer()/fillet() on the real edges. Do NOT fake one by
     subtracting a rotated Box — Rot(45,0,0) * Box(w, leg*2, leg*2) spans
     leg*1.414 in BOTH rotated axes, not leg, so a "small" lead-in sized against

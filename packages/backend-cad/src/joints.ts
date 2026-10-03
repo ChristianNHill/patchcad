@@ -32,7 +32,7 @@ const End = z.object({ node: z.string(), port: z.string() });
 export const CadJoint = z.object({
   id: z.string(),
   a: End.describe("the part that stays put (housing, frame, base): a FLAT_FACE port where the joint is, +z toward b"),
-  b: End.describe("the part joined to it, which moves for motion joints: a FLAT_FACE port facing a"),
+  b: End.describe("the part joined to it, which moves for motion joints: a FLAT_FACE port facing a. One node placed several times (four identical wheels) names the SAME port in each of its joints"),
   intent: z.enum(["permanent", "removable", "serviceable", "alignment"]),
   motion: z.enum(["fixed", "revolute", "prismatic"]).default("fixed"),
   duty: z.enum(["occasional", "continuous"]).default("occasional"),
@@ -64,6 +64,9 @@ export const CadJoint = z.object({
    *  is thinner than wallA (a pocket in a's underside). Defaults to wallA. */
   wallMotor: Dim.optional(),
   allowPrinted: z.boolean().optional(),
+  /** How b's hub takes a revolute joint's shaft: slip (a D-flat turns it) or
+   *  press (b is pressed onto the shaft, a wheel onto its axle). */
+  hubFit: z.enum(["slip", "press"]).optional().describe("revolute: press when b is pressed onto the shaft (a wheel onto an axle), else slip"),
   /** Revolute travel in degrees; continuous joints sweep the full turn. */
   limits: z.tuple([z.number(), z.number()]).optional(),
   /** Why the joint is what it is, when that is not what was asked for (an
@@ -128,6 +131,7 @@ export type Recipe =
   | "bearings"
   | "bushings"
   | "printed_pin"
+  | "pin"
   | "rod_slide"
   | "rail"
   | "direct_drive"
@@ -290,7 +294,8 @@ const R2: JointRule = {
 };
 
 /** R3: reachable from both sides and heavy, or b is metal too thin to tap
- *  (R2 tried it first): through-bolt, nut, two washers. */
+ *  (R2 tried it first): through-bolt, nut, two washers. Last of all it is the
+ *  fallback for a printed b too thin for an insert or a nut trap (R3f). */
 const R3: JointRule = {
   id: "R3",
   when: (i) => fastens(i) && i.access === "both_sides" && (i.load === "heavy" || i.processB === "CNC"),
@@ -312,7 +317,8 @@ const R3: JointRule = {
       ...(under ? [{ role: "washer_a", family: "washer", key: thread }] : []),
       { role: "washer_b", family: "washer", key: thread },
     ];
-    return decision("R3", "through_bolt", `${thread}×${L} through-bolt, nut and washers`, [i.load === "heavy" ? "heavy load, both sides reachable: through-bolt" : "metal b too thin to tap, both sides reachable: through-bolt", reason], {
+    const why = i.load === "heavy" ? "heavy load" : i.processB === "CNC" ? "metal b too thin to tap" : "printed b too thin for an insert or a nut trap";
+    return decision("R3", "through_bolt", `${thread}×${L} through-bolt, nut and washers`, [`${why}, both sides reachable: through-bolt`, reason], {
       thread, head: h.head, parts: [screwPart(thread, h, L), { role: "nut", family: "hex_nut", key: thread }, ...washers], window,
       dims: { recess: h.recess, offset: h.offset, washer: t, under },
     });
@@ -402,6 +408,14 @@ const R6: JointRule = {
       window, dims: { recess: h.recess, offset: h.offset, nutDepth: nutH, embed },
     });
   },
+};
+
+/** R3 again, after R4 and R5: a thin printed plate reachable from both sides
+ *  takes a through-bolt at any load, so the wall a brief pins can stay. */
+const R3f: JointRule = {
+  id: "R3",
+  when: (i) => fastens(i) && i.access === "both_sides" && i.processB === "FDM" && i.load !== "heavy",
+  fit: R3.fit,
 };
 
 /** R7: snap fit. Off until snap probes exist. */
@@ -520,6 +534,34 @@ const M2pin: JointRule = {
       parts: [{ role: "pin_clip", family: "eclip", key }],
       dims: { d, bore: r2(d + FDM_SLIP_FIT_MM), length: r2(i.wallB + gw + 0.5), groove: dim(row, "groove"), grooveWidth: gw },
     });
+  },
+};
+
+/** Occasional and light, walls too thin for bushings (or no printed pin): a
+ *  separate ISO 2338 pin pressed 1.5·d or more into a and turning in b's bore
+ *  at the slip band. The longest stocked pin both walls hold, from the
+ *  largest Ø at or under the load's (or the hinted one). */
+const M2d: JointRule = {
+  id: "M2d",
+  when: (i) => revolute(i) && !i.driven && casual(i),
+  fit: (i) => {
+    const preferred = i.shaftHint ?? (i.load === "none" ? 3 : 5);
+    const stocked = Object.keys(CATALOG.families.dowel!.dims).map(Number);
+    const sizes = i.shaftHint ? stocked.filter((d) => d === i.shaftHint) : stocked.filter((d) => d <= preferred).sort((a, b) => b - a);
+    if (sizes.length === 0) return `no Ø${preferred} pin stocked`;
+    for (const d of sizes) {
+      if (i.wallA < 1.5 * d || i.wallB < d) continue;
+      const key = canonicalKey("dowel", String(d))!;
+      const L = [...standardLengths("dowel", key)].reverse().find((l) => l >= 2.5 * d && l <= i.wallA + i.wallB);
+      if (L === undefined) continue;
+      const run = r2(Math.min(i.wallB, L - 1.5 * d));
+      return decision("M2d", "pin", `Ø${d}×${L} pin pressed in a, turning in b`, [
+        "revolute, occasional, light: a separate pin, no bushings",
+        `Ø${d}: the largest${i.shaftHint ? " (hinted)" : ` at or under the ${i.load}-load Ø${preferred}`} pressed 1.5·d into a and bearing d in b`,
+        `${L}mm: the longest stocked that stays inside a ${mm(i.wallA)} + b ${mm(i.wallB)}`,
+      ], { parts: [{ role: "pin", family: "dowel", key, length: L }], dims: { d, length: L, press: r2(L - run), run } });
+    }
+    return `walls ${mm(i.wallA)}/${mm(i.wallB)}: no Ø${sizes.join("/Ø")} pin presses 1.5·d into a and bears d in b on a stocked length`;
   },
 };
 
@@ -967,7 +1009,7 @@ const PB: JointRule = {
 };
 
 /** First fit wins. Motion rules come first: a revolute joint is never bolted. */
-export const JOINT_RULES: JointRule[] = [D1, DB, DG, M1, M2pin, M2, PL, PB, P1, P2, R1, R1b, R2, R3, R4, R7, R5, R6];
+export const JOINT_RULES: JointRule[] = [D1, DB, DG, M1, M2pin, M2, M2d, PL, PB, P1, P2, R1, R1b, R2, R3, R4, R7, R5, R6, R3f];
 
 export function selectJoint(input: JointInput): JointDecision | { error: string } {
   const tag = input.id ? `${input.id}: ` : "";
@@ -982,4 +1024,18 @@ export function selectJoint(input: JointInput): JointDecision | { error: string 
     return { error: `${tag}no joint rule covers ${input.motion ?? "fixed"} / ${input.intent} / ${input.load} / ${input.access} on ${input.processB}` };
   }
   return { error: `${tag}${shortfalls.join("; ")}` };
+}
+
+/** Declarations other than a thicker wall under which a rule fits, so a
+ *  repair round can keep a wall the brief states. */
+export function jointEscapes(i: JointInput): string[] {
+  const tries: [string, Partial<JointInput>][] = [
+    ["declare access both_sides", { access: "both_sides" }],
+    ["set allowPrinted", { allowPrinted: true }],
+  ];
+  return tries.flatMap(([say, patch]) => {
+    if (Object.entries(patch).every(([k, v]) => i[k as keyof JointInput] === v)) return [];
+    const d = selectJoint({ ...i, ...patch });
+    return "error" in d ? [] : [`${say} for ${d.rule}'s ${d.summary}`];
+  });
 }

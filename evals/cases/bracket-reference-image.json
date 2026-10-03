@@ -1,0 +1,14 @@
+{
+  "id": "bracket-reference-image",
+  "prompt": "a single printed L-bracket matching the attached front-view reference: 40mm wide along Y, 3mm thick, a 30mm leg lying flat along +X and a 25mm leg rising along +Z at x=0",
+  "why": "The only rung with a reference image, so the only one that runs G6. The reference is drawn from known geometry (l-bracket-reference.png, the front view's L at 8px/mm), so a correct part reaches a high IoU and a mirrored or missing leg does not. G6 is advisory and returns nothing when the image never got a mask, which reads exactly like a match, so `silhouette` also requires the mask to exist.",
+  "images": [{ "file": "l-bracket-reference.png", "view": "front" }],
+  "expect": {
+    "nodes": { "min": 1, "max": 1 },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "bboxSize": { "value": [30, 40, 25], "tol": 1.0 },
+    "volumeFraction": { "max": 0.45 },
+    "silhouette": true
+  }
+}

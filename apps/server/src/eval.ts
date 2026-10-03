@@ -21,9 +21,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { cookNodes, EventBus, GraphStore, planGraph } from "@patchcad/engine";
-import { CadBackend } from "@patchcad/backend-cad";
-import { GraphDoc } from "@patchcad/shared";
+import { CadBackend, jointOwner } from "@patchcad/backend-cad";
+import { GraphDoc, type NodeRecord, type RefView } from "@patchcad/shared";
 import { resolveProvider } from "./providers.js";
+import { prepReferences, writeRefs } from "./refs.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../../..");
@@ -100,14 +101,28 @@ type CaseExpect = {
    *  counted mate-solving problems. A clashing assembly passing its case is the
    *  same defect as a port verified by nothing. Defaults to 0. */
   globalProblems?: number;
+  /** Assertion kinds (helix, line_count, ...) that some ready node must have
+   *  declared AND had measured. A plain cylinder passes ports and a bbox where
+   *  the prompt asked for a thread; only the helix assertion fails it. */
+  assertionKinds?: string[];
+  /** The case's reference image was prepped to a mask, G6 compared the posed
+   *  assembly against it, and the outline matched (no silhouette advisory).
+   *  Without the mask G6 returns nothing, which reads exactly like a match. */
+  silhouette?: boolean;
 };
-type EvalCase = { id: string; prompt: string; why?: string; expect: CaseExpect };
+type EvalCase = {
+  id: string; prompt: string; why?: string; expect: CaseExpect;
+  /** Reference images beside the case JSON, prepped through the kernel as
+   *  /plan preps them, so the cook's globalCheck runs the G6 silhouette. */
+  images?: { file: string; view?: RefView }[];
+};
 
 type Probe = Record<string, unknown> & { key?: string; type?: string; skipped?: string };
 type Measured = {
   bbox?: { size?: number[] };
   ports?: Probe[];
   volume_mm3?: number;
+  assertions?: { kind?: string }[];
 };
 
 // parseArgs also rejects a typo'd flag, where the hand-rolled version read it
@@ -136,15 +151,19 @@ function checkPorts(probes: Probe[], want: PortExpect): Miss[] {
   const types = want.anyType ?? (want.type ? [want.type] : []);
   const label = types.join(" or ");
   const of = probes.filter((p) => types.includes(String(p.type)));
+  // A HOLE_PATTERN reports per hole under `members`, never at its own level,
+  // so a bracket whose four holes all went through read through=undefined.
+  const members = (p: Probe) => (Array.isArray(p["members"]) ? (p["members"] as Probe[]) : []);
+  const passes = (p: Probe) => p["through"] === true || (members(p).length > 0 && members(p).every((m) => m["through"] === true));
   if (want.count != null && of.length !== want.count)
     misses.push(`expected ${want.count} ${label} port(s), graph has ${of.length}`);
   if (want.minCount != null && of.length < want.minCount)
     misses.push(`expected at least ${want.minCount} ${label} port(s), graph has ${of.length}`);
   if (want.through) {
-    const holed = of.filter((p) => p["through"] === true);
+    const holed = of.filter(passes);
     if (of.length && !holed.length)
       misses.push(
-        `no ${label} passes through; measured ${of.map((p) => `${p.key}(through=${p["through"]}, depth=${p["measured_depth"]})`).join(", ")}`,
+        `no ${label} passes through; measured ${of.flatMap((p) => [p, ...members(p)]).map((p) => `${p.key}(through=${p["through"]}, depth=${p["measured_depth"]})`).join(", ")}`,
       );
   }
   const claims: [string, number | undefined, number | undefined][] = [
@@ -158,7 +177,7 @@ function checkPorts(probes: Probe[], want: PortExpect): Miss[] {
     const tol = want_tol ?? 0.2;
     // ANY port of this type may satisfy it: the architect picks which node
     // carries which hole, and the case must not care.
-    const got = of.map((p) => p[key]).filter((v): v is number => typeof v === "number");
+    const got = of.flatMap((p) => [p, ...members(p)]).map((p) => p[key]).filter((v): v is number => typeof v === "number");
     if (!got.length) misses.push(`no ${label} reported ${key} (measured by nothing)`);
     else if (!got.some((v) => Math.abs(v - want_v) <= tol))
       misses.push(`no ${label} ${key} within ${tol} of ${want_v}; measured ${got.map((v) => v.toFixed(2)).join(", ")}`);
@@ -166,11 +185,16 @@ function checkPorts(probes: Probe[], want: PortExpect): Miss[] {
   return misses;
 }
 
+/** Hardware a joint minted. The architect never decided it, so it is not
+ *  over-decomposition, and expand.ts sends G3 no ports for it on purpose. */
+const jointHardware = (doc: GraphDoc, n: NodeRecord) => jointOwner(doc, n.id) !== undefined;
+
 function score(
   c: EvalCase,
   store: GraphStore,
   problems: unknown[],
   global: string[] = [],
+  advisories: { kind?: string; message?: string }[] = [],
 ): { misses: Miss[]; probes: Probe[] } {
   const nodes = Object.values(store.doc.nodes);
   const misses: Miss[] = [];
@@ -178,8 +202,9 @@ function score(
 
   if (e.nodes?.min != null && nodes.length < e.nodes.min)
     misses.push(`${nodes.length} nodes, expected at least ${e.nodes.min}`);
-  if (e.nodes?.max != null && nodes.length > e.nodes.max)
-    misses.push(`${nodes.length} nodes, expected at most ${e.nodes.max} (over-decomposed)`);
+  const designed = nodes.filter((n) => !jointHardware(store.doc, n));
+  if (e.nodes?.max != null && designed.length > e.nodes.max)
+    misses.push(`${designed.length} nodes (plus ${nodes.length - designed.length} joint hardware), expected at most ${e.nodes.max} (over-decomposed)`);
 
   if (e.allReady !== false) {
     const notReady = nodes.filter((n) => n.status !== "ready");
@@ -215,7 +240,7 @@ function score(
       // Only a READY node claims to be verified. A planned or dirty node has no
       // measurements by definition, and failing it here would report the queue
       // as a defect.
-      if (n.status !== "ready") continue;
+      if (n.status !== "ready" || jointHardware(store.doc, n)) continue;
       const declared = ((n.contract.payload as { ports?: { name?: string; type?: string }[] } | null)?.ports) ?? [];
       const data = (n.measurements?.data ?? null) as Measured | null;
       const probed = new Set((data?.ports ?? []).map((p) => p.key));
@@ -296,6 +321,18 @@ function score(
 
   if (e.assemblyProblems != null && problems.length !== e.assemblyProblems)
     misses.push(`${problems.length} assembly problem(s), expected ${e.assemblyProblems}: ${JSON.stringify(problems).slice(0, 200)}`);
+
+  for (const kind of e.assertionKinds ?? []) {
+    const measured = nodes.some((n) => n.status === "ready" &&
+      (((n.measurements?.data ?? null) as Measured | null)?.assertions ?? []).some((a) => a.kind === kind));
+    if (!measured) misses.push(`no ready node declared and measured a ${kind} assertion, so the stated feature is unchecked`);
+  }
+
+  if (e.silhouette) {
+    if (!(store.doc.brief.refs ?? []).some((r) => r.mask && r.view))
+      misses.push("no reference silhouette (unprepped or unlabelled image), so G6 never compared anything");
+    for (const a of advisories.filter((a) => a.kind === "silhouette")) misses.push(String(a.message));
+  }
 
   // Default 0, unlike assemblyProblems: a clash is never something a case wants
   // to tolerate silently, and every case written before this one asserted
@@ -488,6 +525,36 @@ function selfTest(): void {
                                          ports: [{ key: "g", type: "GROOVE", measured_width: 6 }] }) }), []).misses,
     "fire", "expected at least 1");
 
+  // A HOLE_PATTERN reports each hole under `members`, never at its own level:
+  // the bracket failed "through=undefined" with all four holes through.
+  const pattern = (through: boolean) => mk({ p: node("p", {}, { volume_mm3: 1, bbox: { size: [1, 1, 1] },
+    ports: [{ key: "holes", type: "HOLE_PATTERN", count: 2, members: [
+      { key: "holes #1/2", type: "HOLE_PATTERN", measured_diameter: 4.5, through: true },
+      { key: "holes #2/2", type: "HOLE_PATTERN", measured_diameter: 4.5, through } ] }] }) });
+  const patternCase: EvalCase = {
+    id: "t", prompt: "p",
+    expect: { ports: [{ anyType: ["CLEARANCE_HOLE", "HOLE_PATTERN"], minCount: 1, diameter: 4.5, tol: 0.4, through: true }] },
+  };
+  expect("a pattern whose members all pass through is a through hole",
+    score(patternCase, pattern(true), []).misses, "quiet");
+  expect("a pattern with one bridged member is not",
+    score(patternCase, pattern(false), []).misses, "fire", "passes through");
+
+  // Joint-minted hardware is the joint's, not the architect's decomposition,
+  // and expand.ts sends G3 no ports for it.
+  const jointed = new GraphStore(GraphDoc.parse({
+    schemaVersion: 1, id: "t", backend: "cad",
+    brief: { goal: "t", constraints: [], clarifications: [] },
+    nodes: {
+      p: node("p", {}, goodPlate),
+      j1_screw: withPorts({ id: "j1_screw" }, { volume_mm3: 1, bbox: { size: [1, 1, 1] }, ports: [] }),
+    },
+    edges: [], joints: [{ id: "j1", a: { node: "p", port: "h" }, b: { node: "p", port: "h" } }],
+    assembly: { entryNodeId: "p" }, rev: 0,
+  }), new EventBus(), async () => {});
+  expect("joint hardware is neither over-decomposition nor an unprobed port",
+    score({ id: "t", prompt: "p", expect: { nodes: { max: 1 } } }, jointed, []).misses, "quiet");
+
   // A boss reports measured_pilot and never measured_diameter, so a case that
   // asserts `diameter` on one fails as "measured by nothing" — a defect in the
   // case, not the part. Found while writing the fourth ladder case, before it
@@ -546,6 +613,26 @@ function selfTest(): void {
     score({ id: "t", prompt: "p", expect: { allReady: false, globalProblems: 1 } },
       oneNode, [], ["a and b occupy the same space: 12.8 mm3"]).misses,
     "quiet");
+
+  const threadCase: EvalCase = { id: "t", prompt: "p", expect: { allReady: false, assertionKinds: ["helix"] } };
+  expect("a stated thread nothing asserted is unchecked",
+    score(threadCase, oneNode, []).misses, "fire", "helix assertion");
+  expect("a measured helix assertion satisfies it",
+    score(threadCase, mk({ p: node("p", {}, { volume_mm3: 1, bbox: { size: [1, 1, 1] }, ports: [],
+                                              assertions: [{ kind: "helix", measured: { starts: 1 } }] }) }), []).misses,
+    "quiet");
+
+  // G6 with no mask returns no advisory, which is indistinguishable from a match.
+  const silCase: EvalCase = { id: "t", prompt: "p", expect: { allReady: false, silhouette: true } };
+  expect("no reference mask means G6 never ran",
+    score(silCase, oneNode, []).misses, "fire", "never compared");
+  const withRef = mk({ p: node("p", {}, { volume_mm3: 1, bbox: { size: [1, 1, 1] }, ports: [] }) });
+  withRef.doc.brief.refs = [{ hash: "h", view: "front", mask: true }];
+  expect("a masked reference and no advisory is a match",
+    score(silCase, withRef, []).misses, "quiet");
+  expect("a silhouette advisory fails the case that asked for the outline",
+    score(silCase, withRef, [], [], [{ kind: "silhouette", message: "silhouette IoU 0.41 < 0.8" }]).misses,
+    "fire", "IoU 0.41");
 
   const caseBolt: EvalCase = {
     id: "b", prompt: "p",
@@ -634,21 +721,37 @@ async function runCase(c: EvalCase) {
   const provider = (await resolveProvider())?.provider;
   if (!provider) throw new Error("no LLM provider configured");
 
+  const refs = await prepReferences(
+    backend.kernel,
+    (c.images ?? []).map((img) => ({
+      dataB64: fs.readFileSync(path.join(casesDir, img.file)).toString("base64"),
+      mediaType: img.file.endsWith(".png") ? "image/png" as const : "image/jpeg" as const,
+      view: img.view,
+    })),
+    (line) => console.log(`  ${line}`),
+  );
+
   const t0 = Date.now();
   const plan = await planGraph({
     provider, backend, projectId: `eval-${c.id}`, goal: c.prompt,
+    references: refs.map((r) => ({ image: r.image, view: r.ref.view, aspect: r.ref.aspect })),
   });
   const planMs = Date.now() - t0;
+  plan.graph.brief.refs = refs.map((r) => r.ref);
+  // One draft plus one call per lint-repair round.
+  const archCalls = 1 + plan.lintRounds.length;
 
   if (flag("dry")) {
-    const planned = Object.values(plan.graph.nodes).map((n) => ({ id: n.id, kind: n.kind }));
+    const all = Object.values(plan.graph.nodes);
+    const planned = all.map((n) => ({ id: n.id, kind: n.kind }));
+    const designed = all.filter((n) => !jointHardware(plan.graph, n)).length;
     const { min = 0, max = Infinity } = c.expect.nodes ?? {};
     // The only expectation a plan alone can answer.
-    const misses = planned.length < min || planned.length > max
-      ? [`planned ${planned.length} nodes, expected ${min}..${max}`] : [];
+    const misses = planned.length < min || designed > max
+      ? [`planned ${designed} nodes (plus ${planned.length - designed} joint hardware), expected ${min}..${max}`] : [];
     return {
       id: c.id, pass: misses.length === 0, dry: true, misses,
-      usd: plan.usage.usd, calls: plan.repaired ? 2 : 1, nodes: planned.length,
+      usd: plan.usage.usd, calls: archCalls, nodes: planned.length,
       planMs, wallMs: planMs, lintProblems: plan.lintRounds.flat(), planned,
     } satisfies DryResult;
   }
@@ -656,6 +759,8 @@ async function runCase(c: EvalCase) {
   const store = new GraphStore(plan.graph, bus, async () => {});
   const workspace = { root: path.join(repoRoot, "evals", "results", ".work", c.id) };
   fs.mkdirSync(workspace.root, { recursive: true });
+  // globalCheck reads masks from <workspace>/../refs, as a project reads refs/.
+  await writeRefs(path.dirname(workspace.root), refs);
 
   const t1 = Date.now();
   await cookNodes({ store, backend, provider, workspace }, Object.keys(store.doc.nodes));
@@ -672,9 +777,14 @@ async function runCase(c: EvalCase) {
   // clash gate lives. Running one and asserting on it while calling the case
   // "assembly verified" is how a clashing assembly passed.
   let global: string[] = [];
+  let advisories: { kind?: string; message?: string }[] = [];
   try {
     const res = await backend.globalCheck?.(store.doc, workspace);
-    global = (res?.problems ?? []) as string[];
+    // Advisories (the G6 silhouette) ride in problems too so a user reads
+    // them, but they are not blocking by design, so they are recorded apart.
+    advisories = res?.advisories ?? [];
+    const advisory = new Set((res?.advisories ?? []).map((a) => a.message));
+    global = ((res?.problems ?? []) as string[]).filter((m) => !advisory.has(m));
   } catch (err) {
     global = [`globalCheck threw: ${String(err)}`];
   }
@@ -687,17 +797,19 @@ async function runCase(c: EvalCase) {
   const usd = nodes.reduce((s, n) => s + n.cost.usd, arch.usd);
   // Not a hardcoded 1: a repaired plan is two or more, and a harness whose
   // point is real numbers must not round its own headline down.
-  const calls = nodes.reduce((s, n) => s + n.cost.calls, plan.repaired ? 2 : 1);
+  const calls = nodes.reduce((s, n) => s + n.cost.calls, archCalls);
   const outTok = nodes.reduce((s, n) => s + n.cost.outputTokens, arch.outputTokens);
   const inTok = nodes.reduce((s, n) => s + n.cost.inputTokens, arch.inputTokens);
   // A node that passed on its first generation. Deterministic nodes cost 0
   // calls and are not "first try" in the interesting sense, so they are counted
   // separately rather than inflating the rate.
   const modelNodes = nodes.filter((n) => n.cost.calls > 0);
-  const firstTry = modelNodes.filter((n) => n.status === "ready" && n.cost.calls === 1);
+  // Generation ROUNDS, not calls: round 1 drafts several candidates, so
+  // calls === 1 read every case as 0/N.
+  const firstTry = modelNodes.filter((n) => n.status === "ready" && attempts[n.id] === 1);
   const dead = nodes.filter((n) => n.status.startsWith("error"));
 
-  const { misses, probes } = score(c, store, problems, global);
+  const { misses, probes } = score(c, store, problems, global, advisories);
 
   return {
     id: c.id, pass: misses.length === 0, misses,
@@ -714,6 +826,7 @@ async function runCase(c: EvalCase) {
       lintProblems: plan.lintRounds.flat(),
     },
     globalProblems: global,
+    advisories,
     planMs, cookMs, wallMs: planMs + cookMs, probes: probes.length,
     skipped: probes.filter((p) => p.skipped).length,
     // A FAIL THAT CANNOT BE DIAGNOSED COSTS A SECOND FULL RUN, which is the
@@ -817,6 +930,8 @@ async function main() {
   for (const c of cases) {
     if (c.expect.ports && c.expect.ports.length === 0)
       vacuous.push(`${c.id}: "ports": [] asserts nothing, remove the key or fill it`);
+    if (c.expect.silhouette && !c.images?.some((i) => i.view))
+      vacuous.push(`${c.id}: silhouette needs an image with a view, or G6 compares nothing`);
     for (const pe of c.expect.ports ?? []) {
       if (!pe.type && !pe.anyType)
         vacuous.push(`${c.id}: a port expectation names no type`);
@@ -847,6 +962,8 @@ async function main() {
         e.volumeFraction && `fills ${e.volumeFraction.min != null ? `>=${e.volumeFraction.min * 100}%` : ""}${e.volumeFraction.max != null ? `<=${e.volumeFraction.max * 100}%` : ""} of its bbox`,
         e.zeroLlmKinds && `zero LLM: ${e.zeroLlmKinds.join(",")}`,
         e.assemblyProblems != null && `assembly problems == ${e.assemblyProblems}`,
+        e.assertionKinds && `measured assertion: ${e.assertionKinds.join(",")}`,
+        e.silhouette && `outline matches ${(c.images ?? []).map((i) => `${i.file} (${i.view ?? "unlabelled"})`).join(", ")}`,
       ].filter(Boolean);
       console.log(`  ${c.id}`);
       console.log(`    prompt: ${c.prompt}`);

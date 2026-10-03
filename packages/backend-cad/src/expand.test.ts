@@ -123,9 +123,12 @@ describe("a removable plate joint", () => {
     expect(staleJoints(g)).toEqual([]);
     g.nodes.lid!.contract.params[0]!.default = 6; // too thin for a standard insert now
     expect(staleJoints(g)).toEqual(["j1"]);
-    // Too thin for any insert is not stale: the joint keeps its hardware and
-    // the shortfall is reported instead.
+    // Too thin for any insert, it takes a through-bolt (R3 last); reachable
+    // from one side only, nothing fits, which is not stale: the joint keeps
+    // its hardware and the shortfall is reported instead.
     g.nodes.lid!.contract.params[0]!.default = 3;
+    expect(staleJoints(g)).toEqual(["j1"]);
+    (g.joints[0] as unknown as { access: string }).access = "one_side";
     expect(staleJoints(g)).toEqual([]);
     expect(jointErrors(g)).toEqual([expect.stringContaining("j1: R4 wallB 3.0 < insert 5.8 + 1.2")]);
   });
@@ -133,9 +136,40 @@ describe("a removable plate joint", () => {
 
 describe("a joint no rule can make", () => {
   it("mints nothing, and the lint names the wall", () => {
-    const out = expandJoints(plates({}, 3));
+    const out = expandJoints(plates({ access: "one_side" }, 3));
     expect(out.nodes.map((n) => n.id)).toEqual(["base", "lid"]);
     expect(cadJointRuleLint.run(graphOf(out))).toEqual([expect.stringContaining("j1: R4 wallB 3.0 < insert 5.8 + 1.2")]);
+  });
+
+  it("names the declaration that would fit before a thicker wall", () => {
+    const [problem] = cadJointRuleLint.run(graphOf(expandJoints(plates({ access: "one_side" }, 3))));
+    expect(problem).toContain("Declare access both_sides for R3's M3×16 through-bolt, nut and washers; or thicken the wall it names.");
+  });
+
+  it("never asks to thicken a wall the brief states", () => {
+    const g = graphOf(expandJoints(plates({ access: "one_side" }, 3)));
+    g.brief.goal = "a lid 3mm thick screwed onto a base";
+    const [problem] = cadJointRuleLint.run(g);
+    expect(problem).toContain("The brief states wallB 3.0: keep it. Declare access both_sides");
+    expect(problem).not.toContain("thicken");
+  });
+});
+
+describe("two thin printed plates bolted face to face", () => {
+  // The two-plate-bolted eval: 4mm plates, one M4, both faces reachable. R4
+  // and R5 need thicker plates; R3's through-bolt is the fallback.
+  const out = expandJoints(plates({ threadHint: "M4" }, 4, 4));
+
+  it("takes a through-bolt, nut and washers, with a clearance hole in each plate", () => {
+    expect(out.nodes.map((n) => n.id)).toEqual(["base", "lid", "j1_screw", "j1_nut", "j1_washer_b", "j1_washer_a"]);
+    expect(param(out, "j1_screw", "length")).toBe(16);
+    expect(ports(out, "base")).toContain("j1_head:CLEARANCE_HOLE");
+    expect(ports(out, "lid")).toContain("j1_back:CLEARANCE_HOLE");
+    expect(param(out, "lid", "j1_clear")).toBe(4.5);
+  });
+
+  it("passes every CAD lint", () => {
+    expect(lintAll(out)).toEqual([]);
   });
 });
 
@@ -568,5 +602,194 @@ describe("audit fixes", () => {
     const mount = (out.nodes[0]!.contract.payload as CadContractPayload).ports.find((p) => p.name === "j1_rail_mount")!;
     expect(mount).toMatchObject({ type: "RAIL_MOUNT", params: { width: 12, length: 250, pitch: 25, count: 10, hole_diameter: "param(base.j1_rail_insert_d)" } });
     expect(out.edges.filter((e) => e.fromPort === "j1_rail_mount").map((e) => e.to)).toEqual(["j1_rail", "j1_carriage"]);
+  });
+});
+
+/** Solved world poses of a plan, every placed copy. */
+function solved(out: ArchitectOutput) {
+  const g = graphOf(out);
+  const nodes = Object.values(g.nodes).map((n) => ({
+    id: n.id,
+    ports: Object.fromEntries((n.contract.payload as CadContractPayload).ports.map((p) => [p.name, resolvePose(g, p.pose)])),
+  }));
+  return { g, ...solveAssembly(nodes, g.edges.map((e) => ({ fromNode: e.from, fromPort: e.fromPort, toNode: e.to, toPort: e.toPort })), out.entryNodeId) };
+}
+const at3 = (m: number[]) => [m[12], m[13], m[14]].map((v) => Math.round(v! * 100) / 100);
+
+describe("the butt hinge: a catalog pin pressed in one knuckle, turning in the other", () => {
+  // The hinge-revolute eval: 3mm leaves, a Ø3 pin, 7.7mm knuckles.
+  const out = expandJoints({
+    ...plates({}),
+    nodes: [
+      part("leaf-a", 7.7, [face("knuckle", 7.7, 6)]),
+      part("leaf-b", 7.7, [face("knuckle", 0, 6, [0, 0, -1])]),
+    ] as never,
+    entryNodeId: "leaf-a",
+    joints: [{
+      id: "hinge", a: { node: "leaf-a", port: "knuckle" }, b: { node: "leaf-b", port: "knuckle" },
+      intent: "permanent", motion: "revolute", load: "light", wallA: 7.7, wallB: 7.7, shaftHint: 3,
+    }],
+  } as ArchitectOutput);
+
+  it("mints the pin and a DOWEL_HOLE in each knuckle at the pin's nominal Ø, fit by port", () => {
+    expect(out.nodes.map((n) => `${n.id}:${n.kind}`)).toEqual(["leaf-a:part", "leaf-b:part", "hinge_pin:dowel"]);
+    expect(param(out, "hinge_pin", "length")).toBe(12);
+    const hole = (id: string, name: string) => (out.nodes.find((n) => n.id === id)!.contract.payload as CadContractPayload).ports.find((p) => p.name === name)!.params;
+    expect(hole("leaf-a", "hinge_pin_a")).toEqual({ diameter: "param(leaf-a.hinge_pin_d)", depth: 4.5, fit: "press" });
+    // 0.2mm would be left under a 7.5 bore in a 7.7 knuckle: it goes through.
+    expect(hole("leaf-b", "hinge_pin_b")).toEqual({ diameter: "param(leaf-b.hinge_pin_d)", depth: 7.7, fit: "slip" });
+    expect(param(out, "leaf-a", "hinge_pin_d")).toBe(3);
+    expect(lintAll(out)).toEqual([]);
+  });
+
+  it("seats the pin across the knuckles and lets b turn on it", () => {
+    const { g, instances, problems } = solved(out);
+    expect(problems).toEqual([]);
+    // Centred on its origin: 4.5 in a, 7.5 in b, from a's face at 7.7.
+    expect(at3(instances["hinge_pin"]![0]!)).toEqual([0, 0, 9.2]);
+    expect(at3(instances["leaf-b"]![0]!)).toEqual([0, 0, 7.7]);
+    expect(hardwareAllowances(g).map((x) => `${x.a}|${x.b}`)).toEqual(["leaf-a|hinge_pin"]);
+    const axes = new CadBackend().solveScene(g).joints;
+    expect(axes.map((j) => [j.id, j.moving])).toEqual([["hinge", ["leaf-b"]]]);
+  });
+});
+
+/** A body with a wheel face on each side of two axles, y = ±25. */
+function car(wheels: "four" | "one", hubFit?: "press") {
+  const side = (name: string, x: number, s: 1 | -1) => ({ name, type: "FLAT_FACE" as const, pose: { origin: [x, 25 * s, 10], zAxis: [0, s, 0] as [number, number, number], xAxis: [1, 0, 0] }, params: { size: 12 } });
+  const box = { volumes: [{ kind: "box" as const, pose: { origin: [0, 0, 10], zAxis: [0, 0, 1], xAxis: [1, 0, 0] }, dims: [100, 50, 20] }], clearance: 0.4 };
+  const body = part("body", 20, [side("seat_fl", 40, 1), side("seat_fr", 40, -1), side("seat_rl", -40, 1), side("seat_rr", -40, -1)], { envelope: box as never });
+  const wheel = (id: string) => part(id, 10, [face("hub_face", 0, 12, [0, 0, -1])], {}, 30);
+  const ids = { fl: "wheel-fl", fr: "wheel-fr", rl: "wheel-rl", rr: "wheel-rr" };
+  const joint = (k: keyof typeof ids) => ({
+    id: k, a: { node: "body", port: `seat_${k}` }, b: { node: wheels === "four" ? ids[k] : "wheel", port: "hub_face" },
+    intent: "permanent", motion: "revolute", load: "light", wallA: 50, wallB: 10, ...(hubFit ? { hubFit } : {}),
+  });
+  return {
+    ...plates({}),
+    nodes: [body, ...(wheels === "four" ? Object.values(ids).map(wheel) : [wheel("wheel")])] as never,
+    entryNodeId: "body",
+    joints: (["fl", "fr", "rl", "rr"] as const).map(joint),
+  } as ArchitectOutput;
+}
+
+describe("wheels each side of a body share one axle per pair", () => {
+  const out = expandJoints(car("four", "press"));
+
+  it("mints one axle, two bushings and a collar per pair, none for the far wheel", () => {
+    expect(out.nodes.map((n) => n.id).filter((id) => id.includes("_"))).toEqual([
+      "fl_bushing_a", "fl_bushing_b", "fl_collar", "fl_shaft", "rl_bushing_a", "rl_bushing_b", "rl_collar", "rl_shaft",
+    ]);
+    expect(out.joints!.map((j) => (j as { shared?: string }).shared)).toEqual([undefined, "fl", undefined, "rl"]);
+    // far wheel 10 + collar 6 + body 50 + collar 6 + near wheel 10
+    expect(param(out, "fl_shaft", "length")).toBe(82);
+    expect(ports(out, "body")).toEqual(expect.arrayContaining(["fl_seat_a:BUSHING_BORE", "fl_seat_b:BUSHING_BORE"]));
+    expect(ports(out, "wheel-fr")).toEqual(["hub_face:FLAT_FACE", "fr_hub:HUB_BORE"]);
+    expect(lintAll(out)).toEqual([]);
+    expect(expandJoints(out)).toEqual(out);
+  });
+
+  it("presses each wheel's hub onto the axle when the joint says so", () => {
+    const hub = (out.nodes.find((n) => n.id === "wheel-fr")!.contract.payload as CadContractPayload).ports.find((p) => p.name === "fr_hub")!;
+    expect(hub.params).toMatchObject({ fit: "press", depth: 10, flat: "param(wheel-fr.fr_flat)" });
+    const { g } = solved(out);
+    expect(hardwareAllowances(g).filter((x) => x.b === "fl_shaft" || x.a === "fl_shaft").map((x) => `${x.a}|${x.b}`)).toEqual(
+      expect.arrayContaining(["wheel-fl|fl_shaft", "wheel-fr|fl_shaft", "fl_shaft|fl_bushing_a", "fl_shaft|fl_bushing_b"]),
+    );
+  });
+
+  it("puts the bushings in the body's two faces and the wheels outside the collars", () => {
+    const { instances, problems } = solved(out);
+    expect(problems).toEqual([]);
+    expect(instances["fl_bushing_a"]!.map(at3)).toEqual([[40, 25, 10]]);
+    expect(instances["fl_bushing_b"]!.map(at3)).toEqual([[40, -25, 10]]);
+    expect(instances["fl_collar"]!.map(at3)).toEqual([[40, 25, 10], [40, -25, 10]]);
+    expect(instances["wheel-fl"]!.map(at3)).toEqual([[40, 31, 10]]);
+    expect(instances["wheel-fr"]!.map(at3)).toEqual([[40, -31, 10]]);
+    expect(instances["fl_shaft"]!.map(at3)).toEqual([[40, -41, 10]]);
+  });
+
+  it("turns both wheels of an axle with the near joint's sweep", () => {
+    const axes = new CadBackend().solveScene(graphOf(out)).joints;
+    expect(axes.map((j) => j.id)).toEqual(["fl", "rl"]);
+    expect(axes[0]!.moving).toEqual(expect.arrayContaining(["wheel-fl", "wheel-fr", "fl_shaft", "fl_collar"]));
+    expect(axes[0]!.moving).not.toContain("rl_shaft");
+  });
+});
+
+describe("one wheel node placed four times by four joints", () => {
+  const out = expandJoints(car("one"));
+
+  it("seats every joint on one hub port, so each further mate is a copy", () => {
+    expect(ports(out, "wheel")).toEqual(["hub_face:FLAT_FACE", "fl_hub:HUB_BORE"]);
+    expect(out.edges.filter((e) => e.to === "wheel")).toEqual([
+      { from: "fl_shaft", fromPort: "hub", to: "wheel", toPort: "fl_hub" },
+      { from: "fl_shaft", fromPort: "hub_b", to: "wheel", toPort: "fl_hub" },
+      { from: "rl_shaft", fromPort: "hub", to: "wheel", toPort: "fl_hub" },
+      { from: "rl_shaft", fromPort: "hub_b", to: "wheel", toPort: "fl_hub" },
+    ]);
+    expect(lintAll(out)).toEqual([]);
+    const { instances, problems } = solved(out);
+    expect(problems).toEqual([]);
+    expect(instances["wheel"]!.map(at3)).toEqual([[40, 31, 10], [40, -31, 10], [-40, 31, 10], [-40, -31, 10]]);
+  });
+
+  it("sweeps each copy about its own axle", () => {
+    const axes = new CadBackend().solveScene(graphOf(out)).joints;
+    const wheels = (k: number) => axes[k]!.moving.filter((m) => m.startsWith("wheel"));
+    expect(wheels(0)).toEqual(["wheel", "wheel#1"]);
+    expect(wheels(1)).toEqual(["wheel#2", "wheel#3"]);
+    expect(axes[0]!.moving).not.toContain("rl_shaft");
+  });
+});
+
+describe("two gears the plan meshes without a joint", () => {
+  // The spur-gear-pair eval: 20T and 40T, m1, on two pins 30 apart.
+  const gear = (id: string, teeth: number) => ({
+    id, kind: "gear", title: id, spec: id,
+    contract: {
+      name: id, summary: id,
+      params: [["module", 1], ["teeth", teeth], ["pressure_angle", 20], ["thickness", 6], ["bore", 5]].map(([name, v]) => ({ type: "number" as const, name, description: "", default: v })),
+      provides: [], requires: [{ key: "bore", type: "BORE", description: "" }],
+      payload: {
+        units: "mm", process: { kind: "FDM", minWall: 1.2, nozzle: 0.4 },
+        ports: [{ name: "bore", type: "BORE", pose: { origin: [0, 0, -3], zAxis: [0, 0, -1], xAxis: [1, 0, 0] }, params: { diameter: 5 } }],
+        envelope: { volumes: [{ kind: "cylinder", pose: { origin: [0, 0, 0], zAxis: [0, 0, 1], xAxis: [1, 0, 0] }, d: 44, h: 6 }], clearance: 0.4 },
+        paramBindings: {},
+      },
+    },
+  });
+  const pin = (name: string, x: number) => ({ name, type: "SHAFT" as const, pose: { origin: [x, 0, 2], zAxis: [0, 0, 1], xAxis: [1, 0, 0] }, params: { diameter: 4.7, length: 8 } });
+  const out = expandJoints({
+    ...plates({}),
+    nodes: [part("base", 4, [pin("pin_small", -20) as never, pin("pin_large", 10) as never], {}, 80), gear("gear-20t", 20), gear("gear-40t", 40)] as never,
+    edges: [
+      { from: "base", fromPort: "pin_small", to: "gear-20t", toPort: "bore" },
+      { from: "base", fromPort: "pin_large", to: "gear-40t", toPort: "bore" },
+    ],
+    joints: [],
+  } as ArchitectOutput);
+
+  it("turns the second gear half a tooth so a gap faces the first's tooth", () => {
+    expect(param(out, "gear-20t", "phase")).toBeUndefined();
+    expect(param(out, "gear-40t", "phase")).toBe(4.5);
+    expect(expandJoints(out)).toEqual(out);
+  });
+
+  it("is a mesh G5 sweeps, coupled at the ratio, and allowed the mesh band", () => {
+    const g = graphOf(out);
+    const { joints } = new CadBackend().solveScene(g);
+    expect(joints).toEqual([{
+      id: "mesh:gear-20t:gear-40t", type: "revolute", origin: [-20, 0, 5], direction: [0, 0, 1], limits: [-180, 180], moving: ["gear-20t"],
+      coupled: [{ origin: [10, 0, 5], direction: [0, 0, 1], ratio: -0.5, moving: ["gear-40t"] }],
+    }]);
+    expect(hardwareAllowances(g)).toEqual([{ a: "gear-20t", b: "gear-40t", volume_mm3: expect.closeTo(0.18, 3) }]);
+  });
+
+  it("leaves gears that do not mesh alone", () => {
+    const apart = structuredClone(out);
+    ((apart.nodes[0]!.contract.payload as CadContractPayload).ports[1]!.pose.origin as number[])[0] = 14;
+    apart.nodes[2]!.contract.params = apart.nodes[2]!.contract.params.filter((p) => p.name !== "phase");
+    expect(param(expandJoints(apart), "gear-40t", "phase")).toBeUndefined();
   });
 });

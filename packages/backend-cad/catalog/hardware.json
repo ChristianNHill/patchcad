@@ -278,7 +278,11 @@
         "5": { "groove": 5, "od": 11.3, "thickness": 0.7, "grooveWidth": 0.74, "shaftMin": 6, "shaftMax": 8 },
         "6": { "groove": 6, "od": 12.3, "thickness": 0.7, "grooveWidth": 0.74, "shaftMin": 7, "shaftMax": 9 },
         "7": { "groove": 7, "od": 14.3, "thickness": 0.9, "grooveWidth": 0.94, "shaftMin": 8, "shaftMax": 11 },
-        "8": { "groove": 8, "od": 16.3, "thickness": 1, "grooveWidth": 1.05, "shaftMin": 9, "shaftMax": 12 }
+        "8": { "groove": 8, "od": 16.3, "thickness": 1, "grooveWidth": 1.05, "shaftMin": 9, "shaftMax": 12 },
+        "1.2": { "groove": 1.2, "od": 3, "thickness": 0.3, "grooveWidth": 0.34, "shaftMin": 1.4, "shaftMax": 2 },
+        "1.5": { "groove": 1.5, "od": 4, "thickness": 0.4, "grooveWidth": 0.44, "shaftMin": 2, "shaftMax": 2.5 },
+        "1.9": { "groove": 1.9, "od": 4.5, "thickness": 0.5, "grooveWidth": 0.54, "shaftMin": 2.5, "shaftMax": 3 },
+        "2.3": { "groove": 2.3, "od": 6, "thickness": 0.6, "grooveWidth": 0.64, "shaftMin": 3, "shaftMax": 4 }
       }
     },
     "lm_uu": {

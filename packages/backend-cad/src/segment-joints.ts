@@ -115,6 +115,9 @@ export function importJoints(interfaces: ImportInterface[], opts: ImportJointsOp
       minWall, count: joint.count, threadHint: opts.thread,
     };
     let decision = selectJoint(input);
+    // Not R3's thin-plate through-bolt: past a printed piece's far face may be
+    // a hollow model's inside, where no hand reaches a nut.
+    if (!("error" in decision) && decision.recipe === "through_bolt" && input.processB === "FDM") decision = selectJoint({ ...input, access: "one_side" });
     if ("error" in decision) {
       const why = decision.error;
       joint.intent = "alignment";

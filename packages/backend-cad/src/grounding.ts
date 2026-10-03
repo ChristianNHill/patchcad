@@ -143,13 +143,14 @@ export const FDM_FIT_CUT_MM = midpoints(FDM_FIT_BANDS_MM);
 export const MACHINED_FIT_CUT_MM = midpoints(MACHINED_FIT_BANDS_MM);
 
 /** Port type → the param that carries the nominal size, and which cut applies.
- *  DOWEL_HOLE and the bearing seats take theirs from the port's own `fit`. */
-const FITTED_PORTS: Record<string, { param: string; cut: keyof typeof FDM_FIT_CUT_MM | "fit" }> = {
+ *  DOWEL_HOLE, the bearing seats and HUB_BORE take theirs from the port's own
+ *  `fit`, else `unfit` (press, or a hub's slip). */
+const FITTED_PORTS: Record<string, { param: string; cut: keyof typeof FDM_FIT_CUT_MM | "fit"; unfit?: "press" | "slip" }> = {
   DOWEL_HOLE: { param: "diameter", cut: "fit" },
   BEARING_SEAT: { param: "od", cut: "fit" },
   LINEAR_BEARING_SEAT: { param: "od", cut: "fit" },
   BUSHING_BORE: { param: "od", cut: "press" },
-  HUB_BORE: { param: "diameter", cut: "slip" },
+  HUB_BORE: { param: "diameter", cut: "fit", unfit: "slip" },
   MOTOR_MOUNT: { param: "pilot_diameter", cut: "slip" },
   MAGNET_POCKET: { param: "diameter", cut: "magnet" },
   NUT_TRAP: { param: "af", cut: "nutTrapAf" },
@@ -173,7 +174,8 @@ export function fitCut(
   }
   const spec = FITTED_PORTS[port.type];
   if (!spec) return null;
-  const cut = spec.cut === "fit" ? (port.params.fit === "slip" ? "slip" : "press") : spec.cut;
+  const fit = port.params.fit === "slip" || port.params.fit === "press" ? port.params.fit : (spec.unfit ?? "press");
+  const cut = spec.cut === "fit" ? fit : spec.cut;
   const offset = (machined ? MACHINED_FIT_CUT_MM : FDM_FIT_CUT_MM)[cut];
   const raw = port.params[spec.param];
   const nominal = raw === undefined ? undefined : num(raw);

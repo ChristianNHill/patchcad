@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  JOINT_RULES, SNAP_ENABLED, beltCenter, beltLength, gt2PitchD, pickDrive, pickThread, railHoles, selectJoint,
+  JOINT_RULES, SNAP_ENABLED, beltCenter, beltLength, gt2PitchD, jointEscapes, pickDrive, pickThread, railHoles, selectJoint,
   type JointDecision, type JointInput,
 } from "./joints.js";
 
@@ -36,6 +36,7 @@ describe("selectJoint: one row per rule", () => {
     ["M1 rotor on two bearings", { motion: "revolute", duty: "continuous", wallA: 14, wallB: 8 }, "M1", ["bearing_a:bearing:625", "bearing_b:bearing:625", "shaft:d_shaft:5", "collar:collar:5"]],
     ["M2 occasional pivot on bushings", { motion: "revolute", wallA: 12, wallB: 8 }, "M2", ["bushing_a:bushing:5x8x5", "bushing_b:bushing:5x8x5", "shaft:d_shaft:5", "collar:collar:5"]],
     ["M2p printed pin when allowed, e-clipped", { motion: "revolute", allowPrinted: true }, "M2p", ["pin_clip:eclip:4"]],
+    ["M2d a separate pin when the walls are too thin for bushings", { motion: "revolute", wallA: 7.7, wallB: 7.7, shaftHint: 3 }, "M2d", ["pin:dowel:3x12"]],
     ["P1 short light slide on LM8UU", { motion: "prismatic", strokeMm: 60, wallA: 12, wallB: 30 }, "P1", ["rod:shaft:8", "linear_bearing:lm_uu:LM8UU"]],
     ["P2 long slide on a rail, screwed down into inserts", { motion: "prismatic", strokeMm: 200, load: "medium" }, "P2",
       ["rail:mgn_rail:MGN12x250", "carriage:mgn_carriage:MGN12C", "rail_screw:button:M3x6", "rail_insert:heatset_short:M3"]],
@@ -206,7 +207,7 @@ describe("rail screws", () => {
 
 describe("no rule fits", () => {
   it("names the shortfall the architect has to fix", () => {
-    const r = selectJoint({ ...base, id: "j3", wallB: 3 });
+    const r = selectJoint({ ...base, id: "j3", wallB: 3, access: "one_side" });
     expect(r).toEqual({ error: expect.stringContaining("j3: R4 wallB 3.0 < insert 5.8 + 1.2") });
     expect((r as { error: string }).error).toContain("short insert 3.0 + 1.2");
   });
@@ -222,6 +223,45 @@ describe("no rule fits", () => {
     expect((r as { error: string }).error).toContain("R7 snap fits are disabled");
   });
 
+});
+
+describe("eval fixes", () => {
+  it("a thin printed b reachable from both sides takes a through-bolt at any load", () => {
+    for (const load of ["none", "light", "medium"] as const) {
+      const d = ok({ load, wallA: 4, wallB: 4, threadHint: "M4" });
+      expect(d.rule).toBe("R3");
+      expect(roles(d)).toEqual(["screw:shcs:M4x16", "nut:hex_nut:M4", "washer_a:washer:M4", "washer_b:washer:M4"]);
+      expect(d.reasons[0]).toContain("printed b too thin for an insert or a nut trap");
+    }
+    // R4 and R5 still come first where they fit.
+    expect(ok({ wallB: 10 }).rule).toBe("R4");
+    expect(ok({ intent: "permanent", wallA: 4, wallB: 8 }).rule).toBe("R5");
+  });
+
+  it("a one-sided thin joint names access both_sides as its way out", () => {
+    const i = { ...base, wallA: 4, wallB: 4, access: "one_side" as const, threadHint: "M4" };
+    expect("error" in selectJoint(i)).toBe(true);
+    expect(jointEscapes(i)).toEqual(["declare access both_sides for R3's M4×16 through-bolt, nut and washers"]);
+  });
+
+  it("the butt hinge: 3mm leaves, Ø3 pin, 7.7mm knuckles", () => {
+    // Bushings need 2 × 4 + 1.2 of knuckle; M2p has no Ø3 e-clip unless allowed
+    // to print; a catalog pin pressed in one knuckle turns in the other.
+    const d = ok({ id: "hinge", motion: "revolute", intent: "permanent", wallA: 7.7, wallB: 7.7, shaftHint: 3 });
+    expect(d.rule).toBe("M2d");
+    expect(d.recipe).toBe("pin");
+    expect(d.dims).toEqual({ d: 3, length: 12, press: 4.5, run: 7.5 });
+    // Without a hint the pin steps down from the load's Ø5 to what fits.
+    expect(roles(ok({ motion: "revolute", wallA: 6, wallB: 4 }))).toEqual(["pin:dowel:4x10"]);
+    // Too thin even for a pin: the shortfall says so.
+    const r = selectJoint({ ...base, id: "h", motion: "revolute", wallA: 2, wallB: 2 });
+    expect((r as { error: string }).error).toContain("M2d walls 2.0/2.0: no Ø5/Ø4/Ø3/Ø2.5/Ø2 pin");
+  });
+
+  it("DIN 6799 clips reach Ø2-3 shafts, so a printed Ø3 pin is e-clipped", () => {
+    expect(roles(ok({ motion: "revolute", allowPrinted: true, shaftHint: 3, wallB: 4 }))).toEqual(["pin_clip:eclip:1.9"]);
+    expect(roles(ok({ motion: "revolute", allowPrinted: true, shaftHint: 2, wallB: 4 }))).toEqual(["pin_clip:eclip:1.2"]);
+  });
 });
 
 describe("audit fixes", () => {

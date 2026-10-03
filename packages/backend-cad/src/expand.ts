@@ -3,12 +3,13 @@ import type { GraphDoc, JointDecl, NodeRecord, ParamValue } from "@patchcad/shar
 import type { CadContractPayload, Pose } from "./index.js";
 import { CATALOG, dim, familyDims, skuFor } from "./catalog.js";
 import {
-  CadJoint, FDM_MIN_WALL_MM, gt2PitchD, idlerScrews, pulleyHeight, railHoles, railScrews, rimMid, selectJoint,
+  CadJoint, FDM_MIN_WALL_MM, gt2PitchD, idlerScrews, jointEscapes, pulleyHeight, railHoles, railScrews, rimMid, selectJoint,
   type HardwarePick, type JointDecision, type JointInput, type Lin, type JointProcess,
 } from "./joints.js";
 import { gt2TipD } from "./registry.js";
 import { resolveBinding, resolveDim, resolvePose, type NumericPose } from "./bindings.js";
-import type { JointAxisDef } from "./assembly.js";
+import type { JointAxisDef, KinematicJoint, Mat4 } from "./assembly.js";
+import { solvePlan } from "./plan-geometry.js";
 import { SEAT_POSE } from "./grounding.js";
 import { isMachined, sourcingOf } from "./sourcing.js";
 import { HARDWARE_PORT_TYPES } from "./index.js";
@@ -200,6 +201,8 @@ class Expansion {
 
   addPort(node: OutNode, side: "provides" | "requires", port: CadPortT, declType: string = port.type, description = "") {
     this.minted.push(port.name);
+    // Several joints may seat the same port of an instanced part: one feature.
+    if (payloadOf(node).ports.some((p) => p.name === port.name)) return;
     this.putPort(node, side, port, declType, description);
   }
 
@@ -221,6 +224,7 @@ class Expansion {
 
   addParam(node: OutNode, name: string, description: string, binding: string) {
     this.minted.push(name);
+    if (node.contract.params.some((p) => p.name === name)) return;
     node.contract.params.push({ type: "number", name, description, default: 0 });
     payloadOf(node).paramBindings = { ...(payloadOf(node).paramBindings ?? {}), [name]: binding };
     this.bindings.push({ node, name, binding });
@@ -352,11 +356,18 @@ interface Ctx {
   j: CadJoint;
   i: JointInput;
   v: string;
+  /** Prefix of what a spindle mints on b: the first joint's to seat this port
+   *  of b, so an instanced b (one wheel, four joints) has one hub. */
+  vb: string;
   d: JointDecision;
   A: OutNode;
   B: OutNode;
   fa: Frame;
   fb: Frame;
+  /** The coaxial joint on a's far side whose b rides this joint's axle. */
+  far?: { j: CadJoint; fa: Frame; span: D };
+  /** This joint's b rides that joint's axle (axleEnd). */
+  shares?: string;
 }
 
 /** The face mate between a and b, for joints where b holds still on a. */
@@ -555,7 +566,10 @@ function spindle(c: Ctx) {
     ? { od: `param(${A.id}.${v}_seat_od)`, length: `param(${A.id}.${v}_seat_w)` }
     : { od: `param(${A.id}.${v}_seat_od)`, width: `param(${A.id}.${v}_seat_w)`, fit: "press" };
   x.addPort(A, "provides", { name: `${v}_seat_a`, type: seatType, pose: at(fa, 0, 0, 0), params: seatParams });
-  x.addPort(A, "provides", { name: `${v}_seat_b`, type: seatType, pose: at(fa, 0, 0, times(-1, j.wallA), true), params: seatParams });
+  // The second seat is in a's far face, or in the far joint's face when the
+  // two share an axle (one seat each side of a body, not two in each wall).
+  const far = c.far;
+  x.addPort(A, "provides", { name: `${v}_seat_b`, type: seatType, pose: far ? at(far.fa, 0, 0, 0) : at(fa, 0, 0, times(-1, j.wallA), true), params: seatParams });
 
   const seatPorts = (role: HardwarePick) => [
     { side: "requires" as const, port: { name: "seat", type: "FLAT_FACE" as const, pose: INSET_POSE as unknown as Pose, params: { ring_diameter: n(role, "od") - 1 } }, decl: seatType },
@@ -579,27 +593,48 @@ function spindle(c: Ctx) {
 
   // The shaft starts kw below a's far face (under the outer collar) and ends
   // flush with b's far face, through b's hub: on the upper collar, or above a
-  // drive's driven wheel.
-  const hubAt = drive ? sum(kw, j.wallA, d.dims.zB!) : sum(2 * kw, j.wallA);
+  // drive's driven wheel. A shared axle starts at the far b's outer face, and
+  // carries that b on a second hub port facing back along it.
+  const start = far ? sum(kw, far.j.wallB) : kw;
+  const hubAt = drive ? sum(kw, j.wallA, d.dims.zB!) : far ? sum(start, far.span, kw) : sum(2 * kw, j.wallA);
   x.mint(j.id, shaft, d.summary, [
-    { side: "requires", port: { name: "end", type: "FLAT_FACE", pose: pose([0, 0, kw]), params: { ring_diameter: d.dims.d! / 2 } }, decl: "FLAT_FACE" },
+    { side: "requires", port: { name: "end", type: "FLAT_FACE", pose: pose([0, 0, start]), params: { ring_diameter: d.dims.d! / 2 } }, decl: "FLAT_FACE" },
     { side: "provides", port: { name: "hub", type: "FLAT_FACE", pose: pose([0, 0, hubAt]), params: { ring_diameter: d.dims.d! / 2 } }, decl: "HUB_BORE" },
     ...(drive
       ? [{ side: "provides" as const, port: { name: "drive", type: "FLAT_FACE" as const, pose: pose([0, 0, sum(kw, j.wallA, d.dims.zDriven!)]), params: { ring_diameter: d.dims.d! / 2 } }, decl: "HUB_BORE" }]
       : []),
+    ...(far
+      ? [{ side: "provides" as const, port: { name: "hub_b", type: "FLAT_FACE" as const, pose: pose([0, 0, far.j.wallB], [0, 0, -1]), params: { ring_diameter: d.dims.d! / 2 } }, decl: "HUB_BORE" }]
+      : []),
   ], sum(hubAt, j.wallB));
   x.addEdge(idb, "bore", sid, "end");
-
-  x.addParam(B, `${v}_shaft_d`, `shaft Ø for ${j.id}`, `hw:shaftD:param:${sid}.sku`);
-  const hub: CadPortT["params"] = { diameter: `param(${B.id}.${v}_shaft_d)` };
-  if (shaft.family === "d_shaft") {
-    x.addParam(B, `${v}_flat`, `D-flat distance from the axis for ${j.id}`, `hw:hubFlat:param:${sid}.sku`);
-    hub.flat = `param(${B.id}.${v}_flat)`;
-  }
-  x.addPort(B, "requires", { name: `${v}_hub`, type: "HUB_BORE", pose: at(fb, 0, 0, 0), params: hub });
-  x.addEdge(sid, "hub", B.id, `${v}_hub`);
+  hubOn(c, shaft, sid, "hub");
   ringFace(c, A, j.a.port, sum(`param(${A.id}.${v}_seat_od)`, 2.4));
-  ringFace(c, B, j.b.port, sum(`param(${B.id}.${v}_shaft_d)`, 2.4));
+}
+
+/** b's hub on a joint's shaft, Ø (and D-flat) bound to the shaft's sku, at
+ *  the joint's hubFit: a slip bore turned by the flat, or b pressed on. */
+function hubOn(c: Ctx, shaft: HardwarePick, sid: string, from: string) {
+  const { x, j, vb, B, fb } = c;
+  x.addParam(B, `${vb}_shaft_d`, `shaft Ø for ${j.id}`, `hw:shaftD:param:${sid}.sku`);
+  const hub: CadPortT["params"] = { diameter: `param(${B.id}.${vb}_shaft_d)` };
+  if (shaft.family === "d_shaft") {
+    x.addParam(B, `${vb}_flat`, `D-flat distance from the axis for ${j.id}`, `hw:hubFlat:param:${sid}.sku`);
+    hub.flat = `param(${B.id}.${vb}_flat)`;
+  }
+  if (j.hubFit === "press") Object.assign(hub, { fit: "press", depth: j.wallB });
+  x.addPort(B, "requires", { name: `${vb}_hub`, type: "HUB_BORE", pose: at(fb, 0, 0, 0), params: hub });
+  x.addEdge(sid, from, B.id, `${vb}_hub`);
+  ringFace(c, B, j.b.port, sum(`param(${B.id}.${vb}_shaft_d)`, 2.4));
+}
+
+/** The far joint of a shared axle: seats, shaft and collar are the near
+ *  joint's (spindle), so this one only puts b on the shaft's far end. */
+function axleEnd(c: Ctx) {
+  const { j, d, A } = c;
+  unmate(c);
+  hubOn(c, part(d, "shaft")!, hardwareId(c.shares!, part(d, "shaft")!.role), "hub_b");
+  ringFace(c, A, j.a.port, sum(`param(${A.id}.${jointVar(c.shares!)}_seat_od)`, 2.4));
 }
 
 /** A pin printed on a, through b, its e-clip in a CLIP_GROOVE just past b's
@@ -621,6 +656,27 @@ function printedPin(c: Ctx) {
   faceMate(c);
   ringFace(c, A, j.a.port, d.dims.d! + 2.4);
   ringFace(c, B, j.b.port, d.dims.bore! + 2.4);
+}
+
+/** A catalog pin pressed `press` deep into a and turning `run` deep in b:
+ *  both DOWEL_HOLEs at the pin's nominal Ø, the fit in each port's `fit`. A
+ *  hole that would leave less than a minimum wall under it goes through. */
+function pin(c: Ctx) {
+  const { x, j, i, v, d, A, B, fa, fb } = c;
+  const id = hardwareId(j.id, "pin");
+  const deep = (got: number, wall: number) => (wall - got < (i.minWall ?? FDM_MIN_WALL_MM) ? wall : got);
+  x.addParam(A, `${v}_pin_d`, `pin Ø for ${j.id}`, `hw:dowelHole:param:${id}.sku`);
+  x.addParam(B, `${v}_pin_d`, `pin Ø for ${j.id}`, `hw:dowelHole:param:${id}.sku`);
+  // The registry centres a dowel on its origin: L/2 − press out of a's face.
+  x.mint(j.id, part(d, "pin")!, d.summary, [{
+    side: "requires", port: { name: "center", type: "FLAT_FACE", pose: pose([0, 0, round(d.dims.length! / 2 - d.dims.press!)]), params: { ring_diameter: d.dims.d! / 2 } }, decl: "DOWEL_HOLE",
+  }]);
+  x.addPort(A, "provides", { name: `${v}_pin_a`, type: "DOWEL_HOLE", pose: at(fa, 0, 0, 0), params: { diameter: `param(${A.id}.${v}_pin_d)`, depth: deep(d.dims.press!, i.wallA), fit: "press" } });
+  x.addPort(B, "provides", { name: `${v}_pin_b`, type: "DOWEL_HOLE", pose: at(fb, 0, 0, 0), params: { diameter: `param(${B.id}.${v}_pin_d)`, depth: deep(d.dims.run!, i.wallB), fit: "slip" } });
+  x.addEdge(A.id, `${v}_pin_a`, id, "center");
+  faceMate(c);
+  ringFace(c, A, j.a.port, sum(`param(${A.id}.${v}_pin_d)`, 2.4));
+  ringFace(c, B, j.b.port, sum(`param(${B.id}.${v}_pin_d)`, 2.4));
 }
 
 /** An LM-UU's pocket in b, pressed, standing on a lip. */
@@ -967,6 +1023,7 @@ const RECIPES: Record<JointDecision["recipe"], ((c: Ctx) => void) | undefined> =
   bearings: spindle,
   bushings: spindle,
   printed_pin: printedPin,
+  pin,
   rod_slide: rodSlide,
   rail,
   direct_drive: directDrive,
@@ -1008,29 +1065,48 @@ export function expandJoints(input: ArchitectOutput, live?: Live): ArchitectOutp
   joints.forEach((j, i) => j.success && unmint(out, out.joints![i]!));
   const x = new Expansion(out, live);
   const kept: JointDecl[] = [];
-  joints.forEach((parsed, i) => {
-    const raw = out.joints![i]!;
-    if (!parsed.success) return void kept.push(raw);
+  const planned = joints.map((parsed) => {
+    if (!parsed.success) return undefined;
     const j = parsed.data;
     const A = out.nodes.find((nd) => nd.id === j.a.node);
     const B = out.nodes.find((nd) => nd.id === j.b.node);
     const inp = A && B ? jointInput(x.graph, j) : { error: "unknown node" };
     const decision = "error" in inp ? inp : selectJoint(inp);
-    const recipe = "error" in decision ? undefined : RECIPES[decision.recipe];
-    if ("error" in decision || !recipe || !A || !B) return void kept.push(j);
-    if (!payloadOf(A).ports.some((p) => p.name === j.a.port) || !payloadOf(B).ports.some((p) => p.name === j.b.port)) {
-      return void kept.push(j);
-    }
+    if ("error" in decision || "error" in inp || !A || !B) return undefined;
+    if (!payloadOf(A).ports.some((p) => p.name === j.a.port) || !payloadOf(B).ports.some((p) => p.name === j.b.port)) return undefined;
+    return { j, inp, decision, A, B };
+  });
+  const axles = sharedAxles(x, planned);
+  const firstOnB = new Map<string, string>();
+  for (const p of planned) if (p && !firstOnB.has(`${p.j.b.node}|${p.j.b.port}`)) firstOnB.set(`${p.j.b.node}|${p.j.b.port}`, jointVar(p.j.id));
+  const done = new Set<number>();
+  joints.forEach((parsed, i) => {
+    const raw = out.joints![i]!;
+    if (!parsed.success) return void kept.push(raw);
+    const p = planned[i];
+    if (!p || !RECIPES[p.decision.recipe]) return void kept.push(parsed.data);
+    const { j, inp, decision, A, B } = p;
+    const near = axles.get(i);
+    const shares = near !== undefined && done.has(near) ? planned[near]!.j.id : undefined;
+    const farAt = [...axles].find(([, n]) => n === i)?.[0];
+    const far = farAt === undefined ? undefined : planned[farAt]!.j;
+    const recipe = shares ? axleEnd : RECIPES[decision.recipe]!;
     x.minted = [];
     try {
-      recipe({ x, j, i: inp as JointInput, v: jointVar(j.id), d: decision, A, B, fa: frameOf(x.port(A, j.a.port).pose), fb: frameOf(x.port(B, j.b.port).pose) });
-      kept.push({ ...j, expanded: decisionKey(decision), minted: [...new Set(x.minted)] } as JointDecl);
+      const fa = frameOf(x.port(A, j.a.port).pose);
+      recipe({
+        x, j, i: inp, v: jointVar(j.id), vb: firstOnB.get(`${j.b.node}|${j.b.port}`)!, d: decision, A, B, fa, fb: frameOf(x.port(B, j.b.port).pose), shares,
+        far: far && { j: far, fa: frameOf(x.port(A, far.a.port).pose), span: spanOf(fa, frameOf(x.port(A, far.a.port).pose)) },
+      });
+      kept.push({ ...j, expanded: decisionKey(decision), minted: [...new Set(x.minted)], ...(shares ? { shared: shares } : {}) } as JointDecl);
+      done.add(i);
     } catch (err) {
       // Half a recipe is worse than none: strip what it got to, and say why.
       unmint(out, { ...j, minted: x.minted } as JointDecl);
       kept.push({ ...j, failed: `${decision.rule} could not be expanded: ${(err as Error).message}` } as JointDecl);
     }
   });
+  phaseGears(out, x.graph);
   x.settle();
   for (const { node, name, binding } of x.bindings) {
     const was = cached.get(`${node.id}.${name}`);
@@ -1044,6 +1120,150 @@ export function expandJoints(input: ArchitectOutput, live?: Live): ArchitectOutp
   out.edges = [...out.edges.filter((e) => !minted(e)), ...out.edges.filter(minted)];
   out.joints = kept;
   return out;
+}
+
+type Planned = { j: CadJoint; inp: JointInput; decision: JointDecision; A: OutNode; B: OutNode } | undefined;
+
+const unit = (v: readonly number[]) => {
+  const n = Math.hypot(...v);
+  return v.map((c) => c / n);
+};
+const dot3 = (a: readonly number[], b: readonly number[]) => a[0]! * b[0]! + a[1]! * b[1]! + a[2]! * b[2]!;
+
+/** a's thickness between two of its joint faces that face apart, along the
+ *  first one's +z: an expression when their origins are. */
+const spanOf = (near: Frame, far: Frame): D => sum(...[0, 1, 2].flatMap((k) => [times(near.z[k]!, near.o[k]!), times(-near.z[k]!, far.o[k]!)]));
+
+/**
+ * Bushing or bearing joints on one a whose axes are a single line, facing
+ * apart: a wheel each side of a body. Each alone mints a full-width shaft, two
+ * seats and a collar, and the left set lands in the right one. Together they
+ * share one axle: the earlier joint mints it with a seat in each face, the
+ * later only hangs its b on the far end. Later index → earlier index.
+ */
+function sharedAxles(x: Expansion, planned: Planned[]): Map<number, number> {
+  const pairs = new Map<number, number>();
+  const used = new Set<number>();
+  const axis = (j: CadJoint) => {
+    try {
+      return resolvePose(x.graph, x.port(x.node(j.a.node), j.a.port).pose);
+    } catch {
+      return undefined;
+    }
+  };
+  planned.forEach((p, n) => {
+    planned.forEach((s, f) => {
+      if (f <= n || !p || !s || used.has(n) || used.has(f)) return;
+      if (p.j.a.node !== s.j.a.node || !["bushings", "bearings"].includes(p.decision.recipe) || decisionKey(p.decision) !== decisionKey(s.decision)) return;
+      if ((p.j.count ?? 1) > 1 || (s.j.count ?? 1) > 1) return;
+      const [ap, as] = [axis(p.j), axis(s.j)];
+      if (!ap || !as) return;
+      const z = unit(ap.zAxis);
+      if (dot3(z, unit(as.zAxis)) > -0.9999) return;
+      const d = ap.origin.map((c, k) => c - as.origin[k]!);
+      const along = dot3(d, z);
+      if (along <= 0 || Math.hypot(...d.map((c, k) => c - along * z[k]!)) > 0.01) return;
+      pairs.set(f, n);
+      used.add(n).add(f);
+    });
+  });
+  return pairs;
+}
+
+// ---------- Gears without a joint ----------
+
+type GraphLike = Pick<GraphDoc, "nodes" | "edges" | "joints"> & { assembly: { entryNodeId: string } };
+
+/** What a gear node is built from: its live param, else its contract default. */
+function gearParam(n: Pick<NodeRecord, "params" | "contract">, name: string): number {
+  const v = n.params?.[name] ?? n.contract.params.find((p) => p.name === name)?.default;
+  return typeof v === "number" ? v : Number(v);
+}
+
+export interface GearMesh {
+  a: string;
+  b: string;
+  /** b's phase, degrees, that puts a gap of b where a's tooth is. */
+  phase: number;
+  /** b's turn per degree of a's, about each gear's own +z. */
+  ratio: number;
+}
+
+/**
+ * Gear pairs the plan meshes without a drive joint: two gear nodes, not a
+ * joint's, whose posed axes are parallel at m·(z1+z2)/2 with their faces
+ * overlapping. The registry builds each with a tooth on +x, so left alone the
+ * pair meets tooth to tooth. A tooth of a sits a fraction fa of a pitch behind
+ * the line of centres, b's fb; rolling keeps fa + fb (opposed axes fb − fa)
+ * fixed, and a tooth in a gap is that sum at one half.
+ */
+export function gearMeshes(graph: GraphLike, world: Record<string, Mat4>): GearMesh[] {
+  const gears = Object.values(graph.nodes).filter((n) => n.kind === "gear" && world[n.id] && !jointOwner(graph, n.id));
+  const out: GearMesh[] = [];
+  const phase = new Map(gears.map((g) => [g.id, gearParam(g, "phase") || 0]));
+  const fixed = new Set<string>();
+  const col = (m: Mat4, c: number) => [m[c * 4]!, m[c * 4 + 1]!, m[c * 4 + 2]!];
+  const angle = (u: number[], m: Mat4) => {
+    const [x, z] = [col(m, 0), col(m, 2)];
+    const y = [z[1]! * x[2]! - z[2]! * x[1]!, z[2]! * x[0]! - z[0]! * x[2]!, z[0]! * x[1]! - z[1]! * x[0]!];
+    return (Math.atan2(dot3(u, y), dot3(u, x)) * 180) / Math.PI;
+  };
+  const frac = (f: number) => f - Math.floor(f);
+  gears.forEach((ga, n) => {
+    gears.slice(n + 1).forEach((gb) => {
+      const [wa, wb] = [world[ga.id]!, world[gb.id]!];
+      const [m, za, zb] = [gearParam(ga, "module"), gearParam(ga, "teeth"), gearParam(gb, "teeth")];
+      if (!(m > 0 && za > 0 && zb > 0) || Math.abs(gearParam(gb, "module") - m) > 1e-9) return;
+      const [aa, ab] = [col(wa, 2), col(wb, 2)];
+      const same = dot3(aa, ab);
+      if (Math.abs(same) < 0.9999) return;
+      const c = [0, 1, 2].map((k) => wb[12 + k]! - wa[12 + k]!);
+      const axial = dot3(c, aa);
+      const r = c.map((v, k) => v - axial * aa[k]!);
+      const dist = Math.hypot(...r);
+      if (Math.abs(dist - (m * (za + zb)) / 2) > GEAR_CENTRE_TOL_MM || Math.abs(axial) >= (gearParam(ga, "thickness") + gearParam(gb, "thickness")) / 2) return;
+      const u = r.map((v) => v / dist);
+      const [pa, pb] = [360 / za, 360 / zb];
+      const fa = frac((angle(u, wa) - phase.get(ga.id)!) / pa);
+      const fb = same > 0 ? frac(0.5 - fa) : frac(fa + 0.5);
+      const want = round(frac((angle(u.map((v) => -v), wb) - fb * pb) / pb) * pb);
+      if (!fixed.has(gb.id)) phase.set(gb.id, want);
+      fixed.add(ga.id).add(gb.id);
+      out.push({ a: ga.id, b: gb.id, phase: phase.get(gb.id)!, ratio: round((same > 0 ? -1 : 1) * (za / zb)) });
+    });
+  });
+  return out;
+}
+
+/** Each gear mesh as a joint G5 sweeps: a full turn of a about its own axis,
+ *  b coupled at the mesh ratio, so the pair is checked tooth through tooth. */
+export function gearMeshJoints(graph: GraphDoc, world: Record<string, Mat4>): KinematicJoint[] {
+  const axis = (id: string) => ({
+    origin: [world[id]![12]!, world[id]![13]!, world[id]![14]!] as Vec,
+    direction: [8, 9, 10].map((k) => Math.round(world[id]![k]! * 1e6) / 1e6) as Vec,
+  });
+  return gearMeshes(graph, world).map((m) => ({
+    id: `mesh:${m.a}:${m.b}`, type: "revolute", ...axis(m.a), limits: [-180, 180], moving: [m.a],
+    coupled: [{ ...axis(m.b), ratio: m.ratio, moving: [m.b] }],
+  }));
+}
+
+/** How far off m·(z1+z2)/2 a gear pair's centres may sit and still be a pair
+ *  the plan meant to mesh: a centre declared to a rounded figure. */
+export const GEAR_CENTRE_TOL_MM = 0.5;
+
+/** Give each meshing gear pair's second gear the phase gearMeshes asks for. */
+function phaseGears(out: ArchitectOutput, base: GraphDoc) {
+  const nodes = Object.fromEntries(out.nodes.map((n) => [n.id, { ...base.nodes[n.id]!, kind: n.kind, contract: n.contract }]));
+  const graph = { nodes, edges: out.edges, joints: out.joints ?? [], assembly: { entryNodeId: out.entryNodeId } } as unknown as GraphDoc;
+  if (!Object.values(nodes).some((n) => n.kind === "gear")) return;
+  const { world } = solvePlan(graph);
+  for (const mesh of gearMeshes(graph, world)) {
+    const node = out.nodes.find((n) => n.id === mesh.b)!;
+    const p = node.contract.params.find((q) => q.name === "phase");
+    if (p) (p as { default: unknown }).default = mesh.phase;
+    else node.contract.params.push({ type: "number", name: "phase", description: "tooth phase, degrees: set at expansion so the teeth mesh", default: mesh.phase });
+  }
 }
 
 /** Joints whose rule now picks different hardware than was expanded (a wall
@@ -1063,6 +1283,9 @@ export function staleJoints(graph: GraphDoc): string[] {
 export function jointErrors(graph: GraphDoc): string[] {
   return jointDecisions(graph).flatMap(({ decision }) => ("error" in decision ? [decision.error] : []));
 }
+
+/** The joint whose axle this one rides, when it shares one (sharedAxles). */
+const sharedOf = (graph: Pick<GraphDoc, "joints">, id: string) => (graph.joints.find((j) => j.id === id) as { shared?: string } | undefined)?.shared;
 
 // ---------- Kinematics ----------
 
@@ -1106,7 +1329,8 @@ function drivenWith(d: JointDecision, pose: NumericPose): { pose: NumericPose; r
 export function jointAxes(graph: GraphDoc): JointAxisDef[] {
   const out: JointAxisDef[] = [];
   for (const { joint, decision } of jointDecisions(graph)) {
-    if (joint.motion === "fixed" || "error" in decision) continue;
+    // A joint riding another's axle turns with that joint's sweep.
+    if (joint.motion === "fixed" || "error" in decision || sharedOf(graph, joint.id)) continue;
     const port = payloadOf(graph.nodes[joint.a.node] ?? { contract: {} }).ports?.find((p) => p.name === joint.a.port);
     if (!port) continue;
     let pose: NumericPose;
@@ -1117,6 +1341,10 @@ export function jointAxes(graph: GraphDoc): JointAxisDef[] {
     }
     const hw = decision.parts.map((p) => ({ id: hardwareId(joint.id, p.role), role: p.role })).filter((h) => graph.nodes[h.id]);
     const blocked = new Set([joint.a.node, ...hw.filter((h) => !MOVING_ROLES.has(h.role)).map((h) => h.id)]);
+    // An instanced b (one wheel node on two axles) links every axle through
+    // it: the other axles' hardware turns with its own joint, not this one.
+    const siblings = new Set(graph.joints.filter((o) => o.id !== joint.id && o.b.node === joint.b.node && (o as { shared?: string }).shared !== joint.id).map((o) => o.id));
+    for (const id of Object.keys(graph.nodes)) if (siblings.has(jointOwner(graph, id) ?? "")) blocked.add(id);
     const moving = new Set([joint.b.node, ...hw.filter((h) => MOVING_ROLES.has(h.role)).map((h) => h.id)]);
     const queue = [...moving];
     while (queue.length) {
@@ -1141,6 +1369,28 @@ export function jointAxes(graph: GraphDoc): JointAxisDef[] {
 
 // ---------- Lint ----------
 
+/** Walls the brief or either part's spec states as a number ("4mm thick"):
+ *  a repair round must not change those. */
+function statedWalls(graph: GraphDoc, j: CadJoint, i: JointInput): string[] {
+  const text = [graph.brief?.goal, graph.nodes[j.a.node]?.spec, graph.nodes[j.b.node]?.spec].join(" ");
+  const said = (n: number) => new RegExp(`(^|[^\\d.])${String(Math.round(n * 100) / 100).replace(".", "\\.")}\\s*mm`).test(text);
+  return ([["wallA", i.wallA], ["wallB", i.wallB]] as const).filter(([, n]) => said(n)).map(([w, n]) => `${w} ${mm1(n)}`);
+}
+const mm1 = (n: number) => (Math.round(n * 10) / 10).toFixed(1);
+
+/** What the architect can change to make a joint fit: a declaration that
+ *  lets another rule fit first, and a thicker wall only when nothing in the
+ *  brief pins it. */
+function jointRepair(graph: GraphDoc, joint: CadJoint): string {
+  const input = jointInput(graph, joint);
+  if ("error" in input) return "Fix the joint's ends and walls.";
+  const escapes = jointEscapes(input);
+  const pinned = statedWalls(graph, joint, input);
+  const keep = pinned.length ? `The brief states ${pinned.join(" and ")}: keep ${pinned.length > 1 ? "them" : "it"}. ` : "";
+  if (escapes.length) return `${keep}${escapes.map((e) => e[0]!.toUpperCase() + e.slice(1)).join("; or ")}${pinned.length ? "" : "; or thicken the wall it names"}.`;
+  return `${keep}${pinned.length ? "Change" : "Thicken the wall it names, change"} the joint's intent, load or access, or give a hint (threadHint, shaftHint).`;
+}
+
 /**
  * Every joint has a rule that fits, every expansion is the one its rule
  * produces today, and every piece of non-fastening hardware belongs to a joint
@@ -1156,7 +1406,7 @@ export const cadJointRuleLint = {
       if (ids.has(joint.id)) problems.push(`joint ${joint.id}: declared twice; joint ids must be unique`);
       ids.add(joint.id);
       if ("error" in decision) {
-        problems.push(`joint ${decision.error}. Thicken the wall it names, change the joint's intent, load or access, or give a hint (threadHint, shaftHint).`);
+        problems.push(`joint ${decision.error}. ${jointRepair(graph, joint)}`);
         continue;
       }
       for (const end of [joint.a, joint.b]) {
@@ -1186,8 +1436,9 @@ export const cadJointRuleLint = {
         problems.push(`joint ${joint.id}: its hardware is not what rule ${decision.rule} picks today (${decision.summary}); re-expand the plan rather than editing joint hardware by hand.`);
         continue;
       }
+      const owner = sharedOf(graph, joint.id) ?? joint.id;
       for (const p of decision.parts) {
-        const id = hardwareId(joint.id, p.role);
+        const id = hardwareId(owner, p.role);
         const nd = graph.nodes[id];
         if (!nd) problems.push(`joint ${joint.id}: ${id} is missing; the joint's hardware is minted, never declared.`);
         else if (nd.kind !== CATALOG.families[p.family]!.kind) problems.push(`joint ${joint.id}: ${id} is a ${nd.kind}, rule ${decision.rule} mints a ${CATALOG.families[p.family]!.kind}`);
@@ -1196,7 +1447,7 @@ export const cadJointRuleLint = {
     // Hardware outside every joint: fasteners answer to cadFastenerJustifiedLint,
     // the rest must at least sit in a host feature.
     const owned = new Set(decisions.flatMap(({ joint, decision }) =>
-      "error" in decision ? [] : decision.parts.map((p) => hardwareId(joint.id, p.role))));
+      "error" in decision ? [] : decision.parts.map((p) => hardwareId(sharedOf(graph, joint.id) ?? joint.id, p.role))));
     const hosted = new Set([...HARDWARE_PORT_TYPES, "SHAFT", "BORE"]);
     const MOTION_KINDS = new Set(["bearing", "bushing", "shaft", "collar", "eclip", "linear_bearing", "rail", "carriage", "motor"]);
     for (const nd of Object.values(graph.nodes)) {

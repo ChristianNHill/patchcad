@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { makeArchitectSchema, makeArchitectWireSchema, normalizeArchitectOutput, planGraph } from "./architect.js";
-import type { DomainBackend, LlmProvider } from "./index.js";
+import { LlmCallError, type DomainBackend, type LlmProvider } from "./index.js";
 
 /** PlanResult.repaired was the entire observability of the repair loop, and it
  *  hid one missing guidance rule behind 14 identical-looking repair rounds.
@@ -68,6 +68,38 @@ describe("the repair loop records what each round was for", () => {
     const res = await planGraph({ provider, backend, projectId: "t", goal: "g" });
     expect(res.repaired).toBe(false);
     expect(res.lintRounds).toEqual([]);
+  });
+});
+
+/** A plan that never passes its lints still billed every round. It threw a
+ *  bare Error, so a failed plan recorded $0 where it had spent about $1.15. */
+describe("a failed plan carries what it spent", () => {
+  const usage = { inputTokens: 10, outputTokens: 5, usd: 0.25 };
+
+  it("throws LlmCallError with all four rounds summed when the lints never clear", async () => {
+    const provider = {
+      id: "s",
+      complete: async <T>() => ({ data: emission(true) as T, usage, model: "s" }),
+    } as unknown as LlmProvider;
+    const err = await planGraph({ provider, backend, projectId: "t", goal: "g" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LlmCallError);
+    expect((err as LlmCallError).message).toContain("failed lints after 3 repairs");
+    expect((err as LlmCallError).usage).toEqual({ inputTokens: 40, outputTokens: 20, usd: 1 });
+  });
+
+  it("keeps the earlier rounds when a repair call itself throws", async () => {
+    let call = 0;
+    const provider = {
+      id: "s",
+      complete: async <T>() => {
+        if (++call === 1) return { data: emission(true) as T, usage, model: "s" };
+        throw new LlmCallError("unparseable", { inputTokens: 1, outputTokens: 1, usd: 0.5 });
+      },
+    } as unknown as LlmProvider;
+    const err = await planGraph({ provider, backend, projectId: "t", goal: "g" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LlmCallError);
+    expect((err as LlmCallError).message).toBe("unparseable");
+    expect((err as LlmCallError).usage).toEqual({ inputTokens: 11, outputTokens: 6, usd: 0.75 });
   });
 });
 

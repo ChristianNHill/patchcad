@@ -345,6 +345,35 @@ describe("G5 hardware: designed overlap and fit bands", () => {
     expect(hardwareAllowances(g)).toEqual([{ a: "axle", b: "b608", volume_mm3: expect.closeTo(ring(8.1, 8, 7), 6) }]);
   });
 
+  it("allows a pressed bushing its ring, and a shaft through a bushing by kind", () => {
+    // The toy car eval: every bushing clashed its body by 6.3mm³, the press ring.
+    const g = graph(
+      [housing("BUSHING_BORE", { od: 8, length: 5 }), part("bush", "bushing", { sku: "BUSH-5x8", length: 5 }), part("axle", "shaft", { sku: "DSHAFT-5" })],
+      [["housing", "host", "bush", "seat"]],
+    );
+    expect(hardwareAllowances(g)).toEqual([
+      { a: "housing", b: "bush", volume_mm3: expect.closeTo(ring(8, 7.9, 5), 6) },
+      { a: "axle", b: "bush", volume_mm3: expect.closeTo(ring(5.1, 5, 5), 6) },
+    ]);
+  });
+
+  it("allows a wheel pressed onto its axle, and nothing for a slip hub", () => {
+    const hub = (fit?: string) => graph(
+      [housing("HUB_BORE", { diameter: 5, depth: 10, ...(fit ? { fit } : {}) }), part("axle", "shaft", { sku: "DSHAFT-5" })],
+      [["housing", "host", "axle", "seat"]],
+    );
+    expect(hardwareAllowances(hub("press"))).toEqual([{ a: "housing", b: "axle", volume_mm3: expect.closeTo(ring(5, 4.9, 10), 6) }]);
+    expect(hardwareAllowances(hub())).toEqual([]);
+  });
+
+  it("allows any two gears of one module the mesh band, joint or not", () => {
+    const gear = (id: string, module: number) => part(id, "gear", { module, teeth: 20, thickness: 6 });
+    expect(hardwareAllowances(graph([gear("g20", 1), gear("g40", 1)], []))).toEqual([
+      { a: "g20", b: "g40", volume_mm3: expect.closeTo(0.2 * 0.1 * 1 * 6 * 1.5, 6) },
+    ]);
+    expect(hardwareAllowances(graph([gear("g20", 1), gear("g40", 1.5)], []))).toEqual([]);
+  });
+
   it("sends the hardware allowances to the kernel beside the thread ones", async () => {
     const { kernel, calls } = stubKernel(empty);
     const g = mated(housing("DOWEL_HOLE", { diameter: 4, depth: 8, fit: "press" }), part("pin", "dowel", { diameter: 4 }));

@@ -278,9 +278,9 @@ export function kinematicJoints(
   world: Record<string, Mat4>,
   instances: Record<string, Mat4[]> = {},
 ): KinematicJoint[] {
-  return defs.flatMap((d) => {
+  const built = defs.map((d) => {
     const copies = instances[d.node] ?? (world[d.node] ? [world[d.node]!] : []);
-    const joints: KinematicJoint[] = copies.map((placed) => {
+    return copies.map((placed): KinematicJoint => {
       const axis = (pose: Pose, col: number) => {
         const m = mul(placed, poseToMat(pose));
         const direction = [m[col]!, m[col + 1]!, m[col + 2]!].map((v) => Math.round(v * 1e6) / 1e6) as [number, number, number];
@@ -289,20 +289,27 @@ export function kinematicJoints(
       const coupled = d.coupled?.map((c) => ({ ...axis(c.pose, 8), ratio: c.ratio, moving: [] as string[] }));
       return { id: d.id, type: d.type, ...axis(d.pose, d.axis === "x" ? 0 : 8), limits: d.limits, moving: [], ...(coupled?.length ? { coupled } : {}) };
     });
-    const assign = (nodes: string[], group: (j: KinematicJoint) => Pick<KinematicJoint, "origin" | "direction" | "moving">) => {
+  });
+  // A node several joints move (one wheel node on two axles) goes copy by
+  // copy to the nearest axis of any of them, so a rear wheel never swings
+  // about the front axle.
+  const claimants = (n: string) => defs.flatMap((d, k) => (d.moving.includes(n) ? built[k]! : []));
+  return defs.flatMap((d, k) => {
+    const joints = built[k]!;
+    const assign = (nodes: string[], group: (j: KinematicJoint) => Pick<KinematicJoint, "origin" | "direction" | "moving">, pool: (n: string) => KinematicJoint[]) => {
       for (const n of nodes) {
         const placed = instances[n] ?? (world[n] ? [world[n]!] : []);
         if (!placed.length) group(joints[0]!).moving.push(n);
         placed.forEach((m, i) => {
           const at = transformPoint(m, [0, 0, 0]);
-          const nearest = joints.reduce((best, j) => (axisDistance(group(j), at) < axisDistance(group(best), at) ? j : best));
-          group(nearest).moving.push(i === 0 ? n : `${n}#${i}`);
+          const nearest = pool(n).reduce((best, j) => (axisDistance(group(j), at) < axisDistance(group(best), at) ? j : best));
+          if (joints.includes(nearest)) group(nearest).moving.push(i === 0 ? n : `${n}#${i}`);
         });
       }
     };
     if (!joints.length) return [];
-    assign(d.moving, (j) => j);
-    d.coupled?.forEach((c, g) => assign(c.moving, (j) => j.coupled![g]!));
+    assign(d.moving, (j) => j, claimants);
+    d.coupled?.forEach((c, g) => assign(c.moving, (j) => j.coupled![g]!, () => joints));
     return joints;
   });
 }

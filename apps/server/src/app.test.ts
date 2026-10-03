@@ -132,7 +132,7 @@ interface Harness {
 
 let open: Harness | null = null;
 
-async function setup(): Promise<Harness> {
+async function setup(provider: LlmProvider = hangingProvider): Promise<Harness> {
   const root = await mkdtemp(path.join(os.tmpdir(), "patchcad-app-"));
   const projectsRoot = path.join(root, "projects");
   const dirA = await writeProject(projectsRoot, "a");
@@ -148,7 +148,7 @@ async function setup(): Promise<Harness> {
     codeBackend: code.backend,
     cadBackend: { kernel: { health: async () => ({ ok: true }), baseUrl: "http://127.0.0.1:9" } } as unknown as CadBackend,
     library: noLibrary,
-    resolved: { provider: hangingProvider, source: "test" },
+    resolved: { provider, source: "test" },
     projectsRoot,
     examplesRoot: path.join(root, "examples"),
   });
@@ -328,5 +328,33 @@ describe("cooks", () => {
     await until(() => !h.s.liveCooks.has(h.dirA), "the background cook to settle");
     // B was never cooking.
     expect((await post(h.app, "/api/project/cook/cancel")).statusCode).toBe(409);
+  });
+});
+
+/** A plan whose lints never clear threw a bare Error, and the eval harness
+ *  read that as $0 where about $1.15 had been spent. The route meters each
+ *  call itself, so all four rounds must reach the unbilled ledger. */
+describe("a failed plan", () => {
+  it("bills every architect round to the session's unbilled ledger", async () => {
+    const emission = {
+      rationale: "r", design: "", edges: [], entryNodeId: "plate",
+      nodes: [{ id: "plate", kind: "part", title: "plate", spec: "s", dependsOn: [],
+                contract: { name: "plate", summary: "s", params: [], provides: [], requires: [], payload: {} } }],
+    };
+    const provider: LlmProvider = {
+      id: "lint-loop",
+      complete: async <T>() => ({ data: structuredClone(emission) as T, usage: { inputTokens: 10, outputTokens: 5, usd: 0.25 } }),
+    };
+    const h = await setup(provider);
+    h.cad.backend.planning = {
+      nodeKinds: [{ kind: "part", description: "d", guidance: "g" }],
+      payloadSchema: z.object({}),
+      architectGuidance: "",
+      graphLints: [{ id: "never", run: () => ["never: this plan cannot pass"] }],
+    } as unknown as DomainBackend<unknown>["planning"];
+    const res = await post(h.app, "/api/project/plan", { goal: "a plate" });
+    expect(res.statusCode).toBe(500);
+    expect(res.json().error).toContain("failed lints after 3 repairs");
+    expect(h.s.unbilled).toEqual({ calls: 4, inputTokens: 40, outputTokens: 20, usd: 1 });
   });
 });

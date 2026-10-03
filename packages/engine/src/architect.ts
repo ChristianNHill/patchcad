@@ -8,7 +8,7 @@ import {
   PortDecl,
 } from "@patchcad/shared";
 import type { DomainBackend } from "./backend.js";
-import type { LlmImage, LlmProvider, LlmUsage } from "./llm.js";
+import { LlmCallError, type LlmImage, type LlmProvider, type LlmUsage } from "./llm.js";
 import { contractHash } from "./graph/diff.js";
 
 /**
@@ -565,6 +565,7 @@ ${JSON.stringify(zodToJsonSchema(z.array(jointSchema), { target: "jsonSchema7", 
     repaired = true;
     opts.onPhase?.("repairing", `round ${round} of ${maxRepairs} — ${problems.length} issue(s)`);
     lintRounds.push([...problems]);
+    // A repair that throws must not lose the rounds before it: they billed.
     const repair = await opts.provider.complete({
       role: "architect",
       label: `architect-repair-${round}:${opts.projectId}`,
@@ -590,6 +591,13 @@ ${JSON.stringify(zodToJsonSchema(z.array(jointSchema), { target: "jsonSchema7", 
       maxTokens: ARCHITECT_MAX_TOKENS,
       effort: ARCHITECT_REPAIR_EFFORT,
       signal: opts.signal,
+    }).catch((err: unknown) => {
+      const own = err instanceof LlmCallError ? err.usage : undefined;
+      throw new LlmCallError((err as Error).message, {
+        inputTokens: usage.inputTokens + (own?.inputTokens ?? 0),
+        outputTokens: usage.outputTokens + (own?.outputTokens ?? 0),
+        usd: usage.usd + (own?.usd ?? 0),
+      }, { cause: err });
     });
     usage.inputTokens += repair.usage.inputTokens;
     usage.outputTokens += repair.usage.outputTokens;
@@ -599,7 +607,9 @@ ${JSON.stringify(zodToJsonSchema(z.array(jointSchema), { target: "jsonSchema7", 
     problems = lint(out);
   }
   if (problems.length > 0) {
-    throw new Error(`architect graph failed lints after ${maxRepairs} repairs:\n${problems.join("\n")}`);
+    // Every round billed. A bare Error recorded a failed plan as $0 when it had
+    // spent about $1.15, so the summed usage rides the throw.
+    throw new LlmCallError(`architect graph failed lints after ${maxRepairs} repairs:\n${problems.join("\n")}`, usage);
   }
   return {
     graph: architectOutputToGraph(out, opts.projectId, opts.backend.id, opts.goal, opts.backend.planning.paramUnit),

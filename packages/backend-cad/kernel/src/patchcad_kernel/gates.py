@@ -2443,12 +2443,14 @@ def _probe_magnet_pocket(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
 
 
 def _probe_hub_bore(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
-    """A slip-fit bore for a shaft. With params.flat it is a D-bore: the flat
-    sits `flat` mm from the axis along +xAxis, so the circle is fitted on the
-    -x half only and the flat is measured on its own."""
+    """A bore for a shaft, slip unless params.fit says press (a wheel pressed
+    onto its axle). With params.flat it is a D-bore: the flat sits `flat` mm
+    from the axis along +xAxis, so the circle is fitted on the -x half only and
+    the flat is measured on its own."""
     key = port.get("key", "?")
     d = _port_diameter(port)
-    band = _band(port, d, "slip")
+    fit = "press" if port.get("params", {}).get("fit") == "press" else "slip"
+    band = _band(port, d, fit)
     flat = _port_dim_opt(port, ("flat", "flat_distance"))
     if flat is None:
         return _banded(shape, port, band)
@@ -2472,7 +2474,7 @@ def _probe_hub_bore(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     measured = 2 * r
     if not band[0] - FIT_EPS_MM <= measured <= band[1] + FIT_EPS_MM:
         raise GateError("G3", f'port "{key}" (HUB_BORE): expected Ø{band[0]:.2f}..{band[1]:.2f}, measured Ø{measured:.2f}',
-                        f"cut the bore Ø{sum(band) / 2:.2f}, a slip fit on the Ø{d:g} shaft",
+                        f"cut the bore Ø{sum(band) / 2:.2f}, a {fit} fit on the Ø{d:g} shaft",
                         expected=round(sum(band) / 2, 3), measured=round(measured, 3))
     if math.hypot(cu, cv) > HOLE_CENTER_TOL_MM:
         raise GateError("G3", f'port "{key}" (HUB_BORE): bore centre is {math.hypot(cu, cv):.2f}mm off the declared origin',

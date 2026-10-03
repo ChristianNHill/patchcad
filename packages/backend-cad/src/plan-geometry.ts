@@ -123,7 +123,7 @@ function deepPointShared(a: Obb, b: Obb): boolean {
 }
 
 /** Solve the plan the same way the cook will (CadBackend.solveScene). */
-function solvePlan(graph: GraphDoc) {
+export function solvePlan(graph: GraphDoc) {
   const nodes = Object.values(graph.nodes).map((n) => {
     const ports: Record<string, ReturnType<typeof resolvePose>> = {};
     for (const p of (n.contract.payload as CadContractPayload | undefined)?.ports ?? []) {

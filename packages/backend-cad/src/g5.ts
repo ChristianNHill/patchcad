@@ -182,6 +182,11 @@ export function hardwareAllowances(graph: GraphDoc): { a: string; b: string; vol
         push(hostId, partId, ring(Number.isFinite(od) ? od : p("diameter") + 2 * KNURL_MM, p("diameter"), p("depth")));
       } else if (port.type === "BEARING_SEAT" && press && part.kind === "bearing") {
         push(hostId, partId, ring(p("od"), p("od") - PRESS_INTERFERENCE_MM, p("width")));
+      } else if (port.type === "BUSHING_BORE" && part.kind === "bushing") {
+        // Always pressed: gates.py probes a bushing bore at the press band.
+        push(hostId, partId, ring(p("od"), p("od") - PRESS_INTERFERENCE_MM, p("length")));
+      } else if (port.type === "HUB_BORE" && press && part.kind === "shaft") {
+        push(hostId, partId, ring(p("diameter"), p("diameter") - PRESS_INTERFERENCE_MM, p("depth")));
       } else if (port.type === "LINEAR_BEARING_SEAT" && press && part.kind === "linear_bearing") {
         push(hostId, partId, ring(p("od"), p("od") - PRESS_INTERFERENCE_MM, p("length")));
       } else if (port.type === "DOWEL_HOLE" && press && part.kind === "dowel") {
@@ -192,12 +197,12 @@ export function hardwareAllowances(graph: GraphDoc): { a: string; b: string; vol
       }
     }
   }
-  // By KIND, like a nut on a screw: a shaft and the bearings it runs in are
-  // often each mated to the housing, not to each other.
+  // By KIND, like a nut on a screw: a shaft and the bearings or bushings it
+  // runs in are often each mated to the housing, not to each other.
   const shafts = Object.values(graph.nodes).filter((n) => n.kind === "shaft");
-  for (const bearing of Object.values(graph.nodes).filter((n) => n.kind === "bearing")) {
+  for (const bearing of Object.values(graph.nodes).filter((n) => n.kind === "bearing" || n.kind === "bushing")) {
     const bore = hwDim(bearing, "bore");
-    const width = hwDim(bearing, "width");
+    const width = hwDim(bearing, bearing.kind === "bushing" ? "length" : "width");
     for (const shaft of shafts) push(shaft.id, bearing.id, ring(bore + PRESS_INTERFERENCE_MM, bore, width));
   }
   // A spur pair in mesh touches along its flanks by design. Two exact
@@ -205,10 +210,14 @@ export function hardwareAllowances(graph: GraphDoc): { a: string; b: string; vol
   // (a backlash band's worth) an m1 × 8 pair shares 0.14mm³, and 0.3mm closer
   // 1.7mm³, while a pair half a tooth out of phase shares 35mm³. So the pair
   // may share what the band makes and nothing like a wrong phase or centre.
-  for (const j of graph.joints ?? []) {
-    const [a, b] = [graph.nodes[`${j.id}_motor_gear`], graph.nodes[`${j.id}_driven_gear`]];
-    if (a && b) push(a.id, b.id, 0.2 * GEAR_MESH_BAND_MM * hwDim(a, "module") * hwDim(a, "thickness"));
-  }
+  // Any two gears of one module, a drive's or the plan's own: a pair further
+  // apart shares nothing, and a closer one more than this.
+  const gears = Object.values(graph.nodes).filter((n) => n.kind === "gear");
+  gears.forEach((a, k) => {
+    for (const b of gears.slice(k + 1)) {
+      if (hwDim(a, "module") === hwDim(b, "module")) push(a.id, b.id, 0.2 * GEAR_MESH_BAND_MM * hwDim(a, "module") * Math.min(hwDim(a, "thickness"), hwDim(b, "thickness")));
+    }
+  });
   return out;
 }
 
