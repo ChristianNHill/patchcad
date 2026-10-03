@@ -200,6 +200,27 @@ describe("CadBackend execute + verify", () => {
     expect(verify).toMatchObject({ ok: false, stage: "G4c" });
   });
 
+  it("fails an unresolvable contract expression as CONTRACT in execute, without a build", async () => {
+    const { kernel, calls } = stubKernel(twoPortsAndEnvelope);
+    const g = structuredClone(graph);
+    g.nodes.plate!.contract.payload = {
+      ...(g.nodes.plate!.contract.payload as object),
+      envelope: { volumes: [{ kind: "box", pose, dims: [50, "tanh(param(plate.x))", 10] }], clearance: 0.4 },
+    };
+    const exec = await new CadBackend({ kernel }).execute(g.nodes.plate!, ws, g);
+    expect(calls).toHaveLength(0);
+    expect(exec).toMatchObject({ ok: false, stage: "CONTRACT" });
+    expect(exec.report).toContain('unexpected token at "tanh(');
+  });
+
+  it("passes a gate timeout through execute to verify at its gate", async () => {
+    const error = 'gate G3 timed out on this geometry: port "a" was still being measured after 30s';
+    const { kernel } = stubKernel({ ok: false, stage: "G3", error, hint: "", failures: [{ stage: "G3", port: "a", error, hint: "" }] });
+    const backend = new CadBackend({ kernel });
+    expect((await backend.execute(node, ws, graph)).ok).toBe(true);
+    expect(await backend.verify(node, graph, ws)).toMatchObject({ ok: false, stage: "G3" });
+  });
+
   it("sends the contract with execute, envelope included for a generated part", async () => {
     const { kernel, calls } = stubKernel(twoPortsAndEnvelope);
     await new CadBackend({ kernel }).execute(node, ws, graph);
@@ -236,10 +257,10 @@ describe("CadBackend kernel request · assertions", () => {
 });
 
 describe("CadBackend export · unverified candidates", () => {
-  const exported = async (includeUnverified?: boolean) => {
+  const exported = async (includeUnverified?: boolean, status = "error_contract") => {
     const g = structuredClone(graph);
     Object.assign(g.nodes.plate!, {
-      status: "error_contract",
+      status,
       candidate: { code: "def build(p): candidate", hash: "c", stage: "G4b", report: "assertion failed" },
     });
     const kernel = new KernelClient();
@@ -255,5 +276,7 @@ describe("CadBackend export · unverified candidates", () => {
   it("leaves a contract-stuck node out unless asked, then sends its candidate, never its failed artifact", async () => {
     expect(await exported()).toEqual([]);
     expect(await exported(true)).toEqual(["def build(p): candidate"]);
+    // A code-invalid node keeps its best executed attempt too.
+    expect(await exported(true, "error_code")).toEqual(["def build(p): candidate"]);
   });
 });

@@ -12,6 +12,7 @@ import os
 import pathlib
 import subprocess
 import sys
+import tempfile
 import time
 
 import httpx
@@ -1544,6 +1545,71 @@ def build(p):
 """
 
 
+# CADClamp t4-009's dovetail block, as generated.
+DOVETAIL_T4_009 = """
+from build123d import *
+import math
+
+def build(p):
+    _ = p['nonce']
+    length, width, height = 60.0, 40.0, 20.0
+    dovetail_width, dovetail_height, slide_clearance = 12.0, 8.0, 0.3
+    t = math.tan(math.radians(14))
+    rail_top_w = dovetail_width + 2.0 * dovetail_height * t
+    block = Pos(0, 0, height / 2) * Box(length, width, height)
+    block = chamfer(block.edges().group_by(Axis.Z)[0], 0.4)
+    block = chamfer(block.edges().group_by(Axis.Z)[-1], 0.4)
+    ext = 1.0
+    hb, ht = dovetail_width / 2 - ext * t, rail_top_w / 2
+    rail_pts = [(-hb, height - ext), (hb, height - ext), (ht, height + dovetail_height), (-ht, height + dovetail_height)]
+    block = block + Pos(-length / 2, 0, 0) * extrude(Plane.YZ * Polygon(*rail_pts, align=None), length)
+    so = (dovetail_width + 2 * slide_clearance) / 2 - ext * t
+    sr = (rail_top_w + 2 * slide_clearance) / 2
+    sock_depth = dovetail_height + slide_clearance
+    sock_pts = [(-so, -ext), (so, -ext), (sr, sock_depth), (-sr, sock_depth)]
+    block = block - Pos(-length / 2 - 1, 0, 0) * extrude(Plane.YZ * Polygon(*sock_pts, align=None), length + 2)
+    hole = Pos(0, 0, height / 2) * Cylinder(2.5, height + 2)
+    return block - [Pos(sx * 22, sy * 14, 0) * hole for sx in (-1, 1) for sy in (-1, 1)]
+"""
+
+# A spigot thread cut off by its lead-in chamfer, the way t4-007's was.
+RUNOUT_THREAD = """
+from build123d import *
+
+def build(p):
+    _ = p['nonce']
+    tooth = Plane.XZ * Polygon((10.2, -1.07), (12, -0.2), (12, 0.2), (10.2, 1.07), align=None)
+    spigot = Pos(0, 0, 10) * Cylinder(10.5, 22) + Pos(0, 0, -1) * sweep(tooth, Helix(3, 24, 10.5), is_frenet=True)
+    lead = revolve(Plane.XZ * Polygon((0, -1), (12.5, -1), (12.5, 18.5), (11, 20), (0, 20), align=None), Axis.Z, 360)
+    return Pos(0, 0, -5) * Cylinder(17, 10) + (spigot & lead) - Pos(0, 0, 5) * Cylinder(9, 40)
+"""
+
+HONEYCOMB = """
+from build123d import *
+
+def build(p):
+    _ = p['nonce']
+    w, rib = 8.0, p['rib']
+    cell = extrude(RegularPolygon(w / 3 ** 0.5, 6, rotation=30), 4)
+    panel = Pos(0, 0, 1) * Box(70, 56, 2)
+    dx, dy = w + rib, (w + rib) * 3 ** 0.5 / 2
+    cells = [Pos(c * dx + (dx / 2 if r % 2 else 0), r * dy, -1) * cell for r in range(-2, 3) for c in range(-2, 3)]
+    return panel - cells
+"""
+
+THREADED_STUD = """
+from build123d import *
+
+def build(p):
+    _ = p['nonce']
+    tooth = Plane.XZ * Polygon((8.4, -1.0), (10, -0.15), (10, 0.15), (8.4, 1.0), align=None)
+    part = Pos(0, 0, 3) * Cylinder(18, 6) + Pos(0, 0, 12) * Cylinder(8.5, 12)
+    part += Pos(0, 0, 6) * sweep(tooth, Helix(2.5, 10.5, 8.4), is_frenet=True)
+    part -= Pos(0, 0, 10) * Cylinder(4.2, 40)
+    return part - [Pos(x, 0, 3) * Cylinder(2.25, 8) for x in (-13, 13)]
+"""
+
+
 def bench_fixes(client: httpx.Client) -> None:
     """CADClamp benchmark zeros: a hole breaking out into a cavity, a keyed
     bore, a sphere's pole in the export mesh, a thread inside try/except: pass,
@@ -1625,6 +1691,32 @@ def bench_fixes(client: httpx.Client) -> None:
           fused.status_code == 422 and fused.json().get("stage") == "G2"
           and "swept thread fused onto a core" in fused.json().get("hint", ""), fused.json().get("hint", "")[:200])
 
+    # t4-003: the bore probe alone took 28s on a swept thread (31s on this
+    # shorter one) and the job died as "loops forever". The gates' share is the
+    # same job's time minus a build-only run of it.
+    stud_ports = [{"key": "center_bore", "type": "BORE", "pose": {"origin": [0, 0, 18], "zAxis": [0, 0, 1],
+                   "xAxis": [1, 0, 0]}, "params": {"diameter": 8.4}},
+                  {"key": "flange_holes", "type": "HOLE_PATTERN", "pose": {"origin": [0, 0, 0], "zAxis": [0, 0, -1],
+                   "xAxis": [1, 0, 0]}, "params": {"diameter": 4.5, "count": 2, "pcd": 26, "start_angle": 0}}]
+    built = run(THREADED_STUD)
+    gated = run(THREADED_STUD, ports=stud_ports)
+    gate_s = (gated.json().get("elapsed_ms", 1e6) - built.json().get("elapsed_ms", 0)) / 1000
+    check("G3: a swept-thread stud's bore and flange holes probe in under 3s", gated.status_code == 200
+          and gate_s < 3, f"gates {gate_s:.1f}s of {gated.json().get('elapsed_ms', 0) / 1000:.1f}s"
+          if gated.status_code == 200 else gated.json().get("error", "")[:200])
+    from patchcad_kernel.pool import WorkerPool
+
+    with tempfile.TemporaryDirectory() as tmp:
+        solo = WorkerPool(1, tmp)
+        try:
+            slow = solo.execute({"code": THREADED_STUD, "params": {"nonce": n}, "ports": stud_ports, "out_dir": tmp},
+                                20, gate_timeout_s=0.2)
+        finally:
+            solo.shutdown()
+    check("a gate out of time is that gate's failure, never code that loops forever",
+          slow.get("stage") == "G2" and "timed out on this geometry" in slow.get("error", "")
+          and "loops forever" not in slow.get("hint", ""), f"{slow.get('stage')}: {slow.get('error', '')[:160]}")
+
     fdm = {"kind": "fdm"}
     plate = run("from build123d import *\ndef build(p):\n    _ = p['nonce']\n    return Box(40, 30, p['t'])\n",
                 params={"t": 3}, process=fdm)
@@ -1633,6 +1725,22 @@ def bench_fixes(client: httpx.Client) -> None:
               "    return Box(40, 30, 3) + Pos(0, 0, 6.5) * Box(0.3, 20, 4)\n", process=fdm)
     rules = [f.get("rule") for f in fin.json().get("failures") or []]
     check("G4c fdm: a 0.3mm fin fails wall", fin.status_code == 422 and "wall" in rules, str(rules))
+    # CADClamp t4-009 and t4-007: chords of 0.01-0.28mm beside 76 deg dovetail
+    # edges and along a thread's runout are slivers a slicer drops, not walls.
+    dovetail = run(DOVETAIL_T4_009, process=fdm)
+    check("G4c fdm: the t4-009 dovetail's 76deg edges are not thin walls", dovetail.status_code == 200,
+          dovetail.json().get("error", "")[:160])
+    runout = run(RUNOUT_THREAD, process=fdm)
+    found = [f.get("message", "") for f in (runout.json().get("measurements", {}).get("process") or {}).get("findings") or []]
+    check("G4c fdm: a thread's feathered runout passes, its slivers a finding",
+          runout.status_code == 200 and any("slivers" in m for m in found), str(found or runout.json().get("error")))
+    # A pen cup's honeycomb: its ribs are thin along their whole length, which
+    # no acute edge excuses. 0.6mm ribs print.
+    ribs = {rib: run(HONEYCOMB, params={"rib": rib}, process=fdm) for rib in (0.25, 0.6)}
+    rules = [f.get("rule") for f in ribs[0.25].json().get("failures") or []]
+    check("G4c fdm: a honeycomb with 0.25mm ribs fails wall, with 0.6mm ribs passes",
+          ribs[0.25].status_code == 422 and "wall" in rules and ribs[0.6].status_code == 200,
+          f"{rules or ribs[0.25].json().get('error')} / {ribs[0.6].json().get('error', 'pass')[:80]}")
     tower = run("from build123d import *\ndef build(p):\n    _ = p['nonce']\n"
                 "    return Pos(0, 0, 15) * Box(4, 4, 30) + Pos(30, 0, 28) * Box(60, 4, 4)\n", process=fdm)
     found = [f.get("rule") for f in (tower.json().get("measurements", {}).get("process") or {}).get("findings") or []]

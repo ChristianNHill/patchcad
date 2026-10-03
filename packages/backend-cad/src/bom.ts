@@ -86,10 +86,11 @@ export interface Bom {
   unverified: { nodeId: string; title: string; class: string; process: string; failedStage: string }[];
 }
 
-/** The node's gates-rejected best attempt, while the node is still stuck on
- *  its contract. Unverified: the BOM and export flag it, never pass it off. */
+/** The node's gates-rejected best attempt, while its cook is still stuck
+ *  (error_contract or error_code). Unverified: the BOM and export flag it,
+ *  never pass it off. */
 export function unverifiedCandidate(node: NodeRecord): NodeRecord["candidate"] {
-  return node.status === "error_contract" ? node.candidate : undefined;
+  return node.status === "error_contract" || node.status === "error_code" ? node.candidate : undefined;
 }
 
 /** Placed copies per node, from the same solve the viewport uses. */

@@ -480,16 +480,64 @@ def reset_job_cache() -> None:
     reset_mesh_memo()
 
 
+# Rays for _in_material, off every axis so a ray along a port axis or a box
+# edge is never the one asked.
+CONTAINMENT_RAYS = ((0.5773, 0.5774, 0.5775), (-0.7, 0.3, 0.649), (0.21, -0.88, 0.43))
+
+
 def _in_material(shape: Any, p: tuple[float, float, float]) -> bool:
+    """Inside or on the solid. The nearest face a ray from p meets says it:
+    leaving through that face (the ray along its outward normal) means p is in
+    material, and no face at all means p is outside. That is the test
+    BRepClass3d_SolidClassifier makes, but the classifier rebuilds its ray
+    work every point: 38ms a point on a swept thread, and a bore probe asking
+    736 points took 28s and timed the job out. The face intersector here is
+    loaded once per shape (_line_hits shares it). A ray whose nearest hit is
+    on an edge or grazes its face is ambiguous and the next ray is asked; three
+    ambiguous rays fall back to the classifier."""
     if getattr(shape, "wrapped", None) is None:  # an imported MeshPart classifies itself
         return bool(shape.is_inside(p))
+    from OCP.BRepGProp import BRepGProp_Face
+    from OCP.gp import gp_Dir, gp_Lin, gp_Pnt, gp_Vec
+    from OCP.IntCurveSurface import IntCurveSurface_Tangent
+    from OCP.TopAbs import TopAbs_ON
+
+    it = _intersector(shape)
+    reach = _cached(shape, "reach", lambda: shape.bounding_box().diagonal + 2.0)
+    for d in CONTAINMENT_RAYS:
+        it.Perform(gp_Lin(gp_Pnt(*p), gp_Dir(*d)), -CONTAINMENT_TOL_MM, reach)
+        if it.NbPnt() == 0:
+            return False
+        i = min(range(1, it.NbPnt() + 1), key=it.WParameter)
+        if abs(it.WParameter(i)) <= CONTAINMENT_TOL_MM:
+            return True
+        if it.State(i) == TopAbs_ON or it.Transition(i) == IntCurveSurface_Tangent:
+            continue
+        normal = gp_Vec()
+        BRepGProp_Face(it.Face(i)).Normal(it.UParameter(i), it.VParameter(i), gp_Pnt(), normal)
+        dot = normal.Dot(gp_Vec(*d))
+        if abs(dot) > 1e-3 * normal.Magnitude():
+            return dot > 0
     from OCP.BRepClass3d import BRepClass3d_SolidClassifier
-    from OCP.gp import gp_Pnt
     from OCP.TopAbs import TopAbs_IN
 
     classifier = _cached(shape, "classifier", lambda: BRepClass3d_SolidClassifier(shape.wrapped))
-    classifier.Perform(gp_Pnt(*p), 1.0e-6)  # build123d's is_inside, minus the rebuild
+    classifier.Perform(gp_Pnt(*p), CONTAINMENT_TOL_MM)
     return classifier.State() == TopAbs_IN or classifier.IsOnAFace()
+
+
+CONTAINMENT_TOL_MM = 1e-6
+
+
+def _intersector(shape: Any) -> Any:
+    from OCP.IntCurvesFace import IntCurvesFace_ShapeIntersector
+
+    def load() -> Any:
+        it = IntCurvesFace_ShapeIntersector()
+        it.Load(shape.wrapped, 1e-7)
+        return it
+
+    return _cached(shape, "lines", load)
 
 
 CROSSING_EPS_MM = 1e-3
@@ -500,14 +548,8 @@ def _line_hits(shape: Any, start: tuple[float, float, float], direction: list[fl
     as sorted distances in [0, reach]. Exact, where a 0.25mm march costs four
     classifier calls per millimetre of depth and steps over a thinner floor."""
     from OCP.gp import gp_Dir, gp_Lin, gp_Pnt
-    from OCP.IntCurvesFace import IntCurvesFace_ShapeIntersector
 
-    def load() -> Any:
-        it = IntCurvesFace_ShapeIntersector()
-        it.Load(shape.wrapped, 1e-7)
-        return it
-
-    it = _cached(shape, "lines", load)
+    it = _intersector(shape)
     it.Perform(gp_Lin(gp_Pnt(*start), gp_Dir(*direction)), 0.0, reach)
     return sorted(it.WParameter(i) for i in range(1, it.NbPnt() + 1))
 
@@ -1232,26 +1274,34 @@ def _probe_channel(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
                             f"cut the channel floor {declared_depth:g}mm from the face; a mating part seats on this number",
                             expected=declared_depth, measured=round(floor, 3))
 
-    # SAMPLING, NOT A BOUND. Three depths cannot see a constriction that falls
+    # SAMPLING, NOT A BOUND. Five depths cannot see a constriction that falls
     # between them: a 3mm channel pinched to 2.4mm over a 0.5mm band still
     # passes. No finite sample set closes that, and one slice was strictly
     # worse — but the failure hint says "make the channel 3mm at its tightest
     # point", which is more than the gate can actually verify.
     reach = width * 3 + 2.0
     span_to = (floor - PROBE_EPS_MM) if floor is not None else PROBE_DEPTH_MM * 3
-    depths = sorted({PROBE_DEPTH_MM, max(PROBE_DEPTH_MM, span_to / 2), max(PROBE_DEPTH_MM, span_to)})
+    depths = sorted({max(PROBE_DEPTH_MM, PROBE_DEPTH_MM + (span_to - PROBE_DEPTH_MM) * k / 4) for k in range(5)})
     measured: float | None = None
     at_depth: float | None = None
+    breakout: float | None = None
     for probe_w in depths:
         if _in_material(shape, _at(o, x, y, z, 0, 0, -probe_w)):
             continue  # past the floor or into a rib — not a slice of this channel
         left = _march(shape, frame, 0.0, 1.0, -probe_w, reach)
         right = _march(shape, frame, 0.0, -1.0, -probe_w, reach)
+        if (left is None or right is None) and measured is not None:
+            # BREAKOUT, the channel's version of _breaks_out: walled above, open
+            # here, so the channel ran into a void crossing it. A nut drop slot
+            # meets the bolt hole that crosses its nut pocket, and grading the
+            # slice inside that hole failed a correct part as "open". The width
+            # is held wherever the walls exist, which is above this.
+            breakout = probe_w
+            break
         if left is None or right is None:
-            # Two very different causes, and the depth tells them apart. Failing
-            # at the SHALLOWEST slice means the walls exist deeper down but are
-            # gone at the mouth — an over-cut lead-in, not a bad pose. The one
-            # that keeps happening: a Box rotated 45 deg and subtracted as a
+            # Open before any slice found both walls. At the MOUTH the walls may
+            # exist deeper down but are gone where the mating part enters. The
+            # one that keeps happening: a Box rotated 45 deg and subtracted as a
             # chamfer spans leg*sqrt(2) in each rotated axis, so a flare sized
             # against the wall thickness quietly eats the entire wall.
             if probe_w <= PROBE_DEPTH_MM:
@@ -1280,7 +1330,9 @@ def _probe_channel(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
                         expected=width, measured=round(measured, 3))
 
     result: dict[str, Any] = {"key": key, "type": ptype, "measured_width": round(measured, 3)}
-    if floor is not None:
+    if breakout is not None:
+        result["breakout_depth"] = round(breakout, 3)
+    elif floor is not None:
         result["measured_depth"] = round(floor, 3)
     return result
 
@@ -1805,11 +1857,13 @@ def _unreadable(stage: str, what: str, err: Exception) -> dict[str, Any]:
                      "the geometry kernel failed on this check; simplify the feature it measures").as_failure()
 
 
-def g3_ports(shape: Any, ports: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def g3_ports(shape: Any, ports: list[dict[str, Any]],
+             progress=lambda stage, port=None: None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Every port is probed, failing or not: (report of passes, failures)."""
     report: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     for port in ports:
+        progress("G3", port.get("key", "?"))
         try:
             report.append(_probe_port(shape, port))
         except GateError as err:
@@ -1824,7 +1878,7 @@ def g3_ports(shape: Any, ports: list[dict[str, Any]]) -> tuple[list[dict[str, An
 
 def contract_gates(shape: Any, ports: list[dict[str, Any]], envelope: list[dict[str, Any]],
                    assertions: list[dict[str, Any]] | None = None, solids: int | None = None,
-                   process: dict[str, Any] | None = None) -> dict[str, Any]:
+                   process: dict[str, Any] | None = None, progress=lambda stage, port=None: None) -> dict[str, Any]:
     """G3, G4, G4b and G4c together, raising ONE GateError naming every failure.
     Stopping at the first bad port spent a whole repair round per port: the
     model fixed the one it was shown and the next attempt revealed the next.
@@ -1842,9 +1896,10 @@ def contract_gates(shape: Any, ports: list[dict[str, Any]], envelope: list[dict[
     if ports:
         if process:
             ports = [{**p, "process": process.get("kind")} for p in ports]
-        measured["ports"], port_failures = g3_ports(shape, ports)
+        measured["ports"], port_failures = g3_ports(shape, ports, progress)
         failures += port_failures
     if envelope:
+        progress("G4")
         try:
             measured["envelope"] = g4_envelope(shape, envelope)
         except GateError as err:
@@ -1852,11 +1907,13 @@ def contract_gates(shape: Any, ports: list[dict[str, Any]], envelope: list[dict[
         except Exception as err:  # noqa: BLE001 — see _unreadable
             failures.append(_unreadable("G4", "the envelope", err))
     if assertions:
+        progress("G4b")
         measured["assertions"], assertion_failures = g4b_assertions(shape, assertions)
         failures += assertion_failures
     if process:
         from .dfm_process import g4c_process
 
+        progress("G4c")
         measured["process"], process_failures = g4c_process(shape, process)
         failures += process_failures
     if not failures:
@@ -2967,6 +3024,22 @@ if __name__ == "__main__":  # pragma: no cover
            lambda: _probe_channel(*_clip(0.9)),
            "the channel is open",
            want_hint="over-cut lead-in")
+
+    # CADClamp t5-002: a nut drop slot down from the top face into a hex pocket
+    # that a Ø5.5 bolt hole crosses. The slice inside the hole has no walls,
+    # and that is the hole, not an open slot.
+    def _nut_block(slot_y: float, slot_w: float = 4.4):
+        block = Pos(0, 0, 15) * Box(40, 20, 30)
+        block -= Pos(0, 0, 22.5) * Box(8.4, slot_y, 15)
+        block -= Pos(0, 0, 20) * (Rot(90, 0, 0) * Cylinder(2.75, 30))
+        return block, {"key": "nut_drop_slot", "type": "SLOT", "pose": pose((0, 0, 30)), "params": {"width": slot_w}}
+
+    expect("a slot crossed by a bolt hole is graded above the breakout",
+           lambda: _probe_channel(*_nut_block(4.4)))
+    expect("a slot crossed by a bolt hole still fails a wrong width",
+           lambda: _probe_channel(*_nut_block(4.4, 3.4)), "expected width 3.4")
+    expect("a slot cut across the whole block is open",
+           lambda: _probe_channel(*_nut_block(24.0)), "the channel is open")
 
     expect("groove with no width",
            lambda: _probe_channel(grooved, {"key": "g", "type": "GROOVE", "pose": pose((0, 0, 5)), "params": {}}),

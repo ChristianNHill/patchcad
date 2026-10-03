@@ -48,13 +48,13 @@ function FailurePanel({ nodeId }: { nodeId: string }) {
   );
 }
 
-/** A node stuck on its contract keeps its best attempt (the engine's
+/** A node whose cook failed keeps its best attempt (the engine's
  *  `candidate`). The gates REJECTED it, so it is never shown as the part:
  *  it exports only on an explicit ask, flagged in the request and the label. */
 function CandidatePanel({ node }: { node: NodeRecord }) {
   const status = useStudio((s) => s.statuses[node.id]);
   const [error, setError] = useState<string | null>(null);
-  if (status !== "error_contract" || !node.candidate) return null;
+  if ((status !== "error_contract" && status !== "error_code") || !node.candidate) return null;
   const save = async () =>
     setError(
       await download(

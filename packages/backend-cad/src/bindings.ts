@@ -89,11 +89,27 @@ export function effectiveParam(graph: GraphDoc, nodeId: string, name: string): P
   return node.contract.params.find((p) => p.name === name)?.default;
 }
 
+/** The only names an expression may call, plus `pi`. Trig is in radians, as
+ *  in the generator's Python; `radians`/`degrees` convert. A dovetail's flank
+ *  angle was written `tan(param(x.angle) * pi / 180)` and every attempt threw. */
+const FUNCTIONS: Record<string, (...a: number[]) => number> = {
+  sin: Math.sin,
+  cos: Math.cos,
+  tan: Math.tan,
+  atan: Math.atan,
+  sqrt: Math.sqrt,
+  abs: Math.abs,
+  min: Math.min,
+  max: Math.max,
+  radians: (d) => (d * Math.PI) / 180,
+  degrees: (r) => (r * 180) / Math.PI,
+};
+
 /**
  * Tiny arithmetic evaluator for binding expressions: numbers, + - * /,
- * parentheses, and `param(<nodeId>.<paramName>)` references. Recursive
- * descent, no eval, no identifiers beyond param() — unresolvable refs and
- * malformed input return an error instead of guessing.
+ * parentheses, `param(<nodeId>.<paramName>)` references, `pi` and the
+ * FUNCTIONS above. Recursive descent, no eval, a closed set of names —
+ * unresolvable refs and malformed input return an error instead of guessing.
  */
 function evalArithmetic(graph: GraphDoc, src: string): { value: number } | { error: string } {
   let pos = 0;
@@ -130,6 +146,35 @@ function evalArithmetic(graph: GraphDoc, src: string): { value: number } | { err
       const value = effectiveParam(graph, ref.slice(0, dot), ref.slice(dot + 1));
       if (typeof value !== "number") return fail(`param(${ref}) is ${value === undefined ? "missing" : "not numeric"}`);
       return { value };
+    }
+    const name = /^[a-z_]\w*/i.exec(s.slice(pos))?.[0];
+    if (name === "pi") {
+      pos += name.length;
+      return { value: Math.PI };
+    }
+    if (name && Object.hasOwn(FUNCTIONS, name)) {
+      pos += name.length;
+      skip();
+      if (s[pos] !== "(") return fail(`missing ( after ${name}`);
+      pos++;
+      const args: number[] = [];
+      for (;;) {
+        const arg = addSub();
+        if ("error" in arg) return arg;
+        args.push(arg.value);
+        skip();
+        if (s[pos] === ",") {
+          pos++;
+          continue;
+        }
+        if (s[pos] !== ")") return fail(`missing ) after ${name}(`);
+        pos++;
+        break;
+      }
+      const fn = FUNCTIONS[name]!;
+      if (fn.length === 1 && args.length !== 1) return fail(`${name}() takes one argument`);
+      const value = fn(...args);
+      return Number.isFinite(value) ? { value } : fail(`${name}(${args.join(", ")}) is not a finite number`);
     }
     const m = /^-?\d+(\.\d+)?/.exec(s.slice(pos));
     if (!m) return fail(`unexpected token at "${s.slice(pos, pos + 12)}"`);

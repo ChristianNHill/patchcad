@@ -25,7 +25,9 @@ class WorkerCrash(Exception):
 
 
 class WorkerTimeout(Exception):
-    pass
+    def __init__(self, message: str, phase: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.phase = phase  # the gate running at the kill; None while still building
 
 
 def _timeout_line(trace_path: str, code: str) -> str | None:
@@ -40,6 +42,23 @@ def _timeout_line(trace_path: str, code: str) -> str | None:
     except OSError:
         return None
     return source_context(code, int(m.group(1))) if m and code else None
+
+
+def _gate_timeout(phase: dict[str, Any], budget: float | None) -> dict[str, Any]:
+    """The part BUILT; a gate measuring it ran out of time. That is the gate's
+    stage, not a TIMEOUT: "loops forever" sent the generator to simplify a
+    threaded stud whose bore probe alone took 28s. The stage keeps the build
+    G0-G2-passed for the backend, and its measurements are lost with the worker."""
+    stage, port = phase["phase"], phase.get("port")
+    what = f'port "{port}" ' if port else ""
+    failure = {"stage": stage,
+               "error": f"gate {stage} timed out on this geometry: {what}was still being measured after {budget:g}s",
+               "hint": "the part built and executed; the gate measuring it ran out of time, which does not by "
+                       "itself mean the code is wrong. Keep the features the contract names; fewer, simpler faces "
+                       "(no fillet on every edge, one sweep not many) measure faster"}
+    if port:
+        failure["port"] = port
+    return {"ok": False, **failure, "failures": [failure]}
 
 
 class Worker:
@@ -74,24 +93,37 @@ class Worker:
                 pass
             raise
 
-    def request(self, job: dict[str, Any], timeout_s: float) -> dict[str, Any]:
+    def request(self, job: dict[str, Any], timeout_s: float, gate_timeout_s: float | None = None) -> dict[str, Any]:
         """Blocking send+recv. Raises WorkerTimeout / WorkerCrash; either way
-        the caller must consider this worker dead and call respawn()."""
+        the caller must consider this worker dead and call respawn().
+
+        With `gate_timeout_s`, the build has `timeout_s` and the gates their own
+        budget from the moment the worker reports the build done: it sends
+        {"phase": stage, "port"?} as each gate starts, and the last one names
+        what was running if the gates run out of time."""
         # Dump the stack a second before the kill, so a timeout can say where.
         try:
-            self.parent_conn.send(job | {"trace_after_s": max(timeout_s - 1, timeout_s * 0.8)})
+            self.parent_conn.send(job | {"trace_after_s": max(timeout_s - 1, timeout_s * 0.8),
+                                         "phases": gate_timeout_s is not None})
         except (BrokenPipeError, OSError) as err:
             raise WorkerCrash(f"worker pipe broken before send: {err}") from None
         deadline = time.monotonic() + timeout_s
+        phase = None
         while time.monotonic() < deadline:
             if self.parent_conn.poll(0.1):
                 try:
-                    return self.parent_conn.recv()
+                    reply = self.parent_conn.recv()
                 except (EOFError, OSError) as err:
                     raise WorkerCrash(f"worker died mid-job: {err}") from None
+                if "phase" not in reply:
+                    return reply
+                if phase is None and gate_timeout_s is not None:
+                    deadline = time.monotonic() + gate_timeout_s
+                phase = reply
+                continue
             if not self.process.is_alive():
                 raise WorkerCrash(f"worker exited with code {self.process.exitcode}")
-        raise WorkerTimeout(f"job exceeded {timeout_s:.0f}s")
+        raise WorkerTimeout(f"job exceeded {timeout_s if phase is None else gate_timeout_s:.0f}s", phase)
 
     def respawn(self) -> None:
         # Best-effort teardown of a worker already known dead or hung: a failure
@@ -149,7 +181,7 @@ class WorkerPool:
         self._lock = threading.Lock()
         self._available = threading.Semaphore(size)
 
-    def execute(self, job: dict[str, Any], timeout_s: float) -> dict[str, Any]:
+    def execute(self, job: dict[str, Any], timeout_s: float, gate_timeout_s: float | None = None) -> dict[str, Any]:
         """Thread-safe blocking execute — call from a threadpool, never the
         event loop. A timed-out or crashed worker is respawned before the
         error surfaces, so the pool never shrinks."""
@@ -157,11 +189,13 @@ class WorkerPool:
         with self._lock:
             worker = self._free.pop()
         try:
-            return worker.request(job, timeout_s)
-        except WorkerTimeout:
+            return worker.request(job, timeout_s, gate_timeout_s)
+        except WorkerTimeout as err:
             # Read before respawn: the new worker truncates the same trace file.
             where = _timeout_line(worker.trace_path, job.get("code", ""))
             worker.respawn()
+            if err.phase is not None:
+                return _gate_timeout(err.phase, gate_timeout_s)
             error = f"execution exceeded {timeout_s:.0f}s and was killed"
             if where:
                 error += f", still running {where}"

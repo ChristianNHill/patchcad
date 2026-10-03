@@ -21,6 +21,10 @@ PORT = int(os.environ.get("PATCHCAD_KERNEL_PORT", "8621"))
 #: 0.0.0.0 in a container, where the server reaches the kernel by service name.
 HOST = os.environ.get("PATCHCAD_KERNEL_HOST", "127.0.0.1")
 TIMEOUT_S = float(os.environ.get("PATCHCAD_KERNEL_TIMEOUT", "20"))
+#: The gates' own budget, started when the build returns. A probe slow on a
+#: helical sweep used to share the build's 20s and was reported as code that
+#: "loops forever", so the generator simplified a correct part.
+GATE_TIMEOUT_S = float(os.environ.get("PATCHCAD_KERNEL_GATE_TIMEOUT", "30"))
 def _default_pool_size() -> int:
     """Warm workers to keep. Two left a cook wave serialising on geometry: eight
     parts in parallel took 4.5s of wall for 7.5s of work, a 1.7x speedup against
@@ -123,7 +127,14 @@ pool = None  # set at startup; parent process stays OCP-free
 # sweep, loft, revolve or helix, and a feature added only if a volume test
 # passes; G4b helix and line_count; G4c "fdm" (wall blocks under 0.45mm on
 # generated parts; stability, overhang and thin walls are findings).
-GATES_VERSION = 18
+# 18 -> 19: containment reads the nearest face a ray meets (the classifier
+# called a point 3.6mm outside a swept thread inside); a SLOT/GROOVE walled
+# above a crossing void is graded above it, not failed as open; the gates have
+# their own budget, and running out of it is that gate's failure, not TIMEOUT;
+# min_wall (G4b, G4c) leaves out chords within a nozzle width of an edge under
+# 100 deg whose surface 1.5mm further in is no longer thin (dovetail edges,
+# thread runouts), reported as a sliver finding; a rib thin all along counts.
+GATES_VERSION = 19
 # Tap drills and clearances come from the catalog, so a catalog edit changes
 # verdicts too. Keyed by content, not by remembering to bump GATES_VERSION.
 CATALOG_DIGEST = hashlib.sha256(
@@ -245,7 +256,7 @@ app.add_middleware(
 
 @app.get("/health")
 async def health():
-    return {"ok": True, "workers": pool.stats(), "timeout_s": TIMEOUT_S}
+    return {"ok": True, "workers": pool.stats(), "timeout_s": TIMEOUT_S, "gate_timeout_s": GATE_TIMEOUT_S}
 
 
 @app.post("/execute")
@@ -284,7 +295,7 @@ async def execute(body: ExecuteBody):
         "out_dir": str(out_dir),
         "glb_dir": str(CACHE_ROOT / build_digest),
     }
-    result = await anyio.to_thread.run_sync(lambda: pool.execute(job, TIMEOUT_S))
+    result = await anyio.to_thread.run_sync(lambda: pool.execute(job, TIMEOUT_S, GATE_TIMEOUT_S))
 
     if not result.get("ok"):
         return JSONResponse(status_code=422, content={"ok": False, "hash": digest, **result})

@@ -487,15 +487,18 @@ def _fdm(shape: Any) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     is the user's own geometry, which no repair round can change."""
     from shapely.geometry import MultiPoint, Point
 
-    from .printability import thin_wall_mm
+    from .printability import wall_chords
 
     mesh = to_trimesh(shape, 0.2)
     imported = isinstance(shape, MeshPart)
     findings: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
 
-    wall = thin_wall_mm(mesh)
+    wall, sliver = wall_chords(mesh)
     report: dict[str, Any] = {"min_wall": None if wall is None else round(wall, 3)}
+    if sliver is not None and sliver < FDM_MIN_WALL_MM - EPS:
+        findings.append(_finding("wall", f"slivers down to {sliver:.2f} mm along acute edges (a dovetail flank, "
+                                         f"a thread runout): the slicer drops what is under one line there"))
     if wall is not None and wall < FDM_MIN_WALL_MM - EPS:
         error = f"thinnest wall {wall:.2f} mm, under one {FDM_MIN_WALL_MM:g} mm perimeter"
         if imported:

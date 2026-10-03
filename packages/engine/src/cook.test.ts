@@ -1206,10 +1206,11 @@ describe("cookOne repair convergence", () => {
     expect(node.lastFailed).toMatchObject({ code: "code-3", stage: "G4" });
   });
 
-  it("keeps no candidate for a code-invalid node, or one whose best never executed", async () => {
+  it("keeps the best executed attempt of a code-invalid node too, but none whose best never executed", async () => {
     const invalid = makeDeps(makeGraph(), sequenceProvider().provider, new MemoryLibrary(), contractStuck("code-invalid").backend);
-    await expect(cookOne(invalid, "widget")).rejects.toThrow();
-    expect(invalid.store.node("widget").candidate).toBeUndefined();
+    await expect(cookOne(invalid, "widget")).rejects.toThrow(/code-invalid/);
+    expect(invalid.store.node("widget").status).toBe("error_code");
+    expect(invalid.store.node("widget").candidate).toMatchObject({ code: "code-2", stage: "G4" });
 
     const h = scripted({ "code-1": { stage: "G1", score: 1 }, "code-2": { stage: "G1", score: 1 }, "code-3": { stage: "G1", score: 1 } }, {
       maxAttempts: 3,
@@ -1218,6 +1219,23 @@ describe("cookOne repair convergence", () => {
     const never = makeDeps(makeGraph(), sequenceProvider().provider, new MemoryLibrary(), h.backend);
     await expect(cookOne(never, "widget")).rejects.toThrow();
     expect(never.store.node("widget").candidate).toBeUndefined();
+  });
+
+  it("stops after one round that fails a terminal stage, and attributes it on that round alone", async () => {
+    const seen: number[] = [];
+    const h = scripted({ "code-1": { stage: "CONTRACT", score: 3 } }, {
+      terminalStages: ["CONTRACT"],
+      classifyFailure: ({ attempts }) => {
+        seen.push(attempts);
+        return "contract-infeasible";
+      },
+    });
+    const sp = sequenceProvider();
+    const deps = makeDeps(makeGraph(), sp.provider, new MemoryLibrary(), h.backend);
+    await expect(cookOne(deps, "widget")).rejects.toThrow(/contract-infeasible after 1 attempts/);
+    expect(h.repairs).toEqual([]);
+    expect(seen).toEqual([1]);
+    expect(deps.store.node("widget").status).toBe("error_contract");
   });
 
   it("drops the candidate when the node commits", async () => {

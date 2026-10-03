@@ -3,8 +3,9 @@ process never imports OCP — a segfault here kills this process only, and the
 pool respawns it.
 
 Protocol over the Pipe:
-  parent → worker: {"code", "params", "out_dir", "glb_dir", "trace_after_s"}
-  worker → parent: {"ok": True, "measurements", "elapsed_ms"}
+  parent → worker: {"code", "params", "out_dir", "glb_dir", "trace_after_s", "phases"}
+  worker → parent: {"phase": stage, "port"?} as each gate starts, when "phases"
+                 then {"ok": True, "measurements", "elapsed_ms"}
                  | {"ok": False, "stage", "error", "hint", "failures", "measurements"?}
   worker → parent at boot: {"ready": True}
 
@@ -191,6 +192,14 @@ def worker_main(conn: Connection, trace_path: str) -> None:
                 continue
 
             shape = _build(job, _namespace(job))
+
+            def phase(stage: str, port: str | None = None, phases: bool = bool(job.get("phases"))) -> None:
+                """The gates' budget starts at the first of these (pool.request)."""
+                if phases:
+                    faulthandler.cancel_dump_traceback_later()  # the trace names node lines only
+                    conn.send({"phase": stage} | ({"port": port} if port else {}))
+
+            phase("G2")
             measurements = gates.g2_validity(shape)
             out_dir = job["out_dir"]
             # A render request wants the picture, not the gate report, and not
@@ -227,7 +236,7 @@ def worker_main(conn: Connection, trace_path: str) -> None:
                     or job.get("solids") is not None):
                 measurements |= gates.contract_gates(shape, job.get("ports") or [], job.get("envelope") or [],
                                                      job.get("assertions") or [], solids=job.get("solids"),
-                                                     process=job.get("process"))
+                                                     process=job.get("process"), progress=phase)
                 # A G4c rule that threw is recorded as unchecked, not passed, so
                 # this verdict is not one to cache: the next request re-runs it.
                 if not (measurements.get("process") or {}).get("unchecked"):

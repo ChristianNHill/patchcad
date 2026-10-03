@@ -337,6 +337,12 @@ export interface DomainBackend<P = unknown> {
    *  stage always renders. Omit and repairs stay text-only. */
   renderStages?: string[];
 
+  /** Failure stages no code change can pass (CAD: a contract the gates could
+   *  not read or resolve). A round that ends in one stops the cook at once and
+   *  goes to classifyFailure: the rest of the budget would rewrite correct code
+   *  against the same declaration. */
+  terminalStages?: string[];
+
   /** System prompt for the visual judge (inspect.ts): what the render shows
    *  and how to read it, in this domain's terms. Omit for a generic one. */
   inspectSystem?: string;

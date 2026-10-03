@@ -246,7 +246,7 @@ import { CadJoint } from "./joints.js";
 import { CATALOG, skuFor } from "./catalog.js";
 import { cadJointRuleLint, expandJoints, gearMeshJoints, isJointHardware, jointAxes } from "./expand.js";
 import { kinematicJoints, poseToMat, solveAssembly, type AssemblyMate, type AssemblyNode } from "./assembly.js";
-import { resolveDim, resolvePose } from "./bindings.js";
+import { resolveBinding, resolveDim, resolvePose } from "./bindings.js";
 import { DIAMETER_KEYS, clashFindings, contactQueries, fitFindings, hardwareAllowances, threadAllowances } from "./g5.js";
 import { cadPlanGeometryLint } from "./plan-geometry.js";
 import { silhouetteAdvisories } from "./silhouette.js";
@@ -414,6 +414,44 @@ export function envelopeAabb(graph: GraphDoc, vol: z.infer<typeof EnvelopePrimit
 
 const overlaps = (a: Aabb, b: Aabb, slack: number) =>
   [0, 1, 2].every((i) => a.min[i]! - slack <= b.max[i]! && b.min[i]! - slack <= a.max[i]!);
+
+/** Every T1 expression in every contract resolves at plan time. Each lint
+ *  below skips one it cannot read ("not this lint's business"), so a dovetail
+ *  envelope written `tan(param(…) * pi / 180)` before the grammar had tan
+ *  planned clean and then threw in all five cook rounds, where no generator
+ *  can fix it. */
+export const cadExpressionsResolveLint = {
+  run(graph: GraphDoc): string[] {
+    const problems: string[] = [];
+    for (const n of Object.values(graph.nodes)) {
+      const payload = n.contract.payload as CadContractPayload | undefined;
+      if (!payload) continue;
+      const check = (where: string, dims: (number | string)[]) => {
+        for (const d of dims) {
+          try {
+            resolveDim(graph, d);
+          } catch (err) {
+            problems.push(`${n.id}: ${where}: ${(err as Error).message}. Expressions may use numbers, + - * /, parentheses, param(<node>.<param>), pi, and sin cos tan atan sqrt abs min max radians degrees (trig in radians).`);
+          }
+        }
+      };
+      for (const p of payload.ports ?? []) {
+        check(`port "${p.name}" pose`, [...p.pose.origin, ...p.pose.zAxis, ...p.pose.xAxis]);
+        // Port params also hold names ("M4", "press"); only what reads as arithmetic is an expression.
+        check(`port "${p.name}" params`, Object.values(p.params ?? {}).filter((v) => typeof v === "string" && /param\(|^expr:|[-+*/()]/.test(v)));
+      }
+      for (const [i, v] of (payload.envelope?.volumes ?? []).entries()) {
+        const pose = v.pose;
+        check(`envelope volume ${i + 1}`, [...pose.origin, ...pose.zAxis, ...pose.xAxis, ...(v.kind === "box" ? v.dims : [v.d, v.h])]);
+      }
+      for (const [param, expr] of Object.entries(payload.paramBindings ?? {})) {
+        const r = resolveBinding(graph, expr);
+        if ("error" in r) problems.push(`${n.id}: binding for "${param}": ${r.error}`);
+      }
+    }
+    return problems;
+  },
+};
 
 export const cadEnvelopeCoherentLint = {
   run(graph: GraphDoc): string[] {
@@ -1150,6 +1188,7 @@ function cadPlanning(meshAvailable: boolean) {
     paramUnit: "mm",
     payloadSchema: CadContractPayload as z.ZodType<CadContractPayload>,
     graphLints: [
+      cadExpressionsResolveLint,
       cadPortConsistencyLint,
       cadFastenerJustifiedLint,
       cadEnvelopeCoherentLint,
@@ -1503,6 +1542,8 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
 
   /** Port probes (G3) and envelope (G4) fail on a built shape worth showing. */
   readonly renderStages = ["G3", "G4"];
+  /** A declaration the gates could not read or resolve fails every rewrite. */
+  readonly terminalStages = ["CONTRACT"];
   readonly inspectSystem = CAD_INSPECT_SYSTEM;
 
 
@@ -1646,7 +1687,17 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
   }
 
   private async runGates(node: NodeRecord, graph: GraphDoc, ws: Workspace) {
-    const req = this.kernelRequest(node, graph, ws);
+    let req: ReturnType<CadBackend["kernelRequest"]>;
+    try {
+      req = this.kernelRequest(node, graph, ws);
+    } catch (err) {
+      // A contract expression that does not resolve (cadExpressionsResolveLint
+      // catches it at plan time). No code was run and none can fix it.
+      const error = `the contract cannot be resolved: ${(err as Error).message}`;
+      const hint = "no code change can pass this: the architect must rewrite the expression";
+      const result: KernelFailed = { ok: false, stage: "CONTRACT", error, hint, failures: [{ stage: "CONTRACT", error, hint }] };
+      return { result, req: null, score: gateScore(result, 0) };
+    }
     const cached = this.lastRun.get(`${node.id}:${node.artifact?.hash}`);
     this.lastRun.delete(`${node.id}:${node.artifact?.hash}`);
     const result =
@@ -1669,10 +1720,10 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       return { ok: true, stage: "execute", report: `volume ${result.measurements.volume_mm3.toFixed(0)} mm³`, score };
     }
     const { result, req, score } = await this.runGates(node, graph, ws);
-    if (!result.ok && !CONTRACT_STAGES.has(result.stage)) {
+    if (!result.ok && (!req || !CONTRACT_STAGES.has(result.stage))) {
       return { ok: false, stage: result.stage, report: failureReport(result), score };
     }
-    this.lastRun.set(`${node.id}:${node.artifact?.hash}`, { key: req.key, result });
+    if (req) this.lastRun.set(`${node.id}:${node.artifact?.hash}`, { key: req.key, result });
     const volume = result.measurements?.volume_mm3;
     return { ok: true, stage: "execute", report: `volume ${volume?.toFixed(0) ?? "?"} mm³`, score };
   }

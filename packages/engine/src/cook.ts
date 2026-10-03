@@ -887,6 +887,10 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number, seed
       stale = rank(round!) > rank(best) ? 0 : stale + 1;
     }
     if (!best || rank(round!) >= rank(best)) best = round;
+    if (backend.terminalStages?.includes(round!.failure.stage)) {
+      log(`stopping: no code change can pass ${round!.failure.stage}`);
+      break;
+    }
   }
 
   // A looks-wrong verdict sent passing code back, and nothing since passed.
@@ -913,17 +917,19 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number, seed
   const attribution = backend.classifyFailure({
     node: store.node(nodeIdValue),
     failures,
-    attempts: maxAttempts,
+    attempts: failures.length,
   });
   // The failing code is kept BESIDE the node, never as its artifact: the last
-  // round's for the failure panel, and, when the contract could not be met,
-  // the best try that at least executed, which a person may export flagged.
+  // round's for the failure panel, and the best try that at least executed,
+  // which a person may export flagged. Whatever the attribution: a threaded
+  // stud whose only failure was a gate running out of time is code-invalid,
+  // and it was the one part worth keeping.
   const last = failures.at(-1)!;
   own();
   store.applyOp((g) => {
     const n = g.nodes[nodeIdValue]!;
     n.lastFailed = { code: lastRound!.code, hash: hashValue(lastRound!.code), stage: last.stage, report: last.report.slice(0, 2000) };
-    if (attribution === "contract-infeasible" && best?.executed) {
+    if (best?.executed) {
       n.candidate = { code: best.code, hash: hashValue(best.code), stage: best.failure.stage, report: best.failure.report.slice(0, 2000) };
     } else delete n.candidate;
   });
@@ -934,5 +940,5 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number, seed
     attribution,
   };
   setStatus(attribution === "contract-infeasible" ? "error_contract" : "error_code", detail);
-  throw new Error(`${nodeIdValue}: ${attribution} after ${maxAttempts} attempts (${last.stage})`);
+  throw new Error(`${nodeIdValue}: ${attribution} after ${failures.length} attempts (${last.stage})`);
 }

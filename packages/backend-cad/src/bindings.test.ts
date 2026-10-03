@@ -129,6 +129,23 @@ describe("T1 param bindings", () => {
     expect(resolveParamBindings(bad, "bracket").problems[0]).toContain("param(ghost.x) is missing");
   });
 
+  it("evaluates pi and a closed set of functions, and nothing else", () => {
+    const value = (expr: string) => {
+      const r = resolveParamBindings(makeGraph({ hole_diameter: expr }, { hole_diameter: 14 }), "bracket");
+      return r.problems[0] ?? r.resolved.hole_diameter;
+    };
+    // The t4-009 dovetail envelope: a 14° flank over an 8mm rail.
+    expect(value("expr: 12 + 2 * 8 * tan(param(plate.hole_diameter) * pi / 180) + 1")).toBeCloseTo(16.989, 3);
+    expect(value("expr: tan(radians(45))")).toBeCloseTo(1, 9);
+    expect(value("expr: degrees(atan(1))")).toBeCloseTo(45, 9);
+    expect(value("expr: sqrt(16) + abs(-2) + min(3, 1, 2) + max(1, 5) - sin(0) - cos(0)")).toBe(11);
+    expect(value("expr: -pi")).toBeCloseTo(-Math.PI, 9);
+    expect(value("expr: tanh(1)")).toContain('unexpected token at "tanh(1)"');
+    expect(value("expr: sin(1, 2)")).toContain("sin() takes one argument");
+    expect(value("expr: sqrt(-1)")).toContain("not a finite number");
+    expect(value("expr: constructor(1)")).toContain("unexpected token");
+  });
+
   it("finds dependents referenced via expr syntax too", () => {
     const graph = makeGraph({ hole_diameter: "screwLength: param(plate.hole_diameter) + 4" });
     expect(boundDependents(graph, "plate")).toEqual(["bracket"]);

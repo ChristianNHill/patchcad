@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { GraphDoc } from "@patchcad/shared";
 import {
   cadEnvelopeCoherentLint,
+  cadExpressionsResolveLint,
   cadFastenerJustifiedLint,
   cadFlatFaceSizeLint,
   cadProbedPortsLint,
@@ -135,6 +136,32 @@ const cyl = (z: number, d: number, h: number) => ({
   pose: { ...pose, origin: [0, 0, z] },
   d,
   h,
+});
+
+describe("cad-expressions-resolve lint", () => {
+  const withExprs = (dim: string, portParam: string | number, binding?: string) => {
+    const n = plateWithHole();
+    n.contract.params = [{ type: "number", name: "angle", description: "", default: 14 }] as never;
+    Object.assign(n.contract.payload, {
+      ports: [{ name: "hole", type: "CLEARANCE_HOLE", pose: { ...pose, origin: [0, 0, "param(plate.angle) / 2"] }, params: { diameter: portParam, fit: "slip" } }],
+      envelope: { volumes: [{ kind: "box", pose, dims: [10, dim, 10] }], clearance: 0.4 },
+      paramBindings: binding ? { angle: binding } : {},
+    });
+    return cadExpressionsResolveLint.run(graph([n], []));
+  };
+
+  it("passes every expression the grammar reads, and leaves names like a fit alone", () => {
+    expect(withExprs("12 + 2 * 8 * tan(param(plate.angle) * pi / 180)", "param(plate.angle) / 3", "expr: param(plate.angle) + 1")).toEqual([]);
+  });
+
+  it("names each expression that does not resolve, with the grammar", () => {
+    const problems = withExprs("12 + tanh(param(plate.angle))", "param(plate.gone) / 3", "expr: atan2(1, 2)");
+    expect(problems).toHaveLength(3);
+    expect(problems[0]).toContain('port "hole" params: param(plate.gone) is missing');
+    expect(problems[1]).toMatch(/^plate: envelope volume 1: unexpected token at "tanh\(/);
+    expect(problems[1]).toContain("sin cos tan atan sqrt abs min max radians degrees");
+    expect(problems[2]).toContain('binding for "angle"');
+  });
 });
 
 describe("cad-envelope-coherent lint", () => {

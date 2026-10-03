@@ -58,7 +58,7 @@ export function registerCadRoutes(app: FastifyInstance, s: Session): void {
    * posed assembly. Streamed through here rather than linked to the kernel:
    * a cross-origin `a.download` ignores its filename, and a remote browser
    * cannot reach :8621 at all. `includeUnverified=1` adds the unverified
-   * candidates of nodes stuck on their contract, named in
+   * candidates of nodes whose cook failed, named in
    * `x-patchcad-unverified` and the warning; without it they are left out.
    */
   app.get("/api/project/export/:format", async (req, reply) => {
