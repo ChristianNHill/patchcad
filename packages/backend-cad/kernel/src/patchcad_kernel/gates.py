@@ -2236,22 +2236,34 @@ def _probe_nut_trap(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
                         f"cut a hex trap {af:g}mm across the flats, {depth:g}mm deep, centred on the contract pose")
     reach = af * 2 + 4.0
 
-    def radius(deg: float) -> float | None:
+    def radius(deg: float, open_ok: bool = False) -> float | None:
         t = math.radians(deg)
         if side and math.cos(t) > 0.01:
             return None
         hit = _march(shape, frame, math.cos(t), math.sin(t), w, reach)
+        if hit is None and open_ok:
+            return math.inf
         if hit is None:
             raise GateError("G3", f'port "{key}" (NUT_TRAP): no wall within {reach:.1f}mm at {deg:g}° from xAxis',
                             'the trap must hold the nut on every side; only a side-entry trap (params.entry "side") '
                             "opens, and only toward +x")
         return hit
 
-    def across(deg: float) -> float:
-        sides = [h for h in (radius(deg), radius(deg + 180)) if h is not None]
-        return sum(sides) if len(sides) == 2 else 2 * sides[0]
+    def across(deg: float, limit: float = math.inf) -> float | None:
+        open_ok = limit < math.inf
+        sides = [h for h in (radius(deg, open_ok), radius(deg + 180, open_ok)) if h is not None and h <= limit]
+        return sum(sides) if len(sides) == 2 else 2 * sides[0] if sides else None
 
-    flats = [across(deg) for deg in (30, 90, 150)]
+    # A flat-normal ray that meets no wall short of the widest hex's corner
+    # has left the pocket: up a drop slot, into a crossing bolt hole, along a
+    # squared-off floor. That is a breakout, not a flat, and only rays that
+    # meet a wall are graded. A hex rotated 30° puts its corners, inside this
+    # limit, on these rays, so it still fails.
+    breakout = (af + NUT_TRAP_SLOP_MM) / math.sqrt(3) + NUT_TRAP_SLOP_MM
+    flats = [f for f in (across(deg, breakout) for deg in (30, 90, 150)) if f is not None]
+    if not flats:
+        raise GateError("G3", f'port "{key}" (NUT_TRAP): no flat within {breakout:.2f}mm of the axis along any flat normal',
+                        f"cut the hex {af + NUT_TRAP_SLOP_MM / 2:g}mm across the flats, centred on the contract pose")
     worst = max(flats, key=lambda f: abs(f - (af + NUT_TRAP_SLOP_MM / 2)))
     if not af - FIT_EPS_MM <= worst <= af + NUT_TRAP_SLOP_MM + FIT_EPS_MM:
         raise GateError("G3", f'port "{key}" (NUT_TRAP): across the flats measured {min(flats):.2f}..{max(flats):.2f} '
@@ -2260,7 +2272,7 @@ def _probe_nut_trap(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
                         f"and flats facing ±y, which is how RegularPolygon(r, 6) comes out unrotated. A hex rotated "
                         f"30° measures across its corners here",
                         expected=af, measured=round(worst, 3))
-    corners = min(across(deg) for deg in (0, 60, 120))
+    corners = min(c for c in (across(deg) for deg in (0, 60, 120)) if c is not None)
     if corners < af * 2 / math.sqrt(3) - FIT_EPS_MM:
         raise GateError("G3", f'port "{key}" (NUT_TRAP): across the corners measured {corners:.2f}, '
                               f'a {af:g}mm nut needs {af * 2 / math.sqrt(3):.2f}',
@@ -3374,6 +3386,18 @@ if __name__ == "__main__":  # pragma: no cover
     expect("a nut trap rotated 30° fails", host("NUT_TRAP", 0, trap(30), af=5.5, depth=2.4), "across the flats")
     expect("a round pocket is not a nut trap", host("NUT_TRAP", 0, blind(5.7, 2.6) + Cylinder(1.7, 30), af=5.5, depth=2.4),
            "across the corners")
+    # t5-002: a side-entry trap whose drop slot leaves along +x, squared off on
+    # -x down to the corner, with its bolt hole on the axis. The 150°/210° flat
+    # rays leave through the square end: breakouts, graded on the 90° flat.
+    def dropped(rot):
+        return (trap(rot) + Pos(15, 0, 8.7) * Box(30, 5.5, 2.6)
+                + Pos(-(5.7 / math.sqrt(3) + 0.2) / 2, 0, 8.7) * Box(5.7 / math.sqrt(3) + 0.2, 5.5, 2.6))
+    expect("a nut trap with a drop slot and a squared end passes",
+           host("NUT_TRAP", 0, dropped(0), af=5.5, depth=2.4, entry="side"))
+    expect("the same trap rotated 30° still fails", host("NUT_TRAP", 0, dropped(30), af=5.5, depth=2.4, entry="side"),
+           "across the flats")
+    expect("a nut trap crossed by a bolt hole along y passes",
+           host("NUT_TRAP", 0, trap(0) + Pos(0, 0, 8.7) * Rot(90, 0, 0) * Cylinder(1.7, 60), af=5.5, depth=2.4))
     expect("a thread with no tap drill is repairable", host("THREADED_HOLE", 0, blind(2.5, 10), thread="M7", depth=8),
            "declares no known thread")
 

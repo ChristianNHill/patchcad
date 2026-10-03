@@ -1080,6 +1080,16 @@ describe("contract assertions", () => {
     expect(out[2]).toContain("holds for every part");
   });
 
+  // The plan holds envelopes, not walls: a line that misses them is the one
+  // count it can refute. A line that starts inside them is left alone.
+  it("rejects a line_count that never enters the envelope", () => {
+    const line = (from: number[], to: number[]) =>
+      cadAssertionsCoherentLint.run(withAssertions([{ kind: "line_count", from, to, crossings_min: 2, crossings_max: 2 }]));
+    expect(line([-50, 0, 30], [50, 0, 30])[0]).toContain("never enters the envelope");
+    expect(line([-50, 0, 2], [50, 0, 2])).toEqual([]);
+    expect(line([-39, 0, 2], [39, 0, 2])).toEqual([]);
+  });
+
   it("does not call a loose max a contradiction", () => {
     expect(cadAssertionsCoherentLint.run(withAssertions([{ kind: "bbox_axis", axis: "x", max: 200 }]))).toEqual([]);
   });

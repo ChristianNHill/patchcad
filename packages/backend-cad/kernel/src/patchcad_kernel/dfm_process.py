@@ -473,6 +473,7 @@ TIP_WIDTH_CUTOFF_MM = 30.0
 OVERHANG_DEG = 60.0
 BRIDGE_DEG = 89.0              # a flat downface spans between supports: bridged, not overhung
 OVERHANG_FINDING_FRACTION = 0.05
+BRIDGE_FINDING_MM = 10.0       # a flat roof wider than this sags when bridged
 LAYER_MM = 0.2
 
 
@@ -485,7 +486,9 @@ def _fdm(shape: Any) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     is a finding: the part's frame is its assembly pose, not its print pose,
     so tipping and overhang describe one way to print it, and an imported mesh
     is the user's own geometry, which no repair round can change."""
-    from shapely.geometry import MultiPoint, Point
+    from shapely import maximum_inscribed_circle
+    from shapely.geometry import MultiPoint, Point, Polygon
+    from shapely.ops import unary_union
 
     from .printability import wall_chords
 
@@ -545,6 +548,21 @@ def _fdm(shape: Any) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         findings.append(_finding("overhang", f"{frac:.0%} of the surface overhangs more than {OVERHANG_DEG:g}° "
                                              "from vertical: it needs support printed in its own frame",
                                  measured=round(frac, 4)))
+    # Bridges: the flat downfaces exempted above, merged per height. The span
+    # is the widest circle each patch holds, i.e. every edge counts as support,
+    # so a cantilever reads short; a finding, never a failure.
+    bridge = (mesh.triangles_center[:, 2] > z_min + LAYER_MM) & (theta >= BRIDGE_DEG) & (area > 1e-9)
+    span = 0.0
+    for z in np.unique(np.round(mesh.triangles_center[bridge, 2], 2)):
+        level = bridge & (np.round(mesh.triangles_center[:, 2], 2) == z)
+        patch = unary_union([Polygon(t[:, :2]) for t in mesh.triangles[level]])
+        for g in getattr(patch, "geoms", [patch]):
+            span = max(span, 2 * maximum_inscribed_circle(g, 0.05).length)
+    report["bridge_span_mm"] = round(span, 2)
+    if span > BRIDGE_FINDING_MM:
+        findings.append(_finding("bridge", f"a flat roof bridges {span:.1f} mm unsupported (over {BRIDGE_FINDING_MM:g} mm "
+                                           "sags): narrow it, or close it with 45° sides to a point or a short flat",
+                                 measured=round(span, 2)))
     if findings:
         report["findings"] = findings
     return report, failures

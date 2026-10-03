@@ -380,6 +380,15 @@ describe("generatePrompt · patterns and assertions", () => {
     expect(user).toContain("Measured on the finished part");
     expect(user).toContain("hole_count min=4, max=4");
     expect(user).toContain("bbox_axis axis=x, min=79.5, max=80.5");
+    expect(user).toContain("Never add a feature the spec does not ask for in order to satisfy an assertion.");
+  });
+
+  // t3-005: a repair cut windows through a box's dividers to meet a line_count
+  // the architect had miscounted. Said again in the turn that reports it.
+  it("tells a repair facing an assertion to keep the spec", () => {
+    const failure = { stage: "G4b", report: 'assertion "line_count": expected 2 material crossings from [-44, 0, 15] to [44, 0, 15], measured 4' };
+    expect(lastUser(ctx({ failure }))).toContain("If the spec and an assertion disagree, keep the spec");
+    expect(lastUser(ctx())).not.toContain("keep the spec");
   });
 
   it("explains a pattern layout only when a pattern port exists", () => {

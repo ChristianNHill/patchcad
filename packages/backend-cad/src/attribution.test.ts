@@ -154,6 +154,23 @@ describe("CadBackend.classifyFailure · G4b assertions", () => {
   });
 });
 
+describe("CadBackend.classifyFailure · assertions the architect miscounted", () => {
+  const lineCount = (measured: number, stage = "G4b") => ({
+    stage,
+    report: `assertion "line_count": expected 2 material crossings from [-44.0, 0.0, 15.0] to [44.0, 0.0, 15.0], measured ${measured}`,
+  });
+
+  it("the same line_count twice on an otherwise passing part goes to the architect", () => {
+    expect(classify([lineCount(4), lineCount(4)], 5)).toBe("contract-infeasible");
+  });
+
+  it("a count that moves, or one beside a port miss, stays with the generator", () => {
+    expect(classify([lineCount(4), lineCount(3)], 5)).toBe("code-invalid");
+    expect(classify([lineCount(4)], 5)).toBe("code-invalid");
+    expect(classify([lineCount(4, "G3"), lineCount(4, "G3")], 5)).toBe("code-invalid");
+  });
+});
+
 describe("CadBackend.classifyFailure · hardware host features", () => {
   const host = (od: number, envelope: number) =>
     ({
@@ -179,6 +196,22 @@ describe("CadBackend.classifyFailure · hardware host features", () => {
 
   it("an inert node never escalates a hardware miss", () => {
     expect(classify(misses(5), 5)).toBe("code-invalid");
+  });
+
+  // t5-002: the trap was right (8.60 on a 8.4..8.8 band) and the probe read a
+  // drop slot as a flat, five rounds running.
+  const trap = (range: string) => ({
+    stage: "G3",
+    report: `port "nut_pocket" (NUT_TRAP): across the flats measured ${range} along the flat normals, expected 8.4..8.8\nhint: cut the hex`,
+  });
+
+  it("a probe that reads the same numbers twice with its smallest on target is the contract's", () => {
+    expect(classify([trap("8.60..11.93"), trap("8.60..11.93")], 5)).toBe("contract-infeasible");
+  });
+
+  it("a trap cut wrong, or cut differently each round, stays with the generator", () => {
+    expect(classify([trap("9.70..9.70"), trap("9.70..9.70")], 5)).toBe("code-invalid");
+    expect(classify([trap("8.60..11.93"), trap("8.60..11.20")], 5)).toBe("code-invalid");
   });
 });
 

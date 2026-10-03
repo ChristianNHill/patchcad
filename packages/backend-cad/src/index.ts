@@ -415,6 +415,25 @@ export function envelopeAabb(graph: GraphDoc, vol: z.infer<typeof EnvelopePrimit
 const overlaps = (a: Aabb, b: Aabb, slack: number) =>
   [0, 1, 2].every((i) => a.min[i]! - slack <= b.max[i]! && b.min[i]! - slack <= a.max[i]!);
 
+/** Slab test: does the segment from→to pass within `slack` of the box? */
+function segmentHitsBox(from: number[], to: number[], b: Aabb, slack: number): boolean {
+  let t0 = 0;
+  let t1 = 1;
+  for (let i = 0; i < 3; i++) {
+    const d = to[i]! - from[i]!;
+    const lo = b.min[i]! - slack - from[i]!;
+    const hi = b.max[i]! + slack - from[i]!;
+    if (Math.abs(d) < 1e-12) {
+      if (lo > 0 || hi < 0) return false;
+      continue;
+    }
+    const [a, c] = d > 0 ? [lo / d, hi / d] : [hi / d, lo / d];
+    t0 = Math.max(t0, a);
+    t1 = Math.min(t1, c);
+  }
+  return t0 <= t1;
+}
+
 /** Every T1 expression in every contract resolves at plan time. Each lint
  *  below skips one it cannot read ("not this lint's business"), so a dovetail
  *  envelope written `tan(param(…) * pi / 180)` before the grammar had tan
@@ -1030,6 +1049,10 @@ export const cadAssertionsCoherentLint = {
             problems.push(`${n.id}: assertion line_count has from = to; the probe line needs a length.`);
           if (a.crossings_min === 0 && a.crossings_max === undefined)
             problems.push(`${n.id}: assertion line_count with crossings_min 0 and no max holds for every part; give the count the feature makes.`);
+          // Walls are not in the plan, only envelopes, so this is the one count
+          // the plan can refute: a line that never enters the envelope crosses nothing.
+          if (boxes.length > 0 && a.crossings_min > 0 && !boxes.some((b) => segmentHitsBox(a.from, a.to, b, ENVELOPE_LINT_MARGIN)))
+            problems.push(`${n.id}: assertion line_count from [${a.from.join(", ")}] to [${a.to.join(", ")}] never enters the envelope, so it crosses no material; run it through the features it counts.`);
         }
       }
     }
@@ -1461,7 +1484,11 @@ function cadPlanning(meshAvailable: boolean) {
       "      length only, never a plain shank or head; hand/starts if stated",
       '  {"kind": "line_count", "from": [-20, 0, 5], "to": [20, 0, 5], "crossings_min": 12}',
       "      solid runs a straight probe line crosses, part frame mm: one per",
-      "      knurl tooth, rib or slot web it passes through",
+      "      knurl tooth, rib or slot web it passes through. It counts EVERY",
+      "      material run on the segment, outer walls included, and an end inside",
+      "      a wall counts that wall. Start and end the line outside the part.",
+      "      A 90mm box with 2.4mm walls and two dividers along x, probed from",
+      "      [-46, 0, 15] to [46, 0, 15], crosses wall, divider, divider, wall: 4.",
       "EVERY STATED FEATURE GETS AN ASSERTION THAT FAILS WITHOUT IT. Ports and a",
       "bbox pass a plain cylinder where the user asked for a threaded rod, so a",
       "thread, knurl, slot or rib the user named needs its own helix or",
@@ -1778,21 +1805,32 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     // A report can name several ports, one per line; each counts once per round.
     // The engine hands back report text only, so the port names are read from it.
     const counts = new Map<string, number>();
+    const repeats = new Map<string, number>();
     for (const f of evidence.failures) {
       if (f.stage !== "G3") continue;
       const ports = new Set<string>();
+      const lines = new Set<string>();
       for (const line of f.report.split("\n")) {
         const [, port, type] = /port "([^"]+)"(?: \((\w+))?/.exec(line) ?? [];
         if (!port || /the channel is open/.test(line)) continue;
         // A hardware feature's size comes from the catalog, so a persistent
         // miss is a cut the generator keeps getting wrong, not a bad contract,
-        // unless the feature cannot fit inside the envelope at all.
-        if (type && HARDWARE_PORT_TYPES.has(type) && !outgrowsEnvelope(evidence.node, port)) continue;
+        // unless the feature cannot fit inside the envelope at all. Or unless
+        // the probe reads the same numbers twice with its smallest on target
+        // (a nut trap's 8.60..11.93 against 8.4..8.8): the cut is right and
+        // the probe or the declared pose reads past it, so no code change helps.
+        if (type && HARDWARE_PORT_TYPES.has(type) && !outgrowsEnvelope(evidence.node, port)) {
+          const [, lo, , min, max] = /measured ([\d.]+)\.\.([\d.]+).*expected ([\d.]+)\.\.([\d.]+)/.exec(line) ?? [];
+          if (lo && Number(min) <= Number(lo) && Number(lo) <= Number(max)) lines.add(line.replace(/^\s*\d+\. \[G3\] /, ""));
+          continue;
+        }
         ports.add(port);
       }
       for (const port of ports) counts.set(port, (counts.get(port) ?? 0) + 1);
+      for (const line of lines) repeats.set(line, (repeats.get(line) ?? 0) + 1);
     }
     for (const n of counts.values()) if (n >= persistent) return "contract-infeasible";
+    for (const n of repeats.values()) if (n >= 2) return "contract-infeasible";
     // G4b: an overall size or material volume that stays wrong across rounds is
     // usually the stated number fighting the envelope or the ports, which only
     // the architect can reconcile. Hole count, symmetry, solids and wall
@@ -1806,6 +1844,17 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       for (const label of hit) budget.set(label, (budget.get(label) ?? 0) + 1);
     }
     for (const n of budget.values()) if (n >= persistent) return "contract-infeasible";
+    // A line_count that reads the same count twice on a part that otherwise
+    // passes is the architect's count, not the model's: a divided box's line
+    // asserted at 2 crossings where its walls and dividers make 4 was "fixed"
+    // by cutting windows nobody asked for through the dividers.
+    const lineCounts = new Map<string, number>();
+    for (const f of evidence.failures) {
+      if (f.stage !== "G4b") continue;
+      for (const [label] of f.report.matchAll(/assertion "line_count[^\n]*measured \d+/g))
+        lineCounts.set(label, (lineCounts.get(label) ?? 0) + 1);
+    }
+    for (const n of lineCounts.values()) if (n >= 2) return "contract-infeasible";
     // A persistent cnc undercut is the setup count: the contract's port poses
     // put features where a 3-axis mill cannot reach them from ±Z, and only a
     // contract change (sourcing.allowUndercuts) or a re-posed port fixes it.

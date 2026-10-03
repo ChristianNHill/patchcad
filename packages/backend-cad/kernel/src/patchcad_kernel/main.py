@@ -134,7 +134,11 @@ pool = None  # set at startup; parent process stays OCP-free
 # min_wall (G4b, G4c) leaves out chords within a nozzle width of an edge under
 # 100 deg whose surface 1.5mm further in is no longer thin (dovetail edges,
 # thread runouts), reported as a sliver finding; a rib thin all along counts.
-GATES_VERSION = 19
+# 19 -> 20: a NUT_TRAP flat-normal ray that meets no wall short of the hex's
+# corner (a drop slot, a crossing bolt hole, a squared-off floor) is a
+# breakout and only rays that meet a wall are graded; G4c fdm reports
+# bridge_span_mm and a "bridge" finding past 10mm.
+GATES_VERSION = 20
 # Tap drills and clearances come from the catalog, so a catalog edit changes
 # verdicts too. Keyed by content, not by remembering to bump GATES_VERSION.
 CATALOG_DIGEST = hashlib.sha256(

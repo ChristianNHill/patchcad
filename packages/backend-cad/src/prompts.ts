@@ -221,6 +221,11 @@ function envelopeLines(payload: CadContractPayload, graph?: GraphDoc): string {
     .join("\n");
 }
 
+/** A divided box asserted at 2 crossings where it makes 4 got windows cut
+ *  through its dividers. User turn only, so the system block stays stable. */
+const NO_GAMING =
+  "Never add a feature the spec does not ask for in order to satisfy an assertion. If the spec and an assertion disagree, keep the spec; the repair report will route it back to the architect.";
+
 /** Pattern layout and G4b assertions, spelled out because their params are
  *  terse and the kernel measures both literally. Empty for a part using neither. */
 function checkLines(payload: CadContractPayload): string {
@@ -239,6 +244,7 @@ function checkLines(payload: CadContractPayload): string {
       const { kind, ...rest } = a;
       lines.push(`  - ${kind} ${Object.entries(rest).map(([k, v]) => `${k}=${v}`).join(", ")}`);
     }
+    lines.push(NO_GAMING);
   }
   return lines.join("\n");
 }
@@ -472,6 +478,7 @@ export function repairPrompt(ctx: RepairCtx<CadContractPayload>): PromptSpec {
         content: [
           `That code failed gate ${ctx.failure.stage}. This is attempt ${ctx.attempt} of ${ctx.maxAttempts}:`,
           ctx.failure.report,
+          /assertion "/.test(ctx.failure.report) ? NO_GAMING : "",
           basis,
           known,
           spent,

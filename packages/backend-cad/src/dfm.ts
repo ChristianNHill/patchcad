@@ -55,6 +55,7 @@ export function processLines(node: Pick<NodeRecord, "kind" | "contract">): strin
       `Process: FDM, min wall ${minWall} mm.`,
       `  - make every wall at least ${Math.max(minWall, 2 * nozzle)} mm, two perimeters of the ${nozzle} mm nozzle; the gate fails one thinner than a single perimeter`,
       "  - where the part's own frame allows, give it a flat lowest-Z face wide enough to stand on the bed without tipping",
+      "  - keep any flat roof over a hole, tunnel or cavity under 10 mm across; past that, close it with 45° sides",
     ].join("\n");
   }
   const guide = GUIDANCE[s.process as Exclude<Process, "fdm">](s.toolRadius ?? DEFAULT_TOOL_RADIUS_MM, !!s.allowUndercuts);

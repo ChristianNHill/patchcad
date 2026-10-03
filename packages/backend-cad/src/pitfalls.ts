@@ -302,7 +302,7 @@ export const PITFALLS: Pitfall[] = [
   {
     id: "assert-line-count",
     match: /assertion "line_count/,
-    fix: "The probe line crosses the wrong number of solid runs, so the stated knurl, slots or ribs are missing or miscounted. Cut or add each one explicitly in a loop at the stated count, and make each deep enough that the line through them passes material, gap, material. Never skip a feature when its boolean fails; fix the boolean.",
+    fix: "The probe line crosses the wrong number of solid runs, so the stated knurl, slots or ribs are missing or miscounted. Cut or add each one explicitly in a loop at the stated count, and make each deep enough that the line through them passes material, gap, material. Never skip a feature when its boolean fails; fix the boolean. Never cut a feature the spec does not ask for to change the count: if the spec's walls already make a different count, keep the spec.",
   },
   // G4c process DFM, stageless for the same reason as G4b: a combined
   // contract report is staged by its earliest failure.
