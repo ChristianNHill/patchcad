@@ -1,0 +1,60 @@
+{
+  "id": "asm-bracket-stack",
+  "prompt": "a bolted stack of three printed parts: an 80x40x6mm base plate, a 40x40x40mm L-bracket with 5mm walls standing on it, and a 40x30x5mm cap plate on the L-bracket's upright; each joint uses two M4 socket-head screws with nuts or inserts",
+  "why": "Fastened joints in series: base to bracket, bracket to cap. Each joint expands to screws plus a nut or insert; every screw is fit-checked in its clearance hole, and every pair of parts must touch where it mates.",
+  "expect": {
+    "nodes": {
+      "min": 3,
+      "max": 5
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "assembly": {
+      "parts": 11,
+      "contacts": 2,
+      "fits": 4,
+      "joints": [
+        {
+          "motion": "fixed",
+          "hardware": [
+            "shcs|button|csk",
+            "hex_nut|heatset_std|heatset_short"
+          ],
+          "count": 2
+        }
+      ],
+      "bom": [
+        {
+          "family": "shcs|button|csk",
+          "key": "M4",
+          "qty": 4
+        }
+      ]
+    }
+  }
+}

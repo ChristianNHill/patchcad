@@ -55,13 +55,6 @@ export const WORKED_PLAN = {
         ],
         "requires": [],
         "payload": {
-          "units": "mm",
-          "process": {
-            "kind": "FDM",
-            "minWall": 1.2,
-            "nozzle": 0.4
-          },
-          "paramBindings": {},
           "ports": [
             {
               "name": "bracket_face",
@@ -71,16 +64,6 @@ export const WORKED_PLAN = {
                   0,
                   0,
                   "param(base-plate.thickness) / 2"
-                ],
-                "zAxis": [
-                  0,
-                  0,
-                  1
-                ],
-                "xAxis": [
-                  1,
-                  0,
-                  0
                 ]
               },
               "params": {
@@ -92,31 +75,13 @@ export const WORKED_PLAN = {
             "volumes": [
               {
                 "kind": "box",
-                "pose": {
-                  "origin": [
-                    0,
-                    0,
-                    0
-                  ],
-                  "zAxis": [
-                    0,
-                    0,
-                    1
-                  ],
-                  "xAxis": [
-                    1,
-                    0,
-                    0
-                  ]
-                },
                 "dims": [
                   "param(base-plate.width)",
                   "param(base-plate.depth)",
                   "param(base-plate.thickness)"
                 ]
               }
-            ],
-            "clearance": 0.4
+            ]
           },
           "visualChecks": [
             "Is the part a flat rectangular plate?",
@@ -176,13 +141,6 @@ export const WORKED_PLAN = {
           }
         ],
         "payload": {
-          "units": "mm",
-          "process": {
-            "kind": "FDM",
-            "minWall": 1.2,
-            "nozzle": 0.4
-          },
-          "paramBindings": {},
           "ports": [
             {
               "name": "base_face",
@@ -197,11 +155,6 @@ export const WORKED_PLAN = {
                   0,
                   0,
                   -1
-                ],
-                "xAxis": [
-                  1,
-                  0,
-                  0
                 ]
               },
               "params": {
@@ -218,16 +171,6 @@ export const WORKED_PLAN = {
                     0,
                     0,
                     "param(l-bracket.thickness) / 2"
-                  ],
-                  "zAxis": [
-                    0,
-                    0,
-                    1
-                  ],
-                  "xAxis": [
-                    1,
-                    0,
-                    0
                   ]
                 },
                 "dims": [
@@ -243,16 +186,6 @@ export const WORKED_PLAN = {
                     0,
                     "param(l-bracket.depth) / 2 - param(l-bracket.thickness) / 2",
                     "param(l-bracket.height) / 2"
-                  ],
-                  "zAxis": [
-                    0,
-                    0,
-                    1
-                  ],
-                  "xAxis": [
-                    1,
-                    0,
-                    0
                   ]
                 },
                 "dims": [
@@ -261,8 +194,7 @@ export const WORKED_PLAN = {
                   "param(l-bracket.height)"
                 ]
               }
-            ],
-            "clearance": 0.4
+            ]
           },
           "visualChecks": [
             "Is the part an L shape with one horizontal and one vertical leg?",
@@ -292,10 +224,6 @@ export const WORKED_PLAN = {
         "port": "base_face"
       },
       "intent": "removable",
-      "motion": "fixed",
-      "load": "light",
-      "access": "both_sides",
-      "count": 1,
       "wallA": "param(base-plate.thickness)",
       "wallB": "param(l-bracket.thickness)"
     }

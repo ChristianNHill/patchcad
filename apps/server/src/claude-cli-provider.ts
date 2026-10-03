@@ -67,9 +67,11 @@ export class ClaudeCliProvider implements LlmProvider {
 
   async complete<T>(req: LlmRequest<T>): Promise<LlmResult<T>> {
     const model = this.opts.models?.[req.role] ?? DEFAULT_MODELS[req.role];
-    // Same contract as the openai-compat fallback: the schema rides in the
-    // prompt, because there is no structured-output channel on a CLI at all.
-    const jsonSchema = zodToJsonSchema(req.wireSchema ?? req.schema, { $refStrategy: "none" });
+    // The schema rides in the prompt, because there is no structured-output
+    // channel on a CLI at all. The VALIDATION schema, not the wire one: the
+    // wire types the architect's payloads as JSON strings for a grammar this
+    // path does not have, and escaping every quote cost 15% of a plan's tokens.
+    const jsonSchema = zodToJsonSchema(req.schema, { $refStrategy: "none" });
     const system =
       `${req.system}\n\nRespond with ONLY a JSON object (no markdown fences, no prose) ` +
       `matching this JSON Schema:\n${JSON.stringify(jsonSchema)}`;

@@ -114,6 +114,10 @@ export interface JointInput {
   noRecess?: boolean;
   /** Ø of a bore a already declares on the joint's axis (a brief's "3.2mm knuckle bores"). */
   boreA?: number;
+  /** a's envelope behind a.port along the axis, and the largest Ø it holds
+   *  around the axis there (expand.ts materialAt). Unknown when undefined. */
+  depthA?: number;
+  roomA?: number;
 }
 
 /** One catalog part a joint needs. `role` becomes the node id suffix. */
@@ -473,10 +477,14 @@ interface Spindle {
 function spindleFor(i: JointInput): Spindle | string {
   const d = shaftFor(i);
   const mw = minWallOf(i);
-  const candidates = Object.entries(CATALOG.families.bearing!.dims)
-    .filter(([, r]) => r.bore === d)
+  const past = pastA(i);
+  if (past) return past;
+  const all = Object.entries(CATALOG.families.bearing!.dims).filter(([, r]) => r.bore === d);
+  const candidates = all
+    .filter(([, r]) => i.roomA === undefined || dim(r, "od") + 2 * mw <= i.roomA)
     .sort((a, b) => dim(b[1], "od") - dim(a[1], "od"));
-  if (candidates.length === 0) return `no deep-groove bearing with a Ø${d} bore`;
+  if (all.length === 0) return `no deep-groove bearing with a Ø${d} bore`;
+  if (candidates.length === 0) return `room around the axis in a Ø${mm(i.roomA!)} < bearing OD ${mm(Math.min(...all.map(([, r]) => dim(r, "od"))))} + 2 × ${mw}`;
   const fits = candidates.find(([, r]) => i.wallA >= 2 * dim(r, "width") + mw);
   if (!fits) {
     const w = Math.min(...candidates.map(([, r]) => dim(r, "width")));
@@ -504,6 +512,15 @@ function spindleFor(i: JointInput): Spindle | string {
       keep.note,
     ],
   };
+}
+
+/** The spindles seat their second bearing or bushing wallA behind a.port, so
+ *  a wall longer than a's material there mints a seat outside the part (a
+ *  hinge declaring its whole 40mm leaf as wallA from a middle knuckle face). */
+function pastA(i: JointInput): string | undefined {
+  if (i.depthA !== undefined && i.wallA > i.depthA + 0.5)
+    return `wallA ${mm(i.wallA)} runs past a: its envelope holds only ${mm(i.depthA)} behind a.port along the axis`;
+  return undefined;
 }
 
 const M1: JointRule = {
@@ -594,6 +611,10 @@ const M2: JointRule = {
     const fam = CATALOG.families.bushing!;
     const key = Object.keys(fam.dims).find((k) => fam.dims[k]!.bore === d);
     if (!key) return `no bushing with a Ø${d} bore`;
+    const past = pastA(i);
+    if (past) return past;
+    if (i.roomA !== undefined && dim(fam.dims[key]!, "od") + 2 * mw > i.roomA)
+      return `room around the axis in a Ø${mm(i.roomA)} < bushing OD ${mm(dim(fam.dims[key]!, "od"))} + 2 × ${mw}`;
     const length = [...(fam.lengths?.[key] ?? [])].reverse().find((l) => 2 * l + mw <= i.wallA);
     if (length === undefined) return `wallA ${mm(i.wallA)} < 2 × bushing ${Math.min(...(fam.lengths?.[key] ?? [0]))} + ${mw}`;
     if (i.wallB < d) return `wallB ${mm(i.wallB)} < hub engagement Ø${d}`;

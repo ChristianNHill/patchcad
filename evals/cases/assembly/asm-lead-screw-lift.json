@@ -1,0 +1,77 @@
+{
+  "id": "asm-lead-screw-lift",
+  "prompt": "a vertical lead-screw lift: a NEMA 17 stepper under a printed 120x100x8mm base turns a T8 lead screw through a 5x8 coupler, raising a printed 80x60x8mm platform through 120mm of travel on a flanged T8 nut, guided by an 8mm rod and an LM8UU bearing",
+  "why": "PL, the most hardware one joint mints: motor, coupler, lead screw, nut, guide rod, linear bearing. The sweep runs the platform up the full stroke against the screw, rod and base.",
+  "expect": {
+    "nodes": {
+      "min": 2,
+      "max": 4
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "assembly": {
+      "parts": 8,
+      "contacts": 2,
+      "joints": [
+        {
+          "motion": "prismatic",
+          "hardware": [
+            "lead_screw",
+            "lead_nut",
+            "nema17",
+            "coupler",
+            "lm_uu"
+          ],
+          "travel": 120
+        }
+      ],
+      "bom": [
+        {
+          "family": "lead_screw",
+          "qty": 1
+        },
+        {
+          "family": "lead_nut",
+          "qty": 1
+        },
+        {
+          "family": "coupler",
+          "qty": 1
+        },
+        {
+          "family": "nema17",
+          "qty": 1
+        },
+        {
+          "family": "lm_uu",
+          "minQty": 1
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "id": "asm-magnetic-lid",
+  "prompt": "a printed 70x70x30mm trinket box with 2mm walls and a separate 70x70x5mm lift-off lid held shut by eight 6x3mm neodymium disc magnets, four pressed into pockets in the box's corners and four in the lid's corners facing them",
+  "why": "Magnets are catalog hardware no joint rule mints, so the architect places them itself. G5 clashes each magnet against its pocket, and the BOM must carry all eight.",
+  "expect": {
+    "nodes": {
+      "min": 3,
+      "max": 6
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "assembly": {
+      "parts": 10,
+      "contacts": 1,
+      "bom": [
+        {
+          "family": "disc_magnet",
+          "key": "6x3",
+          "qty": 8
+        }
+      ]
+    }
+  }
+}

@@ -266,6 +266,18 @@ export function planPreview(graph: GraphDoc) {
   return { nodes, problems };
 }
 
+/** What holds a pair together, as the port whose z is the mate's axis: each
+ *  edge between them, and each joint declared between them. A joint may place
+ *  b only through its minted hardware (a bearing pivot has no a-b edge), and
+ *  judging those two as strangers flagged every hinge's interleaved knuckles. */
+function matesOf(graph: GraphDoc, x: string, y: string): { from: string; fromPort: string }[] {
+  const pair = (p: string, q: string) => (p === x && q === y) || (p === y && q === x);
+  return [
+    ...graph.edges.filter((e) => pair(e.from, e.to)),
+    ...(graph.joints ?? []).filter((j) => pair(j.a.node, j.b.node)).map((j) => ({ from: j.a.node, fromPort: j.a.port })),
+  ];
+}
+
 /**
  * Two mated parts sharing envelope away from the mate. Around each mate's axis
  * (the port's z through its origin) sharing is the design, out to the widest
@@ -279,9 +291,8 @@ function matedOverlap(
   b: { key: string; id: string; boxes: Obb[] },
 ): string | null {
   const axes: { o: Vec3; z: Vec3; r: number }[] = [];
-  for (const e of graph.edges) {
-    if (!((e.from === a.id && e.to === b.id) || (e.from === b.id && e.to === a.id))) continue;
-    const port = (graph.nodes[e.from]!.contract.payload as CadContractPayload | undefined)?.ports.find((p) => p.name === e.fromPort);
+  for (const e of matesOf(graph, a.id, b.id)) {
+    const port = (graph.nodes[e.from]?.contract.payload as CadContractPayload | undefined)?.ports.find((p) => p.name === e.fromPort);
     if (!port) continue;
     let pose: ReturnType<typeof resolvePose>;
     try {
@@ -370,7 +381,9 @@ export const cadPlanGeometryLint = {
         }
       });
     }
-    const mated = new Set(graph.edges.flatMap((e) => [`${e.from}|${e.to}`, `${e.to}|${e.from}`]));
+    const mated = new Set(
+      [...graph.edges.map((e) => [e.from, e.to]), ...(graph.joints ?? []).map((j) => [j.a.node, j.b.node])].flatMap(([p, q]) => [`${p}|${q}`, `${q}|${p}`]),
+    );
     for (let i = 0; i < posed.length; i++) {
       for (let j = i + 1; j < posed.length; j++) {
         const a = posed[i]!;

@@ -8,6 +8,7 @@ import { Modal } from "./Modal.js";
 import { CadViewport } from "./CadViewport.js";
 import { Inspector } from "./Inspector.js";
 import { BomButton } from "./BomPanel.js";
+import { InstructionsButton } from "./InstructionsPanel.js";
 import { PlanBar, PlanOverlay, PlanProgress } from "./PlanBar.js";
 import { ImportButton } from "./ImportButton.js";
 import { Welcome } from "./Welcome.js";
@@ -128,6 +129,7 @@ export function App() {
         <DirtyButton />
         <UndoButton />
         <BomButton />
+        <InstructionsButton />
         <ProjectButton />
         <span className="header__goal" title={graph.brief.goal}>
           {graph.brief.goal}

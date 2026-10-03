@@ -1,0 +1,57 @@
+{
+  "id": "asm-dowel-alignment",
+  "prompt": "a two-part printed mold: a 60x40x20mm bottom half and a matching 60x40x20mm top half, aligned by two 4mm steel dowel pins pressed into the bottom half and slipping into the top half",
+  "why": "R1 alignment dowels. Each pin is pressed into one half and slips into the other (G3 measures both dowel holes), and the halves must meet face to face.",
+  "expect": {
+    "nodes": {
+      "min": 2,
+      "max": 4
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "assembly": {
+      "parts": 4,
+      "contacts": 1,
+      "joints": [
+        {
+          "motion": "fixed",
+          "hardware": [
+            "dowel"
+          ]
+        }
+      ],
+      "bom": [
+        {
+          "family": "dowel",
+          "key": "4",
+          "qty": 2
+        }
+      ]
+    }
+  }
+}

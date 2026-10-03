@@ -1,0 +1,72 @@
+{
+  "id": "asm-belt-turntable",
+  "prompt": "a 150mm-diameter printed turntable on a 160x160x30mm printed base, driven 2:1 by a NEMA 17 stepper through a GT2 belt, the turntable shaft turning on two bearings",
+  "why": "A driven revolute with a ratio: DB must pick a pulley pair at 2:1, a stocked GT2 loop and the motor mount. G5 sweeps the turntable and its pulley; the BOM must carry the motor, both pulleys and the belt.",
+  "expect": {
+    "nodes": {
+      "min": 2,
+      "max": 3
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "assembly": {
+      "parts": 8,
+      "contacts": 2,
+      "joints": [
+        {
+          "motion": "revolute",
+          "hardware": [
+            "gt2_loop",
+            "gt2_pulley",
+            "nema17",
+            "bearing|bearing_flanged"
+          ],
+          "travel": 360
+        }
+      ],
+      "bom": [
+        {
+          "family": "gt2_pulley",
+          "qty": 2
+        },
+        {
+          "family": "gt2_loop",
+          "qty": 1
+        },
+        {
+          "family": "nema17",
+          "qty": 1
+        },
+        {
+          "family": "bearing|bearing_flanged",
+          "minQty": 2
+        }
+      ]
+    }
+  }
+}

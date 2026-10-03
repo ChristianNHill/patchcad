@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { makeArchitectSchema, makeArchitectWireSchema, normalizeArchitectOutput, planGraph } from "./architect.js";
+import { applyArchitectPatch, makeArchitectSchema, makeArchitectWireSchema, normalizeArchitectOutput, planGraph } from "./architect.js";
 import { LlmCallError, type DomainBackend, type LlmProvider } from "./index.js";
 
 /** PlanResult.repaired was the entire observability of the repair loop, and it
@@ -87,7 +87,7 @@ describe("a failed plan carries what it spent", () => {
     expect((err as LlmCallError).usage).toEqual({ inputTokens: 40, outputTokens: 20, usd: 1 });
   });
 
-  it("keeps the earlier rounds when a repair call itself throws", async () => {
+  it("keeps the earlier rounds when a repair and its full-graph fallback both throw", async () => {
     let call = 0;
     const provider = {
       id: "s",
@@ -99,7 +99,55 @@ describe("a failed plan carries what it spent", () => {
     const err = await planGraph({ provider, backend, projectId: "t", goal: "g" }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(LlmCallError);
     expect((err as LlmCallError).message).toBe("unparseable");
-    expect((err as LlmCallError).usage).toEqual({ inputTokens: 11, outputTokens: 6, usd: 0.75 });
+    expect((err as LlmCallError).usage).toEqual({ inputTokens: 12, outputTokens: 7, usd: 1.25 });
+  });
+});
+
+/** A repair round answers with a patch, merged onto the model's own draft. */
+describe("repair rounds patch the draft", () => {
+  const two = (blocked: boolean) => ({ ...emission(false), nodes: [node("test-plate", blocked), node("test-arm", false)] });
+
+  it("replaces only the nodes the patch names and keeps the rest", async () => {
+    const asked: string[] = [];
+    let call = 0;
+    const provider = {
+      id: "s",
+      complete: async <T>(req: { label: string; messages: { content: string }[] }) => {
+        asked.push(req.messages.at(-1)!.content);
+        const data = ++call === 1 ? two(true) : { nodes: [node("test-plate", false)] };
+        return { data: data as T, usage: { inputTokens: 1, outputTokens: 1, usd: 0 }, model: "s" };
+      },
+    } as unknown as LlmProvider;
+    const res = await planGraph({ provider, backend, projectId: "t", goal: "g" });
+    expect(call).toBe(2);
+    expect(asked[1]).toContain("PATCH");
+    expect(Object.keys(res.graph.nodes).sort()).toEqual(["test-arm", "test-plate"]);
+  });
+
+  it("falls back to the whole graph once when the patch will not parse", async () => {
+    let call = 0;
+    const provider = {
+      id: "s",
+      complete: async <T>() => {
+        call++;
+        if (call === 2) throw new LlmCallError("schema validation failed twice", { inputTokens: 1, outputTokens: 1, usd: 0.5 });
+        return { data: two(call === 1) as T, usage: { inputTokens: 1, outputTokens: 1, usd: 0.25 }, model: "s" };
+      },
+    } as unknown as LlmProvider;
+    const res = await planGraph({ provider, backend, projectId: "t", goal: "g" });
+    expect(call).toBe(3);
+    expect(res.lintRounds).toHaveLength(1);
+    expect(res.usage).toEqual({ inputTokens: 3, outputTokens: 3, usd: 1 });
+  });
+
+  it("merges by id, drops removed nodes, and replaces edges and joints only when sent", () => {
+    const base = normalizeArchitectOutput(two(false) as never, { enforceShell: false });
+    const merged = applyArchitectPatch(base, { nodes: [node("test-new", false) as never], removeNodes: ["test-arm"] });
+    expect(merged.nodes.map((n) => n.id)).toEqual(["test-plate", "test-new"]);
+    expect(base.nodes.map((n) => n.id)).toEqual(["test-plate", "test-arm"]);
+    const rewired = applyArchitectPatch(base, { edges: [{ from: "a", fromPort: "p", to: "b", toPort: "q" }] });
+    expect(rewired.edges).toHaveLength(1);
+    expect(rewired.nodes).toEqual(base.nodes);
   });
 });
 
@@ -242,5 +290,31 @@ describe("planning.expandPlan", () => {
     const withJoints = makeArchitectWireSchema(["part"], true);
     expect(withJoints.safeParse({ ...emission(false), nodes: emission(false).nodes.map((n) => ({ ...n, contract: { ...n.contract, payload: "{}" } })), joints: "[]" }).success).toBe(true);
     expect(Object.keys(makeArchitectWireSchema(["part"]).shape)).not.toContain("joints");
+  });
+});
+
+/** A domain that can fix a lint by rule does so before any repair is paid for. */
+describe("autoFix", () => {
+  it("clears a lint without a repair round and notes the fix on the plan", async () => {
+    let calls = 0;
+    const provider = {
+      id: "s",
+      complete: async <T>() => (calls++, { data: emission(true) as T, usage: { inputTokens: 1, outputTokens: 1, usd: 0 }, model: "s" }),
+    } as unknown as LlmProvider;
+    const fixing = {
+      ...backend,
+      planning: {
+        ...backend.planning,
+        autoFix: (draft: ReturnType<typeof emission>, problems: string[], check: (d: unknown) => string[]) => {
+          const fixed = { ...draft, nodes: draft.nodes.map((n) => ({ ...n, contract: { ...n.contract, payload: { blocked: false } } })) };
+          return problems.length && check(fixed).length === 0 ? { draft: fixed, notes: ["frame flip: unblocked"] } : null;
+        },
+      },
+    } as unknown as DomainBackend<unknown>;
+    const res = await planGraph({ provider, backend: fixing, projectId: "t", goal: "g" });
+    expect(calls).toBe(1);
+    expect(res.lintRounds).toEqual([]);
+    expect(res.autoFixes).toEqual(["frame flip: unblocked"]);
+    expect(res.rationale).toContain("frame flip: unblocked");
   });
 });

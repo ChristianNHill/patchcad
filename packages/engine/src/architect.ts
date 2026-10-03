@@ -51,6 +51,11 @@ const ARCHITECT_MAX_TOKENS = 32000;
  * now that the reply streams: 135s of visible progress is not 135s of dead
  * spinner. Revisit against the eval harness, which is the only thing that can
  * actually measure plan quality.
+ *
+ * Revisited 2026-10-03 on the 11 dry eval cases, n=1 each: medium took 363s and
+ * 33.5k output tokens against high's 405s and 40.9k, both 11/11 with the same
+ * lint rounds and similar contracts. A dry plan cannot show whether the parts
+ * cook, so high stays until a repeated cooked run says otherwise.
  */
 const ARCHITECT_EFFORT = "high" as const;
 
@@ -154,7 +159,7 @@ export function makeArchitectSchema<P>(
       }),
     ),
     entryNodeId: z.string(),
-    rationale: z.string().describe("one paragraph: why this decomposition"),
+    rationale: z.string().describe("one or two sentences: why this decomposition"),
     design: z
       .string()
       .default("")
@@ -165,6 +170,44 @@ export function makeArchitectSchema<P>(
   });
 }
 export type ArchitectOutput = z.infer<ReturnType<typeof makeArchitectSchema<unknown>>>;
+
+/** A lint repair's answer: only what changed. A repair used to re-emit the
+ *  whole graph, and measured on the enclosure-lid eval that was 5.3k output
+ *  tokens (37s) to change one field on four joints. Built from either the
+ *  validation or the wire schema, so a node in a patch is judged exactly as
+ *  one in a full emission. */
+export function makeArchitectPatchSchema(full: z.AnyZodObject) {
+  const { nodes, edges, joints } = full.shape as Record<string, z.ZodTypeAny>;
+  return z.object({
+    nodes: z
+      .array((nodes as z.ZodArray<z.ZodTypeAny>).element)
+      .default([])
+      .describe("every node you change or add, each written out in full; leave unchanged nodes out"),
+    removeNodes: z.array(z.string()).optional().describe("ids of nodes to delete"),
+    edges: edges!.optional().describe("the COMPLETE corrected edge list, only when an edge changes"),
+    ...(joints ? { joints: joints.optional().describe("the COMPLETE corrected joints, only when a joint changes") } : {}),
+  });
+}
+export type ArchitectPatch = {
+  nodes?: ArchitectOutput["nodes"];
+  removeNodes?: string[];
+  edges?: ArchitectOutput["edges"];
+  joints?: ArchitectOutput["joints"];
+};
+
+/** The draft with a patch merged in: nodes replaced or added by id, removed
+ *  ones dropped, edges and joints replaced whole when the patch carries them.
+ *  Cloned, because normalizeArchitectOutput mutates contracts in place. */
+export function applyArchitectPatch(base: ArchitectOutput, patch: ArchitectPatch): ArchitectOutput {
+  const out = structuredClone(base);
+  const removed = new Set(patch.removeNodes ?? []);
+  const changed = new Map((patch.nodes ?? []).map((n) => [n.id, n]));
+  out.nodes = out.nodes.filter((n) => !removed.has(n.id)).map((n) => changed.get(n.id) ?? n);
+  for (const n of changed.values()) if (!base.nodes.some((b) => b.id === n.id)) out.nodes.push(n);
+  if (patch.edges) out.edges = patch.edges;
+  if (patch.joints) out.joints = patch.joints;
+  return out;
+}
 
 /** Decomposition advice for a domain that does not bring its own. Written for
  *  web components, which is why a backend may replace it. */
@@ -468,6 +511,8 @@ export interface PlanResult {
    *  to be one rule (face/hole conflict) missing from the guidance, findable in
    *  one probe once this existed and invisible for a week while it did not. */
   lintRounds: string[][];
+  /** What the domain's `autoFix` changed on its own, one line per fix. */
+  autoFixes: string[];
 }
 
 export async function planGraph(opts: {
@@ -494,6 +539,8 @@ export async function planGraph(opts: {
     kinds,
     jointSchema,
   );
+  const patchSchema = makeArchitectPatchSchema(schema) as z.ZodType<ArchitectPatch, z.ZodTypeDef, unknown>;
+  const patchWire = makeArchitectPatchSchema(wireSchema);
   const enforceShell = opts.backend.planning.nodeKinds.some((k) => k.kind === "shell");
   // THE PAYLOAD SPEC, in the prompt, because the grammar can no longer carry
   // it. The wire schema types payload as a JSON string (the full payload
@@ -511,12 +558,12 @@ export async function planGraph(opts: {
     architectSystem(opts.backend) +
     `
 
-Each node's contract.payload is a STRICT JSON string. The object it encodes MUST match this JSON schema exactly:
+Each node's contract.payload MUST match this JSON schema exactly. Write it as a JSON object, or as a STRICT JSON string encoding one where the response schema types it as a string:
 ${payloadDoc}` +
     (jointSchema
       ? `
 
-\`joints\` is a STRICT JSON string. The array it encodes MUST match this JSON schema exactly:
+\`joints\` MUST match this JSON schema exactly, as a JSON array or, where the response schema types it as a string, a STRICT JSON string encoding one:
 ${JSON.stringify(zodToJsonSchema(z.array(jointSchema), { target: "jsonSchema7", $refStrategy: "none" }))}`
       : "");
   const goalMessage = {
@@ -547,6 +594,7 @@ ${JSON.stringify(zodToJsonSchema(z.array(jointSchema), { target: "jsonSchema7", 
   let out = expand(drafted);
   let repaired = false;
   const lintRounds: string[][] = [];
+  const autoFixes: string[] = [];
 
   const lint = (o: ArchitectOutput): string[] => {
     const problems = genericLints(o);
@@ -557,54 +605,78 @@ ${JSON.stringify(zodToJsonSchema(z.array(jointSchema), { target: "jsonSchema7", 
     return problems;
   };
 
+  /** Lint, letting the domain fix by rule what it can before a model is
+   *  asked. The fixed draft becomes the model's own, so a repair builds on it. */
+  const check = (): string[] => {
+    const found = lint(out);
+    const fixed = found.length ? opts.backend.planning.autoFix?.(drafted, found, (d) => lint(expand(d))) : null;
+    if (!fixed) return found;
+    autoFixes.push(...fixed.notes);
+    drafted = fixed.draft;
+    out = expand(drafted);
+    return lint(out);
+  };
+
   opts.onPhase?.("checking", `${out.nodes.length} parts drafted`);
-  let problems = lint(out);
+  let problems = check();
   // 3 rounds: weaker local models need more than one shot at the lints.
   const maxRepairs = 3;
   for (let round = 1; problems.length > 0 && round <= maxRepairs; round++) {
     repaired = true;
     opts.onPhase?.("repairing", `round ${round} of ${maxRepairs} — ${problems.length} issue(s)`);
     lintRounds.push([...problems]);
-    // A repair that throws must not lose the rounds before it: they billed.
-    const repair = await opts.provider.complete({
-      role: "architect",
+    const fix = (patch: boolean) => ({
+      role: "architect" as const,
       label: `architect-repair-${round}:${opts.projectId}`,
       system,
       messages: [
         goalMessage,
-        { role: "assistant", content: JSON.stringify(drafted) },
+        { role: "assistant" as const, content: JSON.stringify(drafted) },
         {
-          role: "user",
+          role: "user" as const,
           content: [
             `Your graph failed validation:`,
             ...problems.map((p) => `- ${p}`),
             "",
-            "Fix ONLY these problems and emit the corrected complete graph.",
+            patch
+              ? "Fix ONLY these problems. Reply with a PATCH, not the graph: `nodes` holds only the nodes you change or add, each written out in full; `edges` / `joints` only when one changes, then the complete corrected list. Everything you leave out stays as drafted."
+              : "Fix ONLY these problems and emit the corrected complete graph.",
             "Remember: every edge must connect an existing `provides` port to an",
             "existing `requires` port of the SAME type — declare the missing",
             "`requires` port (or fix the type) rather than inventing new edges.",
           ].join("\n"),
         },
       ],
-      schema,
-      wireSchema,
       maxTokens: ARCHITECT_MAX_TOKENS,
       effort: ARCHITECT_REPAIR_EFFORT,
       signal: opts.signal,
-    }).catch((err: unknown) => {
-      const own = err instanceof LlmCallError ? err.usage : undefined;
-      throw new LlmCallError((err as Error).message, {
-        inputTokens: usage.inputTokens + (own?.inputTokens ?? 0),
-        outputTokens: usage.outputTokens + (own?.outputTokens ?? 0),
-        usd: usage.usd + (own?.usd ?? 0),
-      }, { cause: err });
     });
-    usage.inputTokens += repair.usage.inputTokens;
-    usage.outputTokens += repair.usage.outputTokens;
-    usage.usd += repair.usage.usd;
-    drafted = normalizeArchitectOutput(repair.data, { enforceShell });
+    // Every call billed, so every throw carries the running total.
+    const bill = (u: LlmUsage) => {
+      usage.inputTokens += u.inputTokens;
+      usage.outputTokens += u.outputTokens;
+      usage.usd += u.usd;
+    };
+    const billThrow = (err: unknown): never => {
+      if (err instanceof LlmCallError && err.usage) bill(err.usage);
+      throw new LlmCallError((err as Error).message, { ...usage }, { cause: err });
+    };
+    let next: ArchitectOutput;
+    try {
+      const repair = await opts.provider.complete<ArchitectPatch>({ ...fix(true), schema: patchSchema, wireSchema: patchWire });
+      bill(repair.usage);
+      next = applyArchitectPatch(drafted, repair.data);
+    } catch (err) {
+      // A patch that will not parse falls back to the whole graph, once.
+      if (opts.signal?.aborted) billThrow(err);
+      if (err instanceof LlmCallError && err.usage) bill(err.usage);
+      const full = await opts.provider.complete({ ...fix(false), schema, wireSchema }).catch(billThrow);
+      bill(full.usage);
+      next = full.data;
+    }
+    drafted = normalizeArchitectOutput(next, { enforceShell });
     out = expand(drafted);
-    problems = lint(out);
+    problems = check();
   }
   if (problems.length > 0) {
     // Every round billed. A bare Error recorded a failed plan as $0 when it had
@@ -613,9 +685,10 @@ ${JSON.stringify(zodToJsonSchema(z.array(jointSchema), { target: "jsonSchema7", 
   }
   return {
     graph: architectOutputToGraph(out, opts.projectId, opts.backend.id, opts.goal, opts.backend.planning.paramUnit),
-    rationale: out.rationale,
+    rationale: [out.rationale, ...autoFixes].join("\n"),
     usage,
     repaired,
     lintRounds,
+    autoFixes,
   };
 }

@@ -280,6 +280,28 @@ export interface ExportResult {
   hint?: string;
 }
 
+export interface InsertionResult {
+  ok: boolean;
+  insertions?: {
+    checks: { id: string; blocked: { part: string; by: string; depth_mm: number; volume_mm3: number; travel_mm: number }[] }[];
+    errors: string[];
+  };
+  stage?: string;
+  error?: string;
+}
+
+export interface InstructionsResult {
+  ok: boolean;
+  hash?: string;
+  /** Kernel paths, one SVG per page. */
+  pages?: string[];
+  pdf?: string;
+  html?: string;
+  document?: { pages: number; steps: number; items: number };
+  stage?: string;
+  error?: string;
+}
+
 export class KernelClient {
   private child: ChildProcess | null = null;
   readonly baseUrl: string;
@@ -479,6 +501,37 @@ export class KernelClient {
       }),
     });
     return (await res.json()) as ClashResult;
+  }
+
+  /** Assembly instructions: can each step's new parts travel in to their pose
+   *  past the parts already placed? `direction` is the way they travel IN. */
+  async insertions(
+    parts: { key: string; code: string; params: Record<string, unknown>; matrix: number[] }[],
+    checks: { id: string; moving: string[]; still: string[]; direction: number[]; clear_mm?: number }[],
+    opts: { importDir?: string; allow?: { a: string; b: string; volume_mm3: number }[] } = {},
+  ): Promise<InsertionResult> {
+    await this.ready();
+    const res = await fetch(`${this.baseUrl}/instructions/insertions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ parts, checks, allow: opts.allow ?? [], import_dir: opts.importDir ?? "" }),
+    });
+    return (await res.json()) as InsertionResult;
+  }
+
+  /** The instruction document: step pictures, hardware page, SVG pages, PDF, HTML. */
+  async instructions(
+    parts: { key: string; code: string; params: Record<string, unknown>; matrix: number[] }[],
+    document: unknown,
+    opts: { importDir?: string } = {},
+  ): Promise<InstructionsResult> {
+    await this.ready();
+    const res = await fetch(`${this.baseUrl}/instructions/document`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ parts, document, import_dir: opts.importDir ?? "" }),
+    });
+    return (await res.json()) as InstructionsResult;
   }
 
   /** A reference image with its background removed, cropped to the subject

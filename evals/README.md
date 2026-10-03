@@ -114,6 +114,43 @@ graph there is one CLEARANCE_HOLE measuring 6mm" survives a rename that
 | `zeroLlmKinds` | these kinds must cost 0 model calls. Registry hardware that touches a model is a defect. |
 | `assemblyProblems` | expected count from `solveScene`: unsolved mates and unplaced parts. |
 | `globalProblems` | expected count from the backend's `globalCheck`, which is where the G5 clash gate lives. **Defaults to 0**, unlike the others: `assemblyProblems` never saw a clash, so `two-plate-bolted` scored PASS on an assembly whose screw and nut shared 12.8mm³. |
+| `assembly` | multi-part claims, below. |
+
+## The assembly suite
+
+```sh
+pnpm exec tsx src/eval.ts --dry-run --suite assembly            # 14 cases, 0 LLM calls
+pnpm exec tsx src/eval.ts --suite assembly --max-usd 25         # PatchCAD, cooked
+pnpm exec tsx src/eval.ts --suite assembly --raw --max-usd 6    # the raw-model baseline
+pnpm exec tsx src/eval.ts --suite assembly --compare            # newest of each, side by side
+```
+
+`cases/assembly/` holds multi-part prompts with real joints, hardware, fits and
+motion: a hinged box, an insert-screwed enclosure, a geared winch, a rotor on
+bearings, a belt-driven turntable, a rod slide, a lead-screw lift, a bolted
+clamp, a two-link arm, a cart on axles, a knob on a D-shaft, a magnetic lid,
+dowel alignment and a bolted bracket stack. `--case` takes a comma list, so a
+sweep can be split across processes; `--compare` takes each case's newest row.
+
+| `assembly` key | Checks |
+|---|---|
+| `parts` | the exported assembly STEP has at least this many named children (one per placed copy). |
+| `contacts` | at least this many mates had their contact measured by G5; any `gap` finding fails. |
+| `fits` | at least this many mates went through G5's fit check (bearing in seat, shaft in bearing or bore, screw in clearance hole); any `fit` finding fails. |
+| `joints[]` | `{motion, hardware, count, travel}`: a declared joint of that motion whose expansion minted every listed catalog family (`"a\|b"` accepts either). `travel` is degrees or mm the joint's limits must span, with a G5 sweep that ran and found nothing. |
+| `bom[]` | `{family, key, qty \| minQty}` against the buy rows of the BOM. |
+
+The count floors on `contacts` and `fits` exist because "no gap finding" over
+an assembly that offered G5 nothing to measure is silence, not a pass.
+
+`--raw` is the comparison. The same prompt goes to the same model through the
+same provider in ONE call, with the generator's build123d cheat sheet, the
+whole hardware catalog, and the grading rules in the system prompt. It must
+return one module defining `PARTS`, one function per physical piece in its
+assembled pose, plus a JSON BOM. The kernel grades it as it grades PatchCAD:
+G0-G2 per part, pairwise clash at identity, STEP named parts, and the BOM.
+Joints, mates, fits and motion do not exist in that output, so those checks are
+reported **not gradable** and the verdict is `pass*`, never a plain pass.
 
 ## What it reports
 

@@ -301,6 +301,14 @@ export interface DomainBackend<P = unknown> {
      *  graph (reexpandGraph) `live` carries each node's current param values,
      *  so a decision reads the walls the user actually has. */
     expandPlan?(out: ArchitectOutput, live?: Record<string, Record<string, ParamValue>>): ArchitectOutput;
+    /** Plan time only: given a draft and the problems its lints found, return
+     *  a corrected draft and one note per change, or null to leave it to the
+     *  architect. `check` lints a candidate draft (expanded first). */
+    autoFix?(
+      draft: ArchitectOutput,
+      problems: string[],
+      check: (draft: ArchitectOutput) => string[],
+    ): { draft: ArchitectOutput; notes: string[] } | null;
   };
 
   /** Nodes the domain resolves deterministically (registry fasteners, stock

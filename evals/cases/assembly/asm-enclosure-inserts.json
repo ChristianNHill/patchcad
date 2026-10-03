@@ -1,0 +1,64 @@
+{
+  "id": "asm-enclosure-inserts",
+  "prompt": "a 3D-printed 100x70x35mm electronics enclosure with 2mm walls and a removable 3mm flat lid, held down by four M3 button-head screws into M3 heat-set inserts in corner bosses",
+  "why": "The removable fixed joint. R4 must mint four inserts and four screws; G5 checks each screw against its clearance hole (fit) and the lid on the walls (contact), and clashes inserts against bosses.",
+  "expect": {
+    "nodes": {
+      "min": 2,
+      "max": 4
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "assembly": {
+      "parts": 10,
+      "contacts": 1,
+      "fits": 4,
+      "joints": [
+        {
+          "motion": "fixed",
+          "hardware": [
+            "heatset_std|heatset_short",
+            "shcs|button|csk"
+          ]
+        }
+      ],
+      "bom": [
+        {
+          "family": "heatset_std|heatset_short",
+          "key": "M3",
+          "qty": 4
+        },
+        {
+          "family": "shcs|button|csk",
+          "key": "M3",
+          "qty": 4
+        }
+      ]
+    }
+  }
+}

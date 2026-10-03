@@ -1159,3 +1159,23 @@ body {
 .bom__num { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .bom__sub { color: var(--color-muted); font-size: var(--text-xs); margin: 0; }
 .bom__sub a { color: var(--color-accent); margin-right: var(--space-2xs); }
+
+/* ---------- assembly instructions ---------- */
+
+.instructions { display: grid; gap: var(--space-xs); justify-items: center; }
+.instructions__page {
+  width: 100%;
+  max-height: 62vh;
+  object-fit: contain;
+  background: var(--color-paper-2);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-input);
+}
+.instructions__nav { display: flex; align-items: center; gap: var(--space-sm); }
+.instructions__nav .modal__meta { margin: 0; }
+.instructions__problems {
+  margin: 0 0 var(--space-sm);
+  padding-left: var(--space-md);
+  color: var(--color-danger);
+  font-size: var(--text-xs);
+}

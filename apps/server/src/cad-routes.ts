@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { unverifiedCandidate, type CadBackend } from "@patchcad/backend-cad";
 import { registerBomRoutes } from "./bom-routes.js";
+import { registerInstructionRoutes } from "./instructions-routes.js";
 import { effectiveParams } from "./project.js";
 import type { Session } from "./session.js";
 
@@ -105,6 +106,7 @@ export function registerCadRoutes(app: FastifyInstance, s: Session): void {
   });
 
   registerBomRoutes(app, () => s.active, s.cadBackend);
+  registerInstructionRoutes(app, () => s.active, s.cadBackend);
 
   app.get("/api/project/cad-scene", async (req, reply) => {
     const project = s.active;

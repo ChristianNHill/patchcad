@@ -1,0 +1,64 @@
+{
+  "id": "asm-knob-dshaft",
+  "prompt": "a 30mm-diameter, 15mm-tall printed control knob with a pointer, fixed on a 5mm D-shaft that turns in two 625 bearings housed in a printed 50x50x20mm bearing block",
+  "why": "A knob turning a D-shaft: M1 picks a D-shaft so the hub drives it. The knob's hub is a fit on the shaft, the bearings a fit in the block, and the knob must clear the block through a full turn.",
+  "expect": {
+    "nodes": {
+      "min": 2,
+      "max": 3
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "assembly": {
+      "parts": 5,
+      "contacts": 2,
+      "fits": 2,
+      "joints": [
+        {
+          "motion": "revolute",
+          "hardware": [
+            "d_shaft",
+            "bearing|bearing_flanged"
+          ],
+          "travel": 360
+        }
+      ],
+      "bom": [
+        {
+          "family": "d_shaft",
+          "qty": 1
+        },
+        {
+          "family": "bearing|bearing_flanged",
+          "key": "625",
+          "qty": 2
+        }
+      ]
+    }
+  }
+}

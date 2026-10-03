@@ -684,20 +684,20 @@ describe("revolute travel derived from the parts' envelopes", () => {
   // Two flat 40×30×3 leaves on one Ø7 knuckle line along x at y = 11.5, the
   // eval's hinge: a's middle knuckle, b's two either side, leaves opposite.
   const pose = (origin: number[], zAxis: number[], xAxis: number[]) => ({ origin, zAxis, xAxis });
-  const leaf = (id: string, knuckles: [number, number][], z: number[], x: number[]) =>
+  const leaf = (id: string, knuckles: [number, number, number?][], z: number[], x: number[]) =>
     part(id, 3, [{ name: "knuckle_face", type: "FLAT_FACE", pose: pose([4, 11.5, 0], z, x), params: { size: 6 } }] as never, {
       envelope: {
         volumes: [
           { kind: "box", pose: pose([0, -3.4, 0], [0, 0, 1], [1, 0, 0]), dims: [40, 23.2, 3] },
-          ...knuckles.map(([at, h]) => ({ kind: "cylinder", pose: pose([at, 11.5, 0], [1, 0, 0], [0, 1, 0]), d: 7, h })),
+          ...knuckles.map(([at, h, d = 7]) => ({ kind: "cylinder", pose: pose([at, 11.5, 0], [1, 0, 0], [0, 1, 0]), d, h })),
         ],
         clearance: 0.4,
       } as never,
     });
-  const hinge = (joint: Record<string, unknown> = {}) =>
+  const hinge = (joint: Record<string, unknown> = {}, knuckleA: [number, number, number?] = [0, 8]) =>
     expandJoints({
       ...plates({}),
-      nodes: [leaf("leaf-a", [[0, 8]], [1, 0, 0], [0, -1, 0]), leaf("leaf-b", [[7.8, 7.6], [-7.8, 7.6]], [-1, 0, 0], [0, 1, 0])] as never,
+      nodes: [leaf("leaf-a", [knuckleA], [1, 0, 0], [0, -1, 0]), leaf("leaf-b", [[7.8, 7.6], [-7.8, 7.6]], [-1, 0, 0], [0, 1, 0])] as never,
       entryNodeId: "leaf-a",
       joints: [{
         id: "hinge", a: { node: "leaf-a", port: "knuckle_face" }, b: { node: "leaf-b", port: "knuckle_face" },
@@ -728,7 +728,12 @@ describe("revolute travel derived from the parts' envelopes", () => {
   it("holds a continuous joint to a full turn: a rotor keeps ±180°, a hinge cannot spin", () => {
     const rotor = JSON.parse(readFileSync(new URL("../../../examples/cad-rotor/patchcad.json", import.meta.url), "utf8")) as GraphDoc;
     expect(new CadBackend().solveScene(rotor).joints.filter((x) => x.type === "revolute").map((x) => x.limits)).toContainEqual([-180, 180]);
-    expect(lintAll(hinge({ duty: "continuous", wallA: 14, wallB: 8, shaftHint: 5 })).some((p) => p.startsWith("joint hinge is continuous"))).toBe(true);
+    // A knuckle that holds two bearings: 16 deep behind the face, Ø20 round them.
+    const spinning = hinge({ duty: "continuous", wallA: 14, wallB: 8, shaftHint: 5 }, [-4, 16, 20]);
+    expect(spinning.joints![0]!.expanded).toMatch(/^M1\|/);
+    expect(lintAll(spinning).some((p) => p.startsWith("joint hinge is continuous"))).toBe(true);
+    // The old Ø7 × 8 knuckle cannot: the rule says so instead of seating bearings outside it.
+    expect(lintAll(hinge({ duty: "continuous", wallA: 14, wallB: 8, shaftHint: 5 })).some((p) => /M1 wallA 14\.0 runs past a: its envelope holds only 8\.0/.test(p))).toBe(true);
   });
 });
 

@@ -1,0 +1,52 @@
+{
+  "id": "asm-two-link-arm",
+  "prompt": "a planar two-link arm: a printed 60x60x10mm base, a 100mm upper arm and an 80mm forearm, each link 20mm wide and 6mm thick, joined by two pin joints (base to upper arm, upper arm to forearm) on 4mm steel pins, each joint swinging at least 120 degrees",
+  "why": "Two revolute joints in series, the published-benchmark failure mode. Each must be revolute, carry a pin, and sweep 120 degrees without the links hitting the base or each other.",
+  "expect": {
+    "nodes": {
+      "min": 3,
+      "max": 5
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "assembly": {
+      "parts": 5,
+      "contacts": 2,
+      "joints": [
+        {
+          "motion": "revolute",
+          "hardware": [
+            "dowel|eclip|bushing|bearing|shaft"
+          ],
+          "count": 2,
+          "travel": 120
+        }
+      ]
+    }
+  }
+}

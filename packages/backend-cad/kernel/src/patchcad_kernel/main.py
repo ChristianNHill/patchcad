@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -485,6 +486,76 @@ async def clash_endpoint(body: ClashBody):
     return {"ok": True, "hash": digest, "cached": False, "clash": result["clash"]}
 
 
+class InsertionBody(BaseModel):
+    parts: list[ClashPart] = Field(default_factory=list)
+    import_dir: str = ""
+    """{id, moving: [key], still: [key], direction, clear_mm?}: direction is the way the moving parts travel
+    IN; clear_mm how far they ride a placed shaft before they are free."""
+    checks: list[dict[str, Any]] = Field(default_factory=list)
+    allow: list[dict[str, Any]] = Field(default_factory=list)
+
+
+@app.post("/instructions/insertions")
+async def insertions_endpoint(body: InsertionBody):
+    """Can each assembly step's new parts reach their pose? Each is swept in
+    from outside along its approach against the parts already placed (G5's
+    prismatic sweep); only overlap beyond what the pair shares at rest blocks."""
+    digest = job_hash(GATES_VERSION, "insertion-v2", [p.model_dump() for p in body.parts], body.import_dir,
+                      import_stamp(body.import_dir, *(p.code for p in body.parts)), body.checks, body.allow)
+    cached_file = anyio.Path(CACHE_ROOT / digest / "insertions.json")
+    if await cached_file.exists():
+        return {"ok": True, "hash": digest, "cached": True, "insertions": json.loads(await cached_file.read_text("utf8"))}
+    job = {"insertions": {"parts": [p.model_dump() for p in body.parts], "checks": body.checks, "allow": body.allow},
+           "import_dir": body.import_dir}
+    result = await anyio.to_thread.run_sync(lambda: pool.execute(job, max(TIMEOUT_S, 120)))
+    if not result.get("ok"):
+        return JSONResponse(status_code=422, content={"ok": False, "hash": digest, **result})
+    if not result["insertions"].get("errors"):  # an uncompared pair is not a verdict
+        await anyio.Path(CACHE_ROOT / digest).mkdir(parents=True, exist_ok=True)
+        tmp = cached_file.with_suffix(".tmp")
+        await tmp.write_text(json.dumps(result["insertions"]), "utf8")
+        await tmp.replace(cached_file)
+    return {"ok": True, "hash": digest, "cached": False, "insertions": result["insertions"]}
+
+
+class InstructionsBody(BaseModel):
+    """Posed copies (keys as in /clash) and the document instructions.ts wrote:
+    title, steps (context keys, moving keys with directions, callouts, text),
+    hardware items (each with its own code, drawn alone) and tools."""
+    parts: list[ClashPart] = Field(default_factory=list)
+    import_dir: str = ""
+    document: dict[str, Any] = Field(default_factory=dict)
+
+
+@app.post("/instructions/document")
+async def instructions_endpoint(body: InstructionsBody):
+    """Step pictures, the hardware page and every page as SVG, the PDF and an
+    HTML copy, cached by everything that draws them."""
+    digest = job_hash("instructions-v2", [p.model_dump() for p in body.parts], body.import_dir,
+                      import_stamp(body.import_dir, *(p.code for p in body.parts)), body.document)
+    out_dir = CACHE_ROOT / digest
+    meta_file = out_dir / "instructions.json"
+
+    def urls(info: dict[str, Any]) -> dict[str, Any]:
+        base = f"/artifact/{digest}"
+        return {"pages": [f"{base}/page-{i + 1}.svg" for i in range(info["pages"])],
+                "pdf": f"{base}/instructions.pdf", "html": f"{base}/instructions.html"}
+
+    if meta_file.exists():
+        info = json.loads(meta_file.read_text("utf8"))
+        return {"ok": True, "hash": digest, "cached": True, "document": info, **urls(info)}
+    job = {"instructions": {"parts": [p.model_dump() for p in body.parts], "document": body.document},
+           "import_dir": body.import_dir, "out_dir": str(out_dir)}
+    result = await anyio.to_thread.run_sync(lambda: pool.execute(job, max(TIMEOUT_S, 180)))
+    if not result.get("ok"):
+        return JSONResponse(status_code=422, content={"ok": False, "hash": digest, **result})
+    tmp = meta_file.with_suffix(".tmp")
+    tmp.write_text(json.dumps(result["instructions"]), "utf8")
+    tmp.replace(meta_file)
+    return {"ok": True, "hash": digest, "cached": False, "document": result["instructions"], **urls(result["instructions"])}
+
+
+
 class ImagePrepBody(BaseModel):
     data_b64: str
     """auto = threshold on a plain backdrop, rembg otherwise; or force one."""
@@ -599,6 +670,20 @@ async def artifact(digest: str):
     if not path.exists() or "/" in digest or ".." in digest:
         return JSONResponse(status_code=404, content={"error": "unknown artifact"})
     return FileResponse(path, media_type="model/gltf-binary")
+
+
+@app.get("/artifact/{digest}/{name}")
+async def instructions_file(digest: str, name: str):
+    """Instruction pages, pictures, PDF and HTML. Declared after every other
+    /artifact route so it never shadows one; anything else is a 404."""
+    path = CACHE_ROOT / digest / name
+    if not re.fullmatch(r"[0-9a-f]+", digest) or not INSTRUCTION_FILES.match(name) or not path.exists():
+        return JSONResponse(status_code=404, content={"error": "no such instructions file"})
+    return FileResponse(path, media_type=INSTRUCTION_TYPES[name.rsplit(".", 1)[1]])
+
+
+INSTRUCTION_FILES = re.compile(r"^(page-\d+\.svg|step-\d+\.png|item-\d+\.png|instructions\.(pdf|html))$")
+INSTRUCTION_TYPES = {"svg": "image/svg+xml", "png": "image/png", "pdf": "application/pdf", "html": "text/html"}
 
 
 def run() -> None:

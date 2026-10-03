@@ -1,0 +1,51 @@
+{
+  "id": "asm-hinged-box",
+  "prompt": "a 3D-printed 80x60x40mm storage box with 2.5mm walls and a separate 80x60x4mm lid, joined along one long top edge by a hinge turning on a 3mm steel pin, so the lid opens from 0 to 110 degrees",
+  "why": "A revolute joint whose travel is the whole point. G5 sweeps the lid through the joint's limits against the box, so a hinge axis buried in the wall, or limits derived short of 110 degrees, fail. The pin is catalog hardware (a dowel, or a printed pin held by an e-clip).",
+  "expect": {
+    "nodes": {
+      "min": 2,
+      "max": 5
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "assembly": {
+      "parts": 3,
+      "contacts": 1,
+      "joints": [
+        {
+          "motion": "revolute",
+          "hardware": [
+            "dowel|eclip|bushing|shaft"
+          ],
+          "travel": 110
+        }
+      ]
+    }
+  }
+}

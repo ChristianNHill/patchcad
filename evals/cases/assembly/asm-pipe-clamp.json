@@ -1,0 +1,69 @@
+{
+  "id": "asm-pipe-clamp",
+  "prompt": "a two-piece printed clamp for a 25mm pipe: two 60x30x15mm halves, each with a 25mm half-bore, clamped together by two M5 through-bolts with hex nuts and washers, one bolt each side of the pipe",
+  "why": "R3 through-bolts. Each bolt passes clearance holes in both halves (G5 fit), the halves must meet (contact), and nut, washers and head must not sink into the parts (clash).",
+  "expect": {
+    "nodes": {
+      "min": 2,
+      "max": 4
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "assembly": {
+      "parts": 8,
+      "contacts": 1,
+      "fits": 2,
+      "joints": [
+        {
+          "motion": "fixed",
+          "hardware": [
+            "hex_nut",
+            "shcs|button|csk"
+          ]
+        }
+      ],
+      "bom": [
+        {
+          "family": "shcs|button|csk",
+          "key": "M5",
+          "qty": 2
+        },
+        {
+          "family": "hex_nut",
+          "key": "M5",
+          "qty": 2
+        },
+        {
+          "family": "washer",
+          "key": "M5",
+          "minQty": 2
+        }
+      ]
+    }
+  }
+}

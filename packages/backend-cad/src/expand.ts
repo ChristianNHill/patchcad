@@ -160,15 +160,58 @@ export function jointInput(graph: GraphDoc, j: CadJoint): JointInput | { error: 
   const pa = processOf(a);
   const pb = processOf(b);
   const boreA = coaxialBore(graph, a, j.a.port);
+  const { depthA, roomA } = materialAt(graph, a, j.a.port);
   return {
     id: j.id, intent: j.intent, motion: j.motion, duty: j.duty, driven: j.driven, speedClass: j.speedClass,
     torqueClass: j.torqueClass, precise: j.precise, load: j.load, access: j.access, wallA, wallB, lateral,
     processA: pa.process, processB: pb.process, materialA: pa.material, materialB: pb.material,
     minWall: (payloadOf(b).process?.minWall as number | undefined) ?? FDM_MIN_WALL_MM,
     flush: j.flush, count: j.count, threadHint: j.threadHint, shaftHint: j.shaftHint, strokeMm: j.strokeMm,
-    ratio: j.ratio, centerMm: j.centerMm, wallMotor, allowPrinted: j.allowPrinted, boreA,
+    ratio: j.ratio, centerMm: j.centerMm, wallMotor, allowPrinted: j.allowPrinted, boreA, depthA, roomA,
   };
 }
+
+/** What a's envelope holds around the axis of its `port`, in its own frame:
+ *  how deep it runs behind the port along -z, and the largest Ø it holds
+ *  around the axis there. The best of the envelope volumes that contain the
+ *  port origin with an edge along the axis; undefined when none does. */
+function materialAt(graph: GraphDoc, node: NodeRecord, port: string): { depthA?: number; roomA?: number } {
+  const payload = node.contract.payload as CadContractPayload | undefined;
+  const at = payload?.ports?.find((p) => p.name === port);
+  if (!at) return {};
+  const dot = (u: number[], v: number[]) => u[0]! * v[0]! + u[1]! * v[1]! + u[2]! * v[2]!;
+  const unit = (v: number[]) => v.map((c) => c / Math.hypot(...v));
+  let depthA: number | undefined, roomA: number | undefined;
+  try {
+    const { origin: o, zAxis } = resolvePose(graph, at.pose);
+    const z = unit(zAxis);
+    for (const v of payload?.envelope?.volumes ?? []) {
+      const q = resolvePose(graph, v.pose);
+      const zx = unit(q.zAxis), xx = unit(q.xAxis);
+      const yx = [zx[1]! * xx[2]! - zx[2]! * xx[1]!, zx[2]! * xx[0]! - zx[0]! * xx[2]!, zx[0]! * xx[1]! - zx[1]! * xx[0]!];
+      const axes = [xx, yx, zx];
+      const d = [0, 1, 2].map((k) => o[k]! - q.origin[k]!);
+      const local = axes.map((ax) => dot(d, ax));
+      const along = axes.map((ax) => dot(z, ax));
+      const k = along.findIndex((c) => Math.abs(Math.abs(c) - 1) < 1e-3);
+      if (k < 0) continue;
+      const half = v.kind === "box" ? v.dims.map((x) => resolveDim(graph, x) / 2) : [resolveDim(graph, v.d) / 2, resolveDim(graph, v.d) / 2, resolveDim(graph, v.h) / 2];
+      if (v.kind === "cylinder" && k !== 2) continue;
+      const others = [0, 1, 2].filter((i) => i !== k);
+      const room = v.kind === "cylinder" ? 2 * (half[0]! - Math.hypot(local[0]!, local[1]!)) : 2 * Math.min(...others.map((i) => half[i]! - Math.abs(local[i]!)));
+      if (room <= 0 || Math.abs(local[k]!) > half[k]! + JOINT_FACE_TOL_MM) continue;
+      const depth = half[k]! + Math.sign(along[k]!) * local[k]!;
+      depthA = Math.max(depthA ?? 0, depth);
+      roomA = Math.max(roomA ?? 0, room);
+    }
+  } catch {
+    // an unresolvable pose or size: nothing known about the material
+  }
+  return { depthA, roomA };
+}
+
+/** How far a joint face may sit off its envelope's surface. */
+const JOINT_FACE_TOL_MM = 0.5;
 
 /** Ø of a BORE or CLEARANCE_HOLE `node` declares on the axis of its `port`
  *  (the port's z through its origin), in the node's own frame. */
@@ -1433,8 +1476,12 @@ function jointRepair(graph: GraphDoc, joint: CadJoint): string {
   const input = jointInput(graph, joint);
   if ("error" in input) return "Fix the joint's ends and walls.";
   const escapes = jointEscapes(input);
-  const pinned = statedWalls(graph, joint, input);
-  const keep = pinned.length ? `The brief states ${pinned.join(" and ")}: keep ${pinned.length > 1 ? "them" : "it"}. ` : "";
+  // A wall longer than a's material is a mis-declared wall, never a stated one.
+  const past = input.depthA !== undefined && input.wallA > input.depthA + JOINT_FACE_TOL_MM;
+  const pinned = statedWalls(graph, joint, input).filter((w) => !(past && w.startsWith("wallA")));
+  const keep =
+    (past ? `wallA is a's material behind a.port along the axis (${mm1(input.depthA!)} here), or move a.port to the face that has the wall behind it. ` : "") +
+    (pinned.length ? `The brief states ${pinned.join(" and ")}: keep ${pinned.length > 1 ? "them" : "it"}. ` : "");
   if (escapes.length) return `${keep}${escapes.map((e) => e[0]!.toUpperCase() + e.slice(1)).join("; or ")}${pinned.length ? "" : "; or thicken the wall it names"}.`;
   return `${keep}${pinned.length ? "Change" : "Thicken the wall it names, change"} the joint's intent, load or access, or give a hint (threadHint, shaftHint).`;
 }

@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { GraphDoc, type NodeRecord } from "@patchcad/shared";
-import { classifyReprompt, contractHash, type LlmProvider, type RepairCtx } from "@patchcad/engine";
+import { classifyReprompt, contractHash, makeArchitectSchema, type LlmProvider, type RepairCtx } from "@patchcad/engine";
 import { CadBackend, CAD_TIER_HINTS, type CadContractPayload } from "./index.js";
 import { generatePrompt, repairPrompt } from "./prompts.js";
 import { matchPitfalls, useLearnedPitfalls } from "./pitfalls.js";
@@ -151,7 +151,9 @@ describe("architect guidance", () => {
   });
 
   it("the worked plan passes every CAD plan lint once its joint is expanded", () => {
-    const plan = planning.expandPlan(structuredClone(WORKED_PLAN) as never);
+    // Parsed first, as every emission is: the worked plan leaves defaults out.
+    const schema = makeArchitectSchema(planning.payloadSchema, planning.nodeKinds.map((k) => k.kind), planning.jointSchema);
+    const plan = planning.expandPlan(schema.parse(WORKED_PLAN) as never);
     expect(plan.nodes.map((n) => n.id)).toEqual(["base-plate", "l-bracket", "bolt_screw", "bolt_insert"]);
     const graph = GraphDoc.parse({
       schemaVersion: 1,

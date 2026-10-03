@@ -1,0 +1,62 @@
+{
+  "id": "asm-hand-winch",
+  "prompt": "a hand-cranked winch: a printed 120x80x6mm base with two 60mm-tall, 6mm-thick side plates; a crank shaft carrying a 15-tooth module-1.5 spur gear that drives a 45-tooth module-1.5 spur gear on a 30mm-diameter rope drum shaft (3:1 reduction); both shafts turn in 608 bearings in the side plates; a 60mm crank arm with a handle",
+  "why": "Two revolute axes coupled by a gear mesh. Each shaft must ride bearings; the gears are registry parts, the mesh is swept as a coupled joint, so teeth that clash or a drum that hits the base fail.",
+  "expect": {
+    "nodes": {
+      "min": 4,
+      "max": 9
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "assembly": {
+      "parts": 8,
+      "contacts": 2,
+      "joints": [
+        {
+          "motion": "revolute",
+          "hardware": [
+            "bearing|bearing_flanged"
+          ],
+          "count": 2,
+          "travel": 360
+        }
+      ],
+      "bom": [
+        {
+          "family": "spur_gear",
+          "qty": 2
+        },
+        {
+          "family": "bearing|bearing_flanged",
+          "minQty": 4
+        }
+      ]
+    }
+  }
+}

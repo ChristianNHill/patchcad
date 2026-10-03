@@ -1,0 +1,594 @@
+{
+ "nodes": [
+  {
+   "id": "leaf-a",
+   "kind": "part",
+   "title": "Hinge leaf A (3 knuckles)",
+   "spec": "Flat 40x30x3 hinge leaf with three knuckles along one 40 mm edge: one at each end and one in the middle. Each knuckle is a tube centred on the leaf mid-plane with a 3.2 mm bore along the hinge axis. The 40 mm edge is split into five equal pitches; A's knuckles fill pitches 1, 3 and 5, and its middle knuckle spans \u00b1length/10. Pitches 2 and 4 stay open for leaf B's knuckles, and the plate stops just short of the knuckle line so B's knuckles clear it radially.",
+   "contract": {
+    "name": "Hinge leaf A",
+    "summary": "40x30x3 leaf with three knuckles at the ends and middle of its x-edge. The hinge axis runs along x at y = width/2 - knuckle_od/2, z = 0, with a 3.2 mm pin bore. The +x end face of the middle knuckle is the bearing face leaf B rides on.",
+    "params": [
+     {
+      "type": "number",
+      "name": "length",
+      "description": "leaf length along the hinge axis (knuckle edge)",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 40,
+      "min": 20,
+      "max": 120
+     },
+     {
+      "type": "number",
+      "name": "width",
+      "description": "leaf width across the hinge, knuckle included",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 30,
+      "min": 15,
+      "max": 80
+     },
+     {
+      "type": "number",
+      "name": "thickness",
+      "description": "how thick the flat leaf prints",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 3,
+      "min": 2,
+      "max": 6
+     },
+     {
+      "type": "number",
+      "name": "knuckle_od",
+      "description": "outer diameter of the knuckle tubes",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 7,
+      "min": 5.5,
+      "max": 12
+     },
+     {
+      "type": "number",
+      "name": "pin_bore",
+      "description": "bore through the knuckles the pin turns in",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 3.2,
+      "min": 2.5,
+      "max": 6
+     },
+     {
+      "type": "number",
+      "name": "knuckle_gap",
+      "description": "axial play at the outer ends of leaf B's knuckles",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 0.4,
+      "min": 0.1,
+      "max": 1
+     }
+    ],
+    "provides": [
+     {
+      "key": "knuckle_face",
+      "type": "FLAT_FACE",
+      "description": "+x end face of the middle knuckle, annular around the hinge axis; leaf B's knuckle bears on it"
+     },
+     {
+      "key": "pin_bore",
+      "type": "BORE",
+      "description": "3.2 mm pin bore, entered from the -x end knuckle"
+     }
+    ],
+    "requires": [],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "knuckle_face",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(leaf-a.length) / 10",
+         "param(leaf-a.width) / 2 - param(leaf-a.knuckle_od) / 2",
+         0
+        ],
+        "zAxis": [
+         1,
+         0,
+         0
+        ],
+        "xAxis": [
+         0,
+         -1,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 5.4
+       }
+      },
+      {
+       "name": "pin_bore",
+       "type": "BORE",
+       "pose": {
+        "origin": [
+         "-(param(leaf-a.length) / 2)",
+         "param(leaf-a.width) / 2 - param(leaf-a.knuckle_od) / 2",
+         0
+        ],
+        "zAxis": [
+         -1,
+         0,
+         0
+        ],
+        "xAxis": [
+         0,
+         1,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(leaf-a.pin_bore)"
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "box",
+        "pose": {
+         "origin": [
+          0,
+          "-(param(leaf-a.knuckle_od) - 0.2) / 2",
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "dims": [
+         "param(leaf-a.length)",
+         "param(leaf-a.width) - param(leaf-a.knuckle_od) + 0.2",
+         "param(leaf-a.thickness)"
+        ]
+       },
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          "param(leaf-a.width) / 2 - param(leaf-a.knuckle_od) / 2",
+          0
+         ],
+         "zAxis": [
+          1,
+          0,
+          0
+         ],
+         "xAxis": [
+          0,
+          1,
+          0
+         ]
+        },
+        "d": "param(leaf-a.knuckle_od)",
+        "h": "param(leaf-a.length) / 5"
+       },
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          "-(2 * param(leaf-a.length) / 5)",
+          "param(leaf-a.width) / 2 - param(leaf-a.knuckle_od) / 2",
+          0
+         ],
+         "zAxis": [
+          1,
+          0,
+          0
+         ],
+         "xAxis": [
+          0,
+          1,
+          0
+         ]
+        },
+        "d": "param(leaf-a.knuckle_od)",
+        "h": "param(leaf-a.length) / 5"
+       },
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          "2 * param(leaf-a.length) / 5",
+          "param(leaf-a.width) / 2 - param(leaf-a.knuckle_od) / 2",
+          0
+         ],
+         "zAxis": [
+          1,
+          0,
+          0
+         ],
+         "xAxis": [
+          0,
+          1,
+          0
+         ]
+        },
+        "d": "param(leaf-a.knuckle_od)",
+        "h": "param(leaf-a.length) / 5"
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {},
+     "visualChecks": [
+      "Is the leaf a flat rectangular plate with knuckles along one long edge?",
+      "Are there exactly three knuckles, one at each end and one in the middle?",
+      "Are there open gaps between the knuckles where the other leaf's knuckles fit?",
+      "Does a round bore run through the knuckles along the hinge edge?"
+     ],
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "x",
+       "min": 39.5,
+       "max": 40.5
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "y",
+       "min": 29.5,
+       "max": 30.5
+      },
+      {
+       "kind": "line_count",
+       "from": [
+        -21,
+        11.5,
+        2.5
+       ],
+       "to": [
+        21,
+        11.5,
+        2.5
+       ],
+       "crossings_min": 3,
+       "crossings_max": 3
+      }
+     ],
+     "geometrySource": "parametric"
+    }
+   }
+  },
+  {
+   "id": "leaf-b",
+   "kind": "part",
+   "title": "Hinge leaf B (2 knuckles)",
+   "spec": "Flat 40x30x3 hinge leaf with two knuckles in the 2nd and 4th of five equal pitches along one 40 mm edge, filling the spans leaf A leaves open. Each knuckle is a tube centred on the leaf mid-plane with a 3.2 mm bore along the hinge axis. Each knuckle's inner end sits at \u00b1length/10 and its outer end is shortened by knuckle_gap; the plate stops just short of the knuckle line so A's knuckles clear it radially.",
+   "contract": {
+    "name": "Hinge leaf B",
+    "summary": "40x30x3 leaf with two knuckles, spanning length/10 to 3*length/10 - knuckle_gap on either side of centre. The hinge axis runs along x at y = width/2 - knuckle_od/2, z = 0, with a 3.2 mm pin bore. The inner end face of the +x knuckle bears on leaf A's middle knuckle.",
+    "params": [
+     {
+      "type": "number",
+      "name": "length",
+      "description": "leaf length along the hinge axis (knuckle edge)",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 40,
+      "min": 20,
+      "max": 120
+     },
+     {
+      "type": "number",
+      "name": "width",
+      "description": "leaf width across the hinge, knuckle included",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 30,
+      "min": 15,
+      "max": 80
+     },
+     {
+      "type": "number",
+      "name": "thickness",
+      "description": "how thick the flat leaf prints",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 3,
+      "min": 2,
+      "max": 6
+     },
+     {
+      "type": "number",
+      "name": "knuckle_od",
+      "description": "outer diameter of the knuckle tubes",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 7,
+      "min": 5.5,
+      "max": 12
+     },
+     {
+      "type": "number",
+      "name": "pin_bore",
+      "description": "bore through the knuckles the pin turns in",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 3.2,
+      "min": 2.5,
+      "max": 6
+     },
+     {
+      "type": "number",
+      "name": "knuckle_gap",
+      "description": "axial play between these knuckles and leaf A's end knuckles",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 0.4,
+      "min": 0.1,
+      "max": 1
+     }
+    ],
+    "provides": [
+     {
+      "key": "knuckle_face",
+      "type": "FLAT_FACE",
+      "description": "inner (-x) end face of the +x knuckle, annular around the hinge axis; bears on leaf A's middle knuckle"
+     },
+     {
+      "key": "pin_bore",
+      "type": "BORE",
+      "description": "3.2 mm pin bore, at the outer end of the -x knuckle"
+     }
+    ],
+    "requires": [
+     {
+      "key": "knuckle_face",
+      "type": "FLAT_FACE",
+      "description": "joint hinge"
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "knuckle_face",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(leaf-b.length) / 10",
+         "param(leaf-b.width) / 2 - param(leaf-b.knuckle_od) / 2",
+         0
+        ],
+        "zAxis": [
+         -1,
+         0,
+         0
+        ],
+        "xAxis": [
+         0,
+         1,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 5.4
+       }
+      },
+      {
+       "name": "pin_bore",
+       "type": "BORE",
+       "pose": {
+        "origin": [
+         "-(3 * param(leaf-b.length) / 10 - param(leaf-b.knuckle_gap))",
+         "param(leaf-b.width) / 2 - param(leaf-b.knuckle_od) / 2",
+         0
+        ],
+        "zAxis": [
+         -1,
+         0,
+         0
+        ],
+        "xAxis": [
+         0,
+         1,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(leaf-b.pin_bore)"
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "box",
+        "pose": {
+         "origin": [
+          0,
+          "-(param(leaf-b.knuckle_od) - 0.2) / 2",
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "dims": [
+         "param(leaf-b.length)",
+         "param(leaf-b.width) - param(leaf-b.knuckle_od) + 0.2",
+         "param(leaf-b.thickness)"
+        ]
+       },
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          "param(leaf-b.length) / 5 - param(leaf-b.knuckle_gap) / 2",
+          "param(leaf-b.width) / 2 - param(leaf-b.knuckle_od) / 2",
+          0
+         ],
+         "zAxis": [
+          1,
+          0,
+          0
+         ],
+         "xAxis": [
+          0,
+          1,
+          0
+         ]
+        },
+        "d": "param(leaf-b.knuckle_od)",
+        "h": "param(leaf-b.length) / 5 - param(leaf-b.knuckle_gap)"
+       },
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          "-(param(leaf-b.length) / 5 - param(leaf-b.knuckle_gap) / 2)",
+          "param(leaf-b.width) / 2 - param(leaf-b.knuckle_od) / 2",
+          0
+         ],
+         "zAxis": [
+          1,
+          0,
+          0
+         ],
+         "xAxis": [
+          0,
+          1,
+          0
+         ]
+        },
+        "d": "param(leaf-b.knuckle_od)",
+        "h": "param(leaf-b.length) / 5 - param(leaf-b.knuckle_gap)"
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "length": "expr: param(leaf-a.length)",
+      "width": "expr: param(leaf-a.width)",
+      "thickness": "expr: param(leaf-a.thickness)",
+      "knuckle_od": "expr: param(leaf-a.knuckle_od)",
+      "pin_bore": "expr: param(leaf-a.pin_bore)",
+      "knuckle_gap": "expr: param(leaf-a.knuckle_gap)"
+     },
+     "visualChecks": [
+      "Is the leaf a flat rectangular plate with knuckles along one long edge?",
+      "Are there exactly two knuckles, set in from the ends with a gap between them in the middle?",
+      "Are the ends and middle of the knuckle edge open for the other leaf's knuckles?",
+      "Does a round bore run through the knuckles along the hinge edge?"
+     ],
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "x",
+       "min": 39.5,
+       "max": 40.5
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "y",
+       "min": 29.5,
+       "max": 30.5
+      },
+      {
+       "kind": "line_count",
+       "from": [
+        -21,
+        11.5,
+        2.5
+       ],
+       "to": [
+        21,
+        11.5,
+        2.5
+       ],
+       "crossings_min": 2,
+       "crossings_max": 2
+      }
+     ],
+     "geometrySource": "parametric"
+    }
+   }
+  }
+ ],
+ "edges": [
+  {
+   "from": "leaf-a",
+   "fromPort": "knuckle_face",
+   "to": "leaf-b",
+   "toPort": "knuckle_face"
+  }
+ ],
+ "entryNodeId": "leaf-a",
+ "rationale": "",
+ "design": "",
+ "joints": [
+  {
+   "id": "hinge",
+   "a": {
+    "node": "leaf-a",
+    "port": "knuckle_face"
+   },
+   "b": {
+    "node": "leaf-b",
+    "port": "knuckle_face"
+   },
+   "intent": "removable",
+   "motion": "revolute",
+   "duty": "occasional",
+   "load": "light",
+   "access": "both_sides",
+   "count": 1,
+   "wallA": "param(leaf-a.length) / 5",
+   "wallB": "param(leaf-b.length) / 5 - param(leaf-b.knuckle_gap)",
+   "shaftHint": 3,
+   "allowPrinted": false,
+   "note": "Separate 3 mm pin runs the full hinge length through 3.2 mm slip bores in all five knuckles; B's +x knuckle face sits directly on A's middle-knuckle face with no axial offset."
+  }
+ ]
+}

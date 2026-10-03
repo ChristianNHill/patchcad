@@ -1,0 +1,58 @@
+{
+  "id": "asm-cart-wheels",
+  "prompt": "a small printed cart: a 120x80x8mm chassis with four 40mm-diameter, 10mm-wide printed wheels on two 5mm steel axles, the wheels pressed onto the axles and the axles turning in the chassis",
+  "why": "Shared axles and part instancing: one wheel node placed four times, two axles. Each axle is a revolute joint; G5 sweeps every wheel copy a full turn against the chassis.",
+  "expect": {
+    "nodes": {
+      "min": 2,
+      "max": 4
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "assembly": {
+      "parts": 7,
+      "contacts": 2,
+      "joints": [
+        {
+          "motion": "revolute",
+          "hardware": [
+            "shaft|d_shaft|dowel"
+          ],
+          "count": 2,
+          "travel": 360
+        }
+      ],
+      "bom": [
+        {
+          "family": "shaft|d_shaft|dowel",
+          "minQty": 2
+        }
+      ]
+    }
+  }
+}

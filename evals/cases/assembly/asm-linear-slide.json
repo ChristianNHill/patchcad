@@ -1,0 +1,64 @@
+{
+  "id": "asm-linear-slide",
+  "prompt": "a manual linear slide: a printed 40x40x20mm carriage riding on two parallel 8mm steel rods 30mm apart, one LM8UU linear bearing on each rod, rods held by two printed end blocks 160mm apart, giving 100mm of carriage travel",
+  "why": "The prismatic joint on rods. P1 mints rod + LM8UU; G5 sweeps the carriage along the stroke against the end blocks, so a stroke that runs the carriage into a block fails, as does a stroke shorter than 100mm.",
+  "expect": {
+    "nodes": {
+      "min": 3,
+      "max": 5
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "assembly": {
+      "parts": 7,
+      "contacts": 2,
+      "joints": [
+        {
+          "motion": "prismatic",
+          "hardware": [
+            "lm_uu",
+            "shaft"
+          ],
+          "travel": 100
+        }
+      ],
+      "bom": [
+        {
+          "family": "lm_uu",
+          "key": "LM8UU",
+          "minQty": 2
+        },
+        {
+          "family": "shaft",
+          "key": "8",
+          "minQty": 2
+        }
+      ]
+    }
+  }
+}

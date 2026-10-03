@@ -9,14 +9,16 @@ export * from "./grounding.js";
 export * from "./g5.js";
 export * from "./plan-geometry.js";
 export * from "./mesh-source.js";
-export { normalizeCadCode } from "./prompts.js";
+export { CHEAT_SHEET, normalizeCadCode } from "./prompts.js";
 export { useLearnedPitfalls } from "./pitfalls.js";
+export { fixFrameFlips } from "./frame-flip.js";
 export * from "./sourcing.js";
 export * from "./dfm.js";
 export * from "./bom.js";
 export * from "./joints.js";
 export * from "./expand.js";
 export * from "./segment-joints.js";
+export * from "./instructions.js";
 import type {
   CheckAdvisory,
   CheckFinding,
@@ -45,10 +47,13 @@ import type {
  * probing or assembly, so geometry declarations track their parameters. */
 export const Dim = z.union([z.number(), z.string()]);
 
+/** Each component defaults to the identity, so the architect may leave out
+ *  what it would only copy (every token of a plan is ~9ms of waiting). Parsing
+ *  fills them, so a stored contract and its hash never see the difference. */
 export const Pose = z.object({
-  origin: z.tuple([Dim, Dim, Dim]),
-  zAxis: z.tuple([Dim, Dim, Dim]),
-  xAxis: z.tuple([Dim, Dim, Dim]),
+  origin: z.tuple([Dim, Dim, Dim]).default([0, 0, 0]),
+  zAxis: z.tuple([Dim, Dim, Dim]).default([0, 0, 1]),
+  xAxis: z.tuple([Dim, Dim, Dim]).default([1, 0, 0]),
 });
 export type Pose = z.infer<typeof Pose>;
 
@@ -145,12 +150,12 @@ export const CadPort = z.object({
 export const EnvelopePrimitive = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("box"),
-    pose: Pose,
+    pose: Pose.default({}),
     dims: z.tuple([Dim, Dim, Dim]),
   }),
   z.object({
     kind: z.literal("cylinder"),
-    pose: Pose,
+    pose: Pose.default({}),
     d: Dim,
     h: Dim,
   }),
@@ -197,7 +202,7 @@ export const CadAssertion = z.discriminatedUnion("kind", [
 export type CadAssertion = z.infer<typeof CadAssertion>;
 
 export const CadContractPayload = z.object({
-  units: z.literal("mm"),
+  units: z.literal("mm").default("mm"),
   process: z.object({
     /** CNC = machined (sourcing fabricate/cnc); FDM covers every other process. */
     kind: z.enum(["FDM", "CNC"]),
@@ -207,8 +212,8 @@ export const CadContractPayload = z.object({
      *  split into jointed pieces. Optional with no default (250³ when absent),
      *  so a contract without it hashes as before. */
     buildVolumeMm: z.tuple([z.number().positive(), z.number().positive(), z.number().positive()]).optional(),
-  }),
-  ports: z.array(CadPort),
+  }).default({ kind: "FDM" }),
+  ports: z.array(CadPort).default([]),
   envelope: z.object({
     volumes: z.array(EnvelopePrimitive).min(1).max(4),
     clearance: z.number().default(0.4),
@@ -252,6 +257,7 @@ import { cadPlanGeometryLint } from "./plan-geometry.js";
 import { silhouetteAdvisories } from "./silhouette.js";
 import { geometrySourceGuidance, isMeshNode, meshNodeCode, meshSourceLint, prepareMeshNode, type MeshSource } from "./mesh-source.js";
 import { Sourcing, cadSourcingLint, markCncSetups } from "./sourcing.js";
+import { fixFrameFlips } from "./frame-flip.js";
 import { G4C_SCORE, kernelProcess } from "./dfm.js";
 import { unverifiedCandidate } from "./bom.js";
 import { WORKED_PLAN, WORKED_PLAN_GOAL } from "./worked-plan.js";
@@ -1097,7 +1103,7 @@ export function kernelEnvelope(graph: GraphDoc, payload: CadContractPayload) {
   });
 }
 
-function mergedParams(node: NodeRecord): Record<string, ParamValue> {
+export function mergedParams(node: NodeRecord): Record<string, ParamValue> {
   const out: Record<string, ParamValue> = {};
   for (const p of node.contract.params) out[p.name] = p.default;
   return { ...out, ...node.params };
@@ -1208,6 +1214,7 @@ function cadPlanning(meshAvailable: boolean) {
     ],
     jointSchema: CadJoint,
     expandPlan: (...args: Parameters<typeof expandJoints>) => markCncSetups(expandJoints(...args)),
+    autoFix: fixFrameFlips,
     paramUnit: "mm",
     payloadSchema: CadContractPayload as z.ZodType<CadContractPayload>,
     graphLints: [
@@ -1263,6 +1270,16 @@ function cadPlanning(meshAvailable: boolean) {
       "mates. Never author ports or envelopes in assembly/world coordinates.",
       "Port poses: +z points OUT of the part's mating surface (out of material).",
       "",
+      // Measured: plan time is output tokens at ~120/s, and the defaults below
+      // were a tenth of a typical plan, every value of them copied by rote.
+      "LEAVE DEFAULTS OUT; parsing fills them, so writing one only costs time:",
+      'pose zAxis [0,0,1], xAxis [1,0,0], origin [0,0,0] (an envelope volume',
+      'centred on the origin needs no pose at all), units "mm", process',
+      '{"kind": "FDM", "minWall": 1.2, "nozzle": 0.4} (write it only for CNC),',
+      "envelope.clearance 0.4, paramBindings {}, geometrySource",
+      '"parametric", and a joint\'s motion "fixed", duty "occasional", load',
+      '"light", access "both_sides", count 1.',
+      "",
       // Derived, so it can never again disagree with the schema or the lint.
       `ONLY THESE PORT TYPES MAY BE USED: ${PROBED_PORT_TYPES.join(", ")}.`,
       "These are the ones the gates can measure against the real solid. Any",
@@ -1294,7 +1311,8 @@ function cadPlanning(meshAvailable: boolean) {
       "  a layout in the port frame (x along xAxis, centred on the origin):",
       '    polar: {"count": 4, "pcd": 50, "start_angle": 45} (pcd = bolt-circle',
       "           DIAMETER, start_angle in degrees from xAxis, default 0)",
-      '    grid:  {"nx": 2, "ny": 2, "pitch_x": 40, "pitch_y": 40}',
+      '    grid:  {"nx": 2, "ny": 2, "pitch_x": 40, "pitch_y": 40} (all four, even for',
+      "           a single row: the lint rejects a grid missing pitch_y)",
       "  Members are probed like a BORE: they must exist at the right Ø, but a",
       "  pattern does not assert that its holes pass through.",
       "HARDWARE HOST FEATURES, one per catalog part, all centred on the origin, axis on +z:",
@@ -1508,12 +1526,8 @@ function cadPlanning(meshAvailable: boolean) {
       "compiler. Every param needs a `description` saying what it does in plain",
       "words (\"how thick the plate prints\", not \"thickness\"); a blank one leaves",
       "the inspector empty. Give min and max the real usable range, not a token",
-      "one — they set the slider's travel. Add `ui` for presentation:",
-      '  "ui": {"group": "holes", "unit": "mm"}',
-      "Group params that belong together (outer shape / holes / mounting) once a",
-      "part has more than about four; `unit` is a display suffix (mm, °) only.",
-      "`ui` is presentation-only and deliberately outside the contract hash, so",
-      "adding or changing it never dirties a node.",
+      "one — they set the slider's travel. Never write `ui`: the plan schema",
+      "drops it, so it is output you pay for and nobody reads.",
       "",
       "PARAMETRIC GEOMETRY: any pose component, envelope dimension, or port param",
       "may be an expression string instead of a number — e.g. a top-face port at",

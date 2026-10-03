@@ -1232,6 +1232,7 @@ def build(p):
     reference_images(client)
     swept(client)
     gear_mesh(client)
+    instructions(client)
     audit_fixes(client)
     bench_fixes(client)
     segmentation()
@@ -1945,6 +1946,61 @@ def catalog_parts() -> None:
     tail = (proc.stdout + proc.stderr).strip().splitlines()
     check("every catalog family and size builds one valid solid", proc.returncode == 0,
           next((ln.strip() for ln in tail if "Tests" in ln), tail[-1] if tail else "no output"))
+
+
+def instructions(client: httpx.Client) -> None:
+    """Assembly instructions. A pin dropped into a plate's hole clears; a cap
+    already over the hole blocks it, and a pin that clashes at rest blocks
+    nothing it did not already share there (that is G5's finding). Then one
+    step drawn: its picture, an SVG page per page, the PDF and the HTML, served
+    back, and a cache hit the second time."""
+    print("assembly instructions")
+    n = int(time.time())
+    plate = ("from build123d import *\ndef build(p):\n    _ = p['nonce']\n"
+             "    return Box(40, 40, 6) - Cylinder(3.2, 6)\n")
+    pin = "from build123d import *\ndef build(p):\n    return Pos(0, 0, p['z']) * Cylinder(3, 12)\n"
+    cap = "from build123d import *\ndef build(p):\n    return Pos(0, 0, 14) * Box(20, 20, 4)\n"
+    parts = [{"key": "plate", "code": plate, "params": {"nonce": n}, "matrix": []},
+             {"key": "pin", "code": pin, "params": {"z": 3}, "matrix": []},
+             {"key": "cap", "code": cap, "params": {}, "matrix": []}]
+
+    def sweep(still: list[str]) -> dict:
+        return client.post("/instructions/insertions", json={"parts": parts, "checks": [
+            {"id": "1:0", "moving": ["pin"], "still": still, "direction": [0, 0, -1]}]}).json()
+
+    clear = sweep(["plate"])
+    blocked = sweep(["plate", "cap"])
+    hit = ((blocked.get("insertions") or {}).get("checks") or [{}])[0].get("blocked") or []
+    check("instructions: a pin drops into its hole, and a cap already over it blocks the way in",
+          clear["ok"] and clear["insertions"]["checks"][0]["blocked"] == [] and len(hit) == 1
+          and hit[0]["part"] == "pin" and hit[0]["by"] == "cap", f"{clear.get('insertions')} / {blocked.get('insertions')}")
+    fat = "from build123d import *\ndef build(p):\n    return Pos(0, 0, 3) * Cylinder(4, 12)\n"
+    rest = client.post("/instructions/insertions", json={"parts": [parts[0], {"key": "pin", "code": fat, "params": {}, "matrix": []}],
+                                                         "checks": [{"id": "1:0", "moving": ["pin"], "still": ["plate"],
+                                                                     "direction": [0, 0, -1]}]}).json()
+    check("instructions: overlap a pair already has at rest is G5's, not a blocked path",
+          rest["ok"] and rest["insertions"]["checks"][0]["blocked"] == [], str(rest)[:300])
+
+    document = {"title": "Pin in a plate", "subtitle": "1 step.", "summary": "1 made part, 1 bought part, 1 step.",
+                "tools": ["2 mm hex key"], "problems": [], "made": [{"label": "Plate (fdm, PLA)", "qty": 1}],
+                "items": [{"id": "PIN-6x12", "label": "Ø6×12 pin", "qty": 1, "gauge_mm": 12, "code": pin, "params": {"z": 0}}],
+                "steps": [{"n": 1, "title": "Press the pin into the Plate", "notes": ["Start with the Plate."],
+                           "context": ["plate"], "moving": [{"key": "pin", "direction": [0, 0, -1]}],
+                           "callouts": [], "hardware": [{"label": "Ø6×12 pin", "item": "PIN-6x12", "qty": 1}]}]}
+    body = {"parts": parts[:2], "document": document}
+    first = client.post("/instructions/document", json=body, timeout=120).json()
+    pages = first.get("pages") or []
+    served = [client.get(u) for u in [*pages, first.get("pdf", "/none"), first.get("html", "/none")]]
+    check("instructions: cover, hardware and step pages drawn, as SVG, PDF and HTML",
+          first.get("ok") and len(pages) == 3 and all(r.status_code == 200 for r in served)
+          and served[-2].content[:5] == b"%PDF-" and b"<svg" in served[-1].content and b"Press the pin" in served[2].content,
+          str(first)[:300])
+    picture = client.get(pages[0].replace("page-1.svg", "step-1.png")) if pages else None
+    check("instructions: the step picture is a PNG", picture is not None and picture.content[:4] == b"\x89PNG")
+    again = client.post("/instructions/document", json=body).json()
+    check("instructions: the same document is a cache hit", again.get("cached") is True and again.get("pdf") == first.get("pdf"))
+    check("instructions: only instruction files are served from the cache directory",
+          client.get(pages[0].replace("page-1.svg", "instructions.json")).status_code == 404 if pages else False)
 
 
 if __name__ == "__main__":

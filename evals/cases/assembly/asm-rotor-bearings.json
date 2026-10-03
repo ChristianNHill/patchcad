@@ -1,0 +1,60 @@
+{
+  "id": "asm-rotor-bearings",
+  "prompt": "a printed 120mm-diameter, 8mm-thick four-blade fan rotor that spins freely on a 5mm shaft carried by two 625 bearings pressed into a printed 60x60x25mm base",
+  "why": "The canonical rotor (examples/cad-rotor): M1 bearings, shaft, collars. G5 sweeps the blades a full turn against the base and checks both bearing seats for fit.",
+  "expect": {
+    "nodes": {
+      "min": 2,
+      "max": 3
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "assembly": {
+      "parts": 5,
+      "contacts": 2,
+      "fits": 2,
+      "joints": [
+        {
+          "motion": "revolute",
+          "hardware": [
+            "bearing|bearing_flanged",
+            "shaft|d_shaft"
+          ],
+          "travel": 360
+        }
+      ],
+      "bom": [
+        {
+          "family": "bearing|bearing_flanged",
+          "key": "625",
+          "qty": 2
+        }
+      ]
+    }
+  }
+}

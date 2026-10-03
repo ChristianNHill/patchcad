@@ -17,7 +17,7 @@ import { processLines } from "./dfm.js";
  * that satisfies them, and the kernel probes verify that externally.
  */
 
-const CHEAT_SHEET = `build123d ALGEBRA MODE — the only API you may use (plus \`math\`):
+export const CHEAT_SHEET = `build123d ALGEBRA MODE — the only API you may use (plus \`math\`):
   from build123d import *
   Box(length, width, height)                # centered at origin
   Cylinder(radius, height)                  # centered, axis +Z

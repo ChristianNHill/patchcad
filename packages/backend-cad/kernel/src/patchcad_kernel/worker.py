@@ -176,6 +176,34 @@ def worker_main(conn: Connection, trace_path: str) -> None:
                            "elapsed_ms": int((time.monotonic() - started) * 1000)})
                 continue
 
+            if "insertions" in job or "instructions" in job:
+                from . import instructions
+
+                spec = job.get("insertions") or job["instructions"]
+                ns = _namespace(job)
+                built = {}
+                shapes = []
+                for part in spec["parts"]:
+                    key = json.dumps([part.get("code"), part.get("params")], sort_keys=True, default=str)
+                    if key not in built:
+                        built[key] = _build(part, ns)
+                    shapes.append((part.get("key", "?"), built[key], part.get("matrix", [])))
+                if "insertions" in job:
+                    meshes = [(key, gates._posed_mesh(shape, matrix)) for key, shape, matrix in shapes]
+                    report = instructions.insertion_report(meshes, spec.get("checks") or [], spec.get("allow") or [])
+                    conn.send({"ok": True, "insertions": report,
+                               "elapsed_ms": int((time.monotonic() - started) * 1000)})
+                    continue
+                posed = {key: instructions.posed_arrays(shape, matrix) for key, shape, matrix in shapes}
+                items = {}
+                for item in spec["document"].get("items") or []:
+                    if item.get("code"):
+                        items[item["id"]] = instructions.posed_arrays(_build(item, ns), [])
+                info = instructions.build_document(posed, items, spec["document"], job["out_dir"])
+                conn.send({"ok": True, "instructions": info,
+                           "elapsed_ms": int((time.monotonic() - started) * 1000)})
+                continue
+
             if "silhouette" in job:
                 from .silhouette import silhouette_report
 
