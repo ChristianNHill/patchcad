@@ -48,7 +48,7 @@ describe("bom routes", () => {
     const a = await app("cad");
     const json = await a.inject("/api/project/bom");
     expect(json.statusCode).toBe(200);
-    expect(Object.keys(json.json()).sort()).toEqual(["buy", "fabricate", "notGenerated", "print"]);
+    expect(Object.keys(json.json()).sort()).toEqual(["buy", "fabricate", "notGenerated", "print", "unverified"]);
     const csv = await a.inject("/api/project/bom?format=csv");
     expect(csv.statusCode).toBe(200);
     expect(csv.headers["content-disposition"]).toBe('attachment; filename="my-bracket-bom.csv"');

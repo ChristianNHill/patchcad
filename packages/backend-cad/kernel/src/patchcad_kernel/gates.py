@@ -23,6 +23,7 @@ Changing what any gate passes means bumping main.GATES_VERSION.
 from __future__ import annotations
 
 import ast
+import itertools
 import math
 from typing import Any
 
@@ -87,6 +88,7 @@ def g0_scan(code: str) -> ast.Module:
                     f"only these imports are permitted: {sorted(ALLOWED_IMPORTS)} — express the node with build123d alone",
                 )
 
+    _no_optional_features(tree)
     has_build = any(
         isinstance(n, ast.FunctionDef) and n.name == "build" for n in tree.body
     )
@@ -97,6 +99,83 @@ def g0_scan(code: str) -> ast.Module:
             "the node must define exactly `def build(p):` returning a build123d Part",
         )
     return tree
+
+
+# Calls that construct a feature; fillet and chamfer are not among them; the
+# cheat sheet says to guard those, since a cosmetic edge may fail and be dropped.
+FEATURE_CALLS = {"sweep", "loft", "revolve", "Helix", "fuse", "cut", "intersect"}
+SOLID_CALLS = {"extrude", "sweep", "loft", "revolve", "mirror", "offset", "split"}
+BOOLEAN_OPS = (ast.Add, ast.Sub, ast.BitAnd)
+
+
+def _call_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Call):
+        f = node.func
+        return f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
+    return None
+
+
+def _is_solid(node: ast.AST) -> bool:
+    """`Cylinder(..)`, `extrude(..)` or `Pos(..) * shape`: an operand that is
+    certainly a shape. `psi(r)` and `part.edges()` are not."""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
+        return _is_solid(node.left) or _is_solid(node.right)
+    name = _call_name(node) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) else None
+    return bool(name) and (name[0].isupper() or name in SOLID_CALLS)
+
+
+def _builds_feature(stmts: list[ast.stmt]) -> bool:
+    """A boolean, sweep, loft, revolve or helix anywhere in `stmts`. A boolean
+    is told from arithmetic by its shape: `a & b`, `part -= cut`, `part = part
+    - cut`, or `+`/`-` with a shape constructor or a `Pos(..) * shape` as an
+    operand. `h = r_maj - r_min` is arithmetic and is left alone, and so is
+    `edges() + edges()` in a chamfer guard."""
+    for stmt in stmts:
+        for node in ast.walk(stmt):
+            if _call_name(node) in FEATURE_CALLS:
+                return True
+            if isinstance(node, ast.AugAssign) and isinstance(node.op, BOOLEAN_OPS) \
+                    and not isinstance(node.value, ast.Constant):
+                return True
+            if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitAnd):
+                return True
+            if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub)) \
+                    and any(_is_solid(o) for o in (node.left, node.right)):
+                return True
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.BinOp) \
+                    and isinstance(node.value.op, BOOLEAN_OPS) and isinstance(node.value.left, ast.Name) \
+                    and any(isinstance(t, ast.Name) and t.id == node.value.left.id for t in node.targets) \
+                    and not isinstance(node.value.right, ast.Constant):
+                return True
+    return False
+
+
+def _swallows(handler: ast.ExceptHandler) -> bool:
+    """A handler that lets the program carry on as if the feature were never
+    asked for: `pass`, `continue`, or only assigning constants (`ridge = None`).
+    A handler that raises, or builds a fallback, is not one."""
+    return all(isinstance(s, (ast.Pass, ast.Continue))
+               or (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))
+               or (isinstance(s, ast.Assign) and isinstance(s.value, ast.Constant))
+               for s in handler.body)
+
+
+def _no_optional_features(tree: ast.Module) -> None:
+    """A stated feature may not be optional. A thread swept inside
+    `try: ... except Exception: pass`, or added only `if ridge.volume > 1.0`,
+    passes every gate when the sweep fails: the part ships without its
+    thread and no repair round ever sees why."""
+    hint = ("a stated feature may not be optional; let it fail so repair sees the error. Remove the try/except "
+            "(or the volume test) around it; guard only a cosmetic fillet or chamfer that way")
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Try) and any(_swallows(h) for h in node.handlers) and _builds_feature(node.body):
+            raise GateError("G0", f"line {node.lineno}: a try/except silently skips a feature when it fails",
+                            hint, line=node.lineno)
+        if isinstance(node, ast.If) and any(isinstance(n, ast.Attribute) and n.attr == "volume"
+                                            for n in ast.walk(node.test)) \
+                and (_builds_feature(node.body) or _builds_feature(node.orelse)):
+            raise GateError("G0", f"line {node.lineno}: a feature is added only if a volume test passes",
+                            hint, line=node.lineno)
 
 
 def g1_execute(tree: ast.Module, params: dict[str, Any], extra_ns: dict[str, Any] | None = None,
@@ -231,6 +310,9 @@ def g2_validity(shape: Any) -> dict[str, Any]:
         raise GateError("G2", "degenerate (zero-size) bounding box",
                         "the result has no extent — check that sketches are extruded")
 
+    if getattr(shape, "wrapped", None) is not None:  # an imported MeshPart is its own mesh
+        _g2_watertight(shape)
+
     # An enclosed void is a second shell inside one solid. It may be meant (a
     # sealed float), so it is a warning, never a failure.
     shells = [len(s.shells()) for s in solids if hasattr(s, "shells")]
@@ -249,6 +331,35 @@ def g2_validity(shape: Any) -> dict[str, Any]:
     if voids:
         out["warnings"] = voids
     return out
+
+
+def _g2_watertight(shape: Any) -> None:
+    """The B-rep can be valid while its tessellation is not closed: a
+    sphere's pole on a boolean seam left one open edge in a ball socket, and
+    the STL every slicer and benchmark reads was not a solid (that one was the
+    weld, fixed in meshpart.weld). Welded the way exporters.py welds, on the
+    job's 0.2mm tessellation that printability and min_wall reuse: open and
+    non-manifold edges come from topology, not deflection, and meshing at the
+    export's 0.05 first doubled a rotor's verify (OCCT keeps the finer mesh,
+    so every later ray test ran on it)."""
+    import numpy as np
+
+    from .meshpart import to_trimesh, weld
+
+    mesh = weld(to_trimesh(shape, 0.2).copy())
+    if mesh.is_watertight:
+        return
+    edges, counts = np.unique(mesh.edges_sorted, axis=0, return_counts=True)
+    rows = []
+    for label, bad in (("open", edges[counts == 1]), ("non-manifold", edges[counts > 2])):
+        if len(bad):
+            mids = mesh.vertices[bad].mean(axis=1)
+            at = "; ".join("[" + ", ".join(f"{c:.2f}" for c in m) + "]" for m in mids[:3])
+            rows.append(f"{len(bad)} {label} edge(s) at {at}{' …' if len(bad) > 3 else ''}")
+    raise GateError("G2", "the exported mesh is not watertight although the B-rep is valid: " + "; ".join(rows),
+                    "a sphere/revolve pole meets a boolean seam: rotate the sphere so its pole is off the cut, "
+                    "or build the cavity as a revolve. Bodies touching along an edge or a point are non-manifold "
+                    "too: overlap them or move them apart")
 
 
 def g2_solid_count(shape: Any, expected: int) -> None:
@@ -521,7 +632,31 @@ def _hole_slice(shape: Any, frame, max_r: float, w: float,
     med = sorted(h for _, h in hits)[len(hits) // 2]
     pts = [(cu0 + h * math.cos(t), cv0 + h * math.sin(t)) for t, h in hits
            if abs(h - med) <= max(1.0, med / 2)]
-    return _fit_circle(pts) if len(pts) >= 3 else None
+    return _robust_circle(pts) if len(pts) >= 3 else None
+
+
+def _robust_circle(pts: list[tuple[float, float]]) -> tuple[float, float, float] | None:
+    """_fit_circle, refitted twice without the crossings whose radius strays
+    more than DIAMETER_TOL_MM from the median, and read as the INSCRIBED circle
+    (the smallest kept radius). A keyway's crossing pulled a plain fit 0.74mm
+    off centre and read a Ø12 bore as Ø12.52; a key, a flat or a D-bore now
+    moves neither the centre nor the diameter, and what a shaft must pass is
+    the smallest circle anyway."""
+    fit = _fit_circle(pts)
+    keep = pts
+    for _ in range(2):
+        if fit is None:
+            return None
+        rs = [math.hypot(u - fit[0], v - fit[1]) for u, v in keep]
+        med = sorted(rs)[len(rs) // 2]
+        inliers = [p for p, r in zip(keep, rs) if abs(r - med) <= DIAMETER_TOL_MM]
+        if len(inliers) < 3 or len(inliers) == len(keep):
+            break
+        keep, fit = inliers, _fit_circle(inliers)
+    if fit is None:
+        return None
+    cu, cv, _ = fit
+    return cu, cv, min(math.hypot(u - cu, v - cv) for u, v in keep)
 
 
 def _axial_depth(shape: Any, frame, u: float, v: float, reach: float, find: str = "material") -> float | None:
@@ -531,6 +666,20 @@ def _axial_depth(shape: Any, frame, u: float, v: float, reach: float, find: str 
     t = _march(shape, (list(_at(o, x, y, z, u, v, 0.0)), x, y, z), 0.0, 0.0, -PROBE_DEPTH_MM, reach,
                find=find, dw=-1.0)
     return None if t is None else PROBE_DEPTH_MM + t
+
+
+def _breaks_out(shape: Any, frame, cu: float, cv: float, r: float, floor: float) -> bool:
+    """True when the material the axis meets at `floor` is the far side of a
+    cavity the hole opened into, not the hole's own bottom: the ring just
+    outside the bore, just above that floor, is mostly void. A blind bottom has
+    its wall all round it there. A C-clamp's screw hole runs through the top
+    arm into the jaw and meets the bottom arm; reading that as "bottoms out"
+    sent repair to drill the bottom arm too."""
+    o, x, y, z = frame
+    w = -(floor - PROBE_DEPTH_MM / 2)
+    void = sum(not _in_material(shape, _at(o, x, y, z, cu + r * math.cos(t), cv + r * math.sin(t), w))
+               for t in (2 * math.pi * k / PROBE_DIRECTIONS for k in range(PROBE_DIRECTIONS)))
+    return void * 2 >= PROBE_DIRECTIONS
 
 
 def _port_diameter(port: dict[str, Any]) -> float:
@@ -582,6 +731,7 @@ def _probe_hole(shape: Any, port: dict[str, Any], band: tuple[float, float] | No
     bbox = shape.bounding_box()
     reach = max(float(bbox.size.X), float(bbox.size.Y), float(bbox.size.Z)) + 2.0
     floor = _march(shape, frame, 0.0, 0.0, 0.0, reach, dw=-1.0)
+    breakout = floor is not None and _breaks_out(shape, frame, cu, cv, r_mouth + PROBE_INSET_MM, floor)
 
     # HOW FAR THE HOLE RUNS bounds where it is sliced. A blind hole ends at its
     # floor. A through hole's axis never meets material, so its length is read
@@ -590,7 +740,7 @@ def _probe_hole(shape: Any, port: dict[str, Any], band: tuple[float, float] | No
     # the stack would grade the counterbore against the pilot's diameter.
     # A clearance hole gets no such bound, because a screw has to pass the
     # narrowest point of the whole bore.
-    span = floor
+    span = None if breakout else floor
     if span is None:
         walls = []
         for k in range(0, PROBE_DIRECTIONS, 2):
@@ -664,8 +814,10 @@ def _probe_hole(shape: Any, port: dict[str, Any], band: tuple[float, float] | No
             )
         result["tilt_deg"] = round(tilt, 2)
 
-    result["through"] = floor is None
-    if floor is not None:
+    result["through"] = floor is None or breakout
+    if breakout:
+        result["breakout_depth"] = round(floor, 3)
+    elif floor is not None:
         result["measured_depth"] = round(floor, 3)
 
     # A CLEARANCE HOLE EXISTS FOR SOMETHING TO PASS THROUGH IT. That is the whole
@@ -688,7 +840,7 @@ def _probe_hole(shape: Any, port: dict[str, Any], band: tuple[float, float] | No
     # counterbore's own floor is an annulus and never lies on the axis. The
     # FLAT_FACE grid already taught what an unsatisfiable check costs. Both
     # numbers are still measured and reported, which is the part with value.
-    if through and floor is not None:
+    if through and not result["through"]:
         raise GateError("G3", f'port "{key}" ({ptype}): bottoms out at {floor:.2f}mm instead of passing through',
                         "cut it through the part, or declare it as a BORE or SCREW_SEAT if it is meant to be a blind seat"
                         if ptype == "CLEARANCE_HOLE" else
@@ -2574,8 +2726,112 @@ def _check_assertion(shape: Any, a: dict[str, Any]) -> dict[str, Any]:
                                      f"a wall is thinner than {want:g} mm: thicken it, or move cuts apart so the "
                                      "material left between them is at least that thick")
         return {"kind": kind, "measured": None if got is None else round(got, 3)}
+    if kind == "helix":
+        return _check_helix(shape, a)
+    if kind == "line_count":
+        start, end = [float(c) for c in a["from"]], [float(c) for c in a["to"]]
+        got = _material_runs(shape, start, end)
+        lo, hi = int(a["crossings_min"]), a.get("crossings_max")
+        if got < lo or (hi is not None and got > int(hi)):
+            says = f"{lo}" if hi is not None and int(hi) == lo else f"{lo}..{hi if hi is not None else '∞'}"
+            raise _assertion_failure("line_count", float(lo if got < lo else hi), got,
+                                     f"{says} material crossings from {start} to {end}",
+                                     "the stated ribs, fins or thread crests are not all there along this line: "
+                                     "build each one as solid material the line passes through, separated by gaps")
+        return {"kind": kind, "measured": got}
     raise GateError("G4b", f"assertion kind {kind!r} is not known", "use solids, volume_range, bbox_axis, "
-                    "hole_count, symmetry or min_wall")
+                    "hole_count, symmetry, min_wall, helix or line_count")
+
+
+HELIX_MIN_AMPLITUDE = 0.12  # |c_n| of the solid/void pattern; a 50% square wave has 1/pi
+HELIX_ANGLES = 360
+HELIX_PITCH_TOL = 0.15      # relative
+
+
+def _material_runs(shape: Any, start: list[float], end: list[float]) -> int:
+    """Separate stretches of material along the segment. On a B-rep, exact:
+    the segment's crossings with the faces, each span between them classified
+    at its midpoint (a grazing hit splits nothing, so equal neighbours merge)."""
+    length = math.dist(start, end)
+    d = [(e - s) / length for s, e in zip(start, end)]
+    if getattr(shape, "wrapped", None) is not None:
+        ts = [0.0, *(t for t in _line_hits(shape, tuple(start), d, length) if 0.0 < t < length), length]
+    else:
+        ts = [length * i / max(200, int(length / 0.1)) for i in range(max(200, int(length / 0.1)) + 1)]
+    states = [_in_material(shape, tuple(start[i] + d[i] * (t0 + t1) / 2 for i in range(3)))
+              for t0, t1 in itertools.pairwise(ts) if t1 - t0 > 1e-9]
+    return sum(1 for i, m in enumerate(states) if m and (i == 0 or not states[i - 1]))
+
+
+def _helix(shape: Any, a: dict[str, Any]) -> dict[str, Any]:
+    """The helix a thread traces at `radius` about the part's Z through
+    `center`: Z sections every pitch/8 over `z`, each sampled round the
+    circle; the lowest strong Fourier harmonic of that solid/void pattern is
+    the number of starts, and the drift of its phase with Z gives the hand and
+    the pitch (median step, so one stray section cannot flip it). Stacked
+    rings and a plain cylinder have no angular pattern: starts 0. Ported from
+    CADClamp's helix probe (prompts._helix, Apache-2.0, the same author)."""
+    import numpy as np
+    from shapely import contains_xy
+
+    from .meshpart import EXPORT_TOL_MM, to_trimesh
+
+    mesh = to_trimesh(shape, EXPORT_TOL_MM)
+    cx, cy = (float(c) for c in (a.get("center") or [0.0, 0.0])[:2])
+    r = float(a["radius"])
+    lo, hi = (float(z) for z in (a.get("z") or mesh.bounds[:, 2]))
+    step = float(a.get("pitch") or (hi - lo) / 8) / 8
+    ang = np.linspace(0, 2 * np.pi, HELIX_ANGLES, endpoint=False)
+    xs, ys = cx + r * np.cos(ang), cy + r * np.sin(ang)
+    harmonics = np.arange(1, 7)
+    basis = np.exp(-1j * np.outer(harmonics, ang))
+    coeffs, heights = [], []
+    # a small odd offset keeps the planes off the levels a CAD kernel tends to
+    # put vertices on (degenerate sections)
+    for z in np.arange(lo, hi + 1e-9, step) + 1.37e-3:
+        sec = mesh.section(plane_origin=[0, 0, z], plane_normal=[0, 0, 1])
+        if sec is None:
+            continue
+        planar, _ = sec.to_2D(to_2D=np.eye(4))
+        inside = np.zeros(len(ang), dtype=bool)
+        for poly in planar.polygons_full:
+            inside |= contains_xy(poly, xs, ys)
+        coeffs.append(basis @ inside.astype(float) / len(ang))
+        heights.append(z)
+    if len(coeffs) < 4:
+        return {"starts": 0, "hand": "none", "reason": "too few sections"}
+    c = np.asarray(coeffs)
+    amp = np.median(np.abs(c), axis=0)
+    if amp.max() < HELIX_MIN_AMPLITUDE:
+        return {"starts": 0, "hand": "none", "amplitude": round(float(amp.max()), 3)}
+    # an n-start thread has no harmonic below n; a lopsided one-start thread
+    # has a second harmonic nearly as large as its first
+    n = int(harmonics[np.flatnonzero(amp >= 0.5 * amp.max())[0]])
+    turn = np.angle(np.exp(1j * np.diff(np.angle(c[:, n - 1])))) / np.diff(heights)
+    rate = float(np.median(turn))
+    if abs(rate) < 1e-3:
+        return {"starts": n, "hand": "none", "amplitude": round(float(amp[n - 1]), 3)}
+    # the pattern turns by -phase/n; a right-hand thread turns counter-
+    # clockwise (seen from +Z) as it rises, so its phase falls
+    return {"starts": n, "hand": "right" if rate < 0 else "left",
+            "pitch": round(float(2 * np.pi / abs(rate)), 3), "amplitude": round(float(amp[n - 1]), 3)}
+
+
+def _check_helix(shape: Any, a: dict[str, Any]) -> dict[str, Any]:
+    got = _helix(shape, a)
+    starts, hand = int(a.get("starts", 1)), a.get("hand", "right")
+    pitch = a.get("pitch")
+    hint = (f"model the thread as a real {hand}-hand helix of {starts} start(s)"
+            + (f" at pitch {float(pitch):g}" if pitch else "")
+            + f" crossing radius {float(a['radius']):g} about the part's Z axis: sweep the profile along a "
+              "Helix (lefthand=True for a left hand) and fuse it; stacked rings or a plain cylinder are not a thread")
+    if got["starts"] != starts or got["hand"] != hand:
+        raise GateError("G4b", f'assertion "helix": expected a {hand}-hand {starts}-start thread at radius '
+                               f'{float(a["radius"]):g}, measured {got["starts"]} start(s), hand {got["hand"]}',
+                        hint, expected=starts, measured=got["starts"])
+    if pitch and abs(got["pitch"] - float(pitch)) > float(a.get("tol", HELIX_PITCH_TOL)) * float(pitch):
+        raise _assertion_failure("helix pitch", float(pitch), got["pitch"], f"pitch {float(pitch):g}", hint)
+    return {"kind": "helix", "measured": got}
 
 
 def g4b_assertions(shape: Any, assertions: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -3122,6 +3378,46 @@ if __name__ == "__main__":  # pragma: no cover
     fin = Box(100, 100, 50) + Pos(0, 0, 27.5) * Box(0.5, 10, 5)
     expect("a 0.5mm fin on a big block fails min_wall 1.2 (2% of the area never saw it)",
            lambda: contract_gates(fin, [], [], [{"kind": "min_wall", "mm": 1.2}]), 'assertion "min_wall"')
+
+    print("hole breakout — through the top arm into the jaw is through; a blind bottom is not")
+    # A C-clamp in section: spine at x<20, arms 15 thick, a 50mm jaw between them.
+    clamp = Pos(30, 0, 40) * Box(60, 20, 80) - Pos(40, 0, 40) * Box(40, 30, 50)
+    top = pose((50, 0, 80))
+    expect("a Ø10.5 hole through the top arm into the jaw passes as a CLEARANCE_HOLE",
+           lambda: _probe_hole(clamp - Pos(50, 0, 72.5) * Cylinder(5.25, 16),
+                               {"key": "s", "type": "CLEARANCE_HOLE", "pose": top, "params": {"diameter": 10.5}}))
+    expect("a hole pattern member breaking into the jaw passes too",
+           lambda: _probe_pattern(clamp - Pos(45, 0, 72.5) * Cylinder(2, 16) - Pos(55, 0, 72.5) * Cylinder(2, 16),
+                                  {"key": "p", "type": "HOLE_PATTERN", "pose": top,
+                                   "params": {"diameter": 4, "nx": 2, "ny": 1, "pitch_x": 10, "pitch_y": 0}},
+                                  _probe_screw_hole))
+    expect("a blind Ø10.5 hole 8mm into the arm still bottoms out",
+           lambda: _probe_hole(clamp - Pos(50, 0, 76) * Cylinder(5.25, 8),
+                               {"key": "s", "type": "CLEARANCE_HOLE", "pose": top, "params": {"diameter": 10.5}}),
+           "bottoms out")
+
+    print("robust hole centre — a key or a flat moves neither the centre nor the Ø")
+    hub = Pos(0, 0, 10) * Cylinder(20, 20) - Pos(0, 0, 10) * Cylinder(6, 22)
+    for label, part in (("plain Ø12 bore", hub), ("keyed Ø12 bore", hub - Pos(0, 6, 10) * Box(4, 3, 22)),
+                        ("D-bore Ø12 with a flat at 5", hub + Pos(0, 5.75, 10) * Box(12, 1.5, 20))):
+        def _centred(part=part):
+            r = _probe_hole(part, {"key": "b", "type": "BORE", "pose": pose((0, 0, 20)), "params": {"diameter": 12}})
+            if r["center_offset"] > 0.05 or abs(r["measured_diameter"] - 12) > 0.05:
+                _raise_selfcheck(f"offset {r['center_offset']}, Ø{r['measured_diameter']}")
+        expect(f"{label}: centre within 0.05, Ø12 within 0.05", _centred)
+
+    print("G0 — a stated feature may not be optional")
+    sweep_guarded = ("from build123d import *\ndef build(p):\n    part = Box(10, 10, 10)\n    try:\n"
+                     "        part = part + sweep(p.prof, p.path)\n    except Exception:\n        pass\n    return part\n")
+    expect("a sweep inside try/except: pass is rejected", lambda: g0_scan(sweep_guarded), "silently skips")
+    expect("a fillet inside try/except: pass is allowed",
+           lambda: g0_scan("from build123d import *\ndef build(p):\n    part = Box(10, 10, 10)\n    try:\n"
+                           "        part = fillet(part.edges().filter_by(Axis.Z) + part.edges(), 1)\n"
+                           "    except Exception:\n        pass\n    return part\n"))
+    expect("a feature added only if its volume is big enough is rejected",
+           lambda: g0_scan("from build123d import *\ndef build(p):\n    part = Box(10, 10, 10)\n"
+                           "    ridge = p.ridge & Box(5, 5, 5)\n    if ridge.volume > 1.0:\n        part = part + ridge\n"
+                           "    return part\n"), "volume test")
 
     print()
     if fails:

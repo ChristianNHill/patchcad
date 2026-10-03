@@ -172,6 +172,27 @@ export const CadAssertion = z.discriminatedUnion("kind", [
     .object({ kind: z.literal("symmetry"), plane: z.enum(["xy", "yz", "xz"]), tol: z.number().min(0).max(0.5).optional() })
     .describe("mirror plane through the bounding-box centre; tol = allowed mismatched fraction, default 0.02"),
   z.object({ kind: z.literal("min_wall"), mm: z.number().positive() }),
+  z
+    .object({
+      kind: z.literal("helix"),
+      radius: z.number().positive().describe("mid-flank radius, (major + minor) / 4"),
+      z: z.tuple([z.number(), z.number()]).optional().describe("the threaded length along Z; default the whole bbox"),
+      center: z.tuple([z.number(), z.number()]).optional().describe("the axis's x, y; default [0, 0]"),
+      starts: z.number().int().min(1).optional(),
+      hand: z.enum(["right", "left"]).optional(),
+      pitch: z.number().positive().optional(),
+      tol: z.number().positive().max(1).optional().describe("allowed pitch error as a fraction of pitch, default 0.15"),
+    })
+    .describe("a modelled thread: a helical surface about an axis parallel to the part's Z, mm"),
+  z
+    .object({
+      kind: z.literal("line_count"),
+      from: z.tuple([z.number(), z.number(), z.number()]),
+      to: z.tuple([z.number(), z.number(), z.number()]),
+      crossings_min: z.number().int().min(0),
+      crossings_max: z.number().int().min(0).optional(),
+    })
+    .describe("material runs a straight probe line crosses, part frame mm: knurl teeth, slots, ribs"),
 ]);
 export type CadAssertion = z.infer<typeof CadAssertion>;
 
@@ -232,6 +253,7 @@ import { silhouetteAdvisories } from "./silhouette.js";
 import { geometrySourceGuidance, isMeshNode, meshNodeCode, meshSourceLint, prepareMeshNode, type MeshSource } from "./mesh-source.js";
 import { Sourcing, cadSourcingLint, markCncSetups } from "./sourcing.js";
 import { G4C_SCORE, kernelProcess } from "./dfm.js";
+import { unverifiedCandidate } from "./bom.js";
 import { WORKED_PLAN, WORKED_PLAN_GOAL } from "./worked-plan.js";
 import { CAD_INSPECT_SYSTEM } from "./judge.js";
 import {
@@ -952,6 +974,24 @@ export const cadAssertionsCoherentLint = {
             problems.push(
               `${n.id}: assertion hole_count min ${a.min} is already met by its hole-like ports (${holePorts.map((p) => `${p.name} ${p.type}`).join(", ")}), whose probes check them exactly. hole_count is for holes the user stated that are NOT interfaces (drain holes, a pegboard grid); drop it, or raise min to count those holes too.`,
             );
+        } else if (a.kind === "helix") {
+          // The farthest any envelope corner sits from the thread's axis bounds the radius.
+          const [cx, cy] = a.center ?? [0, 0];
+          const reach = Math.max(
+            ...boxes.map((b) => Math.hypot(Math.max(cx - b.min[0], b.max[0] - cx), Math.max(cy - b.min[1], b.max[1] - cy))),
+          );
+          if (boxes.length > 0 && a.radius > reach + ENVELOPE_LINT_MARGIN)
+            problems.push(
+              `${n.id}: assertion helix radius ${a.radius} mm is farther from its axis than any of the envelope reaches (${reach.toFixed(1)} mm). The thread must fit the envelope, so one of the two is wrong.`,
+            );
+          if (a.z && a.z[0] >= a.z[1]) problems.push(`${n.id}: assertion helix z range [${a.z.join(", ")}] is empty.`);
+        } else if (a.kind === "line_count") {
+          if (a.crossings_max !== undefined && a.crossings_min > a.crossings_max)
+            problems.push(`${n.id}: assertion line_count has crossings_min ${a.crossings_min} > crossings_max ${a.crossings_max}.`);
+          if (a.from.every((v, i) => v === a.to[i]))
+            problems.push(`${n.id}: assertion line_count has from = to; the probe line needs a length.`);
+          if (a.crossings_min === 0 && a.crossings_max === undefined)
+            problems.push(`${n.id}: assertion line_count with crossings_min 0 and no max holds for every part; give the count the feature makes.`);
         }
       }
     }
@@ -1366,6 +1406,20 @@ function cadPlanning(meshAvailable: boolean) {
       '  {"kind": "min_wall", "mm": 2}                  only for a stated wall',
       '  {"kind": "solids", "count": 2}                 only when the user wants',
       "      several separate bodies printed as one part",
+      '  {"kind": "helix", "radius": 3.65, "pitch": 1.25, "z": [0, 30]}  a modelled',
+      "      thread about an axis parallel to the part's Z (\"center\": [x, y], default",
+      "      the origin). radius = MID-FLANK = (major + minor) / 4; z = the THREADED",
+      "      length only, never a plain shank or head; hand/starts if stated",
+      '  {"kind": "line_count", "from": [-20, 0, 5], "to": [20, 0, 5], "crossings_min": 12}',
+      "      solid runs a straight probe line crosses, part frame mm: one per",
+      "      knurl tooth, rib or slot web it passes through",
+      "EVERY STATED FEATURE GETS AN ASSERTION THAT FAILS WITHOUT IT. Ports and a",
+      "bbox pass a plain cylinder where the user asked for a threaded rod, so a",
+      "thread, knurl, slot or rib the user named needs its own helix or",
+      "line_count. \"An M8 x 1.25 bolt with 30 mm of thread from z=0\" earns",
+      '{"kind": "helix", "radius": 3.65, "pitch": 1.25, "z": [0, 30]} (major 8, minor',
+      "6.6) beside the bbox_axis on z; \"a knob with 18 knurl ridges\" earns a",
+      "line_count across the grip.",
       "NEVER assert anything the user did not say or clearly imply: a guessed",
       "number fails a correct part. \"An 80mm soap dish with six drain holes\"",
       "earns a bbox_axis on its length and a hole_count of 6; \"an 80mm plate",
@@ -1509,17 +1563,22 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
   async exportGeometry(
     graph: GraphDoc,
     ws: Workspace,
-    opts: { nodeId?: string; format: string },
+    opts: { nodeId?: string; format: string; includeUnverified?: boolean },
   ): Promise<ExportResult> {
     const { world, instances } = this.solveScene(graph);
     // Hidden parts drop out of the EXPORT here. solveScene above still sees
     // them, so hiding a base plate does not unmoor the bracket bolted to it.
     // The viewport's mesh list is filtered separately, in the cad-scene route.
+    // A node stuck on its contract exports its unverified candidate only when
+    // the caller asked for it by name.
     const nodes = Object.values(graph.nodes).filter(
-      (n) => n.artifact?.code && !n.hidden && (!opts.nodeId || n.id === opts.nodeId),
+      (n) =>
+        (unverifiedCandidate(n) ? opts.includeUnverified : n.artifact?.code) &&
+        !n.hidden &&
+        (!opts.nodeId || n.id === opts.nodeId),
     );
     const parts = nodes.map((n) => ({
-      code: n.artifact!.code,
+      code: unverifiedCandidate(n)?.code ?? n.artifact!.code,
       params: mergedParams(n),
       matrix: opts.nodeId ? [] : (world[n.id] ?? []),
       // Each placed copy is its own STEP child / 3MF build item, named by node.
@@ -1569,7 +1628,7 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       solids: hardware
         ? (REGISTRY_SOLIDS[node.kind] === null ? undefined : (REGISTRY_SOLIDS[node.kind] ?? 1))
         : (payload.solids ?? (solidsAssertion?.kind === "solids" ? solidsAssertion.count : undefined) ?? 1),
-      // G4c: a fabricate part is also held to its process's DFM rules.
+      // G4c: every made part is also held to its process's rules (fdm for a print).
       process: kernelProcess(node),
       importDir: this.importDir(ws),
     };

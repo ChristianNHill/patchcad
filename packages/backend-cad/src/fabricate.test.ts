@@ -130,8 +130,10 @@ describe("cad-sourcing lint", () => {
 });
 
 describe("process DFM wiring", () => {
-  it("only vendor processes reach the kernel's G4c", () => {
-    expect(kernelProcess(node("plate", "part"))).toBeUndefined();
+  it("printed parts send fdm to the kernel's G4c, bought hardware sends nothing", () => {
+    expect(kernelProcess(node("plate", "part"))).toEqual({ kind: "fdm" });
+    expect(kernelProcess(node("plate", "part", { sourcing: { class: "print" } }))).toEqual({ kind: "fdm" });
+    expect(kernelProcess(node("screw", "fastener", { params: { sku: "ISO4762-M3x12" } }))).toBeUndefined();
     expect(kernelProcess(node("shaft", "part", { sourcing: cnc, processKind: "CNC" }))).toEqual({ kind: "cnc", tool_radius: 1.5 });
     expect(
       kernelProcess(node("shaft", "part", { sourcing: { ...cnc, toolRadius: 3, allowUndercuts: true }, processKind: "CNC" })),
@@ -256,6 +258,18 @@ describe("BOM", () => {
   it("withholds the vendor package until the gates pass", () => {
     const failed = buildBom(graph([{ ...shaft, status: "error_contract" }]));
     expect(failed.fabricate[0]).toMatchObject({ ready: false, vendorPackage: null });
+  });
+
+  it("lists a contract-stuck node's candidate as unverified, never as generated", () => {
+    const candidate = { code: "def build(p): ...", hash: "c", stage: "G4b", report: "assertion failed" };
+    const stuck = { ...plate, status: "error_contract", candidate };
+    const b = buildBom(graph([stuck]));
+    expect(b.print).toEqual([]);
+    expect(b.unverified).toEqual([{ nodeId: "plate", title: "plate", class: "print", process: "fdm", failedStage: "G4b" }]);
+    expect(bomCsv(b)).toContain("unverified candidate — failed G4b");
+    expect(bomCsv(b)).not.toContain(",generated");
+    // A node that recovered keeps no stale candidate in the BOM.
+    expect(buildBom(graph([{ ...stuck, status: "ready" }])).print.map((r) => r.nodeId)).toEqual(["plate"]);
   });
 });
 

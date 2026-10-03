@@ -22,6 +22,7 @@ interface Bom {
     vendorPackage: string | null;
   }[];
   notGenerated: { nodeId: string; title: string; class: string; status: string }[];
+  unverified: { nodeId: string; title: string; class: string; process: string; failedStage: string }[];
 }
 
 /** Same rule as backend-cad `sourcingOf` for the one class the canvas flags:
@@ -157,6 +158,20 @@ function BomPanel({ onClose }: { onClose: () => void }) {
               </tr>
             ))}
           </BomSection>
+          {bom.unverified.length > 0 && (
+            <BomSection title="Unverified" empty="">
+              {bom.unverified.map((r) => (
+                <tr key={r.nodeId}>
+                  <td className="bom__mono">{r.nodeId}</td>
+                  <td>{r.title}</td>
+                  <td />
+                  <td className="bom__sub">
+                    {r.class} · unverified candidate — failed {r.failedStage}; the gates rejected it, so do not order it
+                  </td>
+                </tr>
+              ))}
+            </BomSection>
+          )}
           {bom.notGenerated.length > 0 && (
             <BomSection title="Not generated" empty="">
               {bom.notGenerated.map((r) => (

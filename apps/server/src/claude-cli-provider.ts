@@ -22,9 +22,11 @@ import { addUsage } from "./spend.js";
  * VISION, BY WAY OF READ. A call carrying images switches to stream-json input
  * so the images ride as content blocks. The CLI does not hand them to the model
  * inline: it saves each to a temp file and the model opens it with its Read
- * tool. So an image call gets exactly that one tool and two turns (read, then
- * answer). With one turn it ended `error_max_turns` on the tool_use and never
- * answered. Text-only calls keep the plain single-turn path.
+ * tool. So an image call gets exactly that one tool and three turns (read,
+ * then answer, with one spare). With one turn it ended `error_max_turns` on the
+ * tool_use and never answered; with two, a model that re-read an image still
+ * could (t4-007), so an `error_max_turns` is also retried once, billing both
+ * runs. Text-only calls keep the plain single-turn path.
  */
 
 const DEFAULT_MODELS: Record<LlmRole, string> = {
@@ -109,7 +111,24 @@ export class ClaudeCliProvider implements LlmProvider {
     return { data: parsed.data, usage: out.usage };
   }
 
-  private run(
+  /** `error_max_turns` is the model running out of turns, not a bad request:
+   *  the same request runs once more, and both runs are billed. */
+  private async run(...args: Parameters<ClaudeCliProvider["spawnOnce"]>): Promise<{ raw: string; usage: LlmUsage }> {
+    try {
+      return await this.spawnOnce(...args);
+    } catch (err) {
+      if (!(err instanceof LlmCallError) || !/error_max_turns/.test(err.message)) throw err;
+      const first = { calls: 1, ...(err.usage ?? ZERO) };
+      try {
+        const out = await this.spawnOnce(...args);
+        return { ...out, usage: addUsage(first, out.usage) };
+      } catch (again) {
+        throw new LlmCallError((again as Error).message, addUsage(first, (again instanceof LlmCallError && again.usage) || ZERO), { cause: again });
+      }
+    }
+  }
+
+  private spawnOnce(
     system: string,
     prompt: string,
     model: string,
@@ -138,7 +157,7 @@ export class ClaudeCliProvider implements LlmProvider {
           // `--tools` REMOVES tools; `--allowedTools ""` only skipped the
           // permission prompt, so Opus still reached for Bash (to check the
           // build123d version), was denied, and ended `error_max_turns`.
-          ...(vision ? ["--tools", "Read", "--max-turns", "2"] : ["--tools", "", "--max-turns", "1"]),
+          ...(vision ? ["--tools", "Read", "--max-turns", "3"] : ["--tools", "", "--max-turns", "1"]),
         ],
         { stdio: ["pipe", "pipe", "pipe"] },
       );

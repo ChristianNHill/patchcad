@@ -294,6 +294,16 @@ export const PITFALLS: Pitfall[] = [
     match: /assertion "min_wall"/,
     fix: "A wall is thinner than the contract allows. Shrink the cutter (a hollowing cut of size outer - 2·wall), or move neighbouring cuts apart so the material between them reaches the stated thickness.",
   },
+  {
+    id: "assert-helix",
+    match: /assertion "helix/,
+    fix: "The stated thread is missing, at the wrong radius, or the wrong pitch, hand or start count. Model it as real geometry: a triangular profile on Plane.XZ spanning minor to major radius, swept along Helix(pitch, threaded_length, minor_radius), unioned to (external) or cut from (internal) the core over the asserted z range. A plain cylinder or a stack of rings is not a thread. Never wrap the thread in try/except or drop it when the boolean fails; fix the boolean.",
+  },
+  {
+    id: "assert-line-count",
+    match: /assertion "line_count/,
+    fix: "The probe line crosses the wrong number of solid runs, so the stated knurl, slots or ribs are missing or miscounted. Cut or add each one explicitly in a loop at the stated count, and make each deep enough that the line through them passes material, gap, material. Never skip a feature when its boolean fails; fix the boolean.",
+  },
   // G4c process DFM, stageless for the same reason as G4b: a combined
   // contract report is staged by its earliest failure.
   {
@@ -335,6 +345,11 @@ export const PITFALLS: Pitfall[] = [
     id: "process-wall",
     match: /process (?:sls|mjf|resin) "min_wall"/,
     fix: "The vendor process cannot form walls this thin. Thicken the wall (shrink the hollowing cutter) or move neighbouring cuts apart.",
+  },
+  {
+    id: "fdm-wall",
+    match: /process fdm "wall"/,
+    fix: "A wall is thinner than one 0.4 mm perimeter, so the slicer drops it. Thicken it to at least two perimeters (0.8 mm): shrink the hollowing cutter, or move neighbouring cuts apart.",
   },
   {
     id: "resin-void",

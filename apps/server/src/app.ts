@@ -21,7 +21,7 @@ const OpenBody = z.object({ dir: z.string().min(1) });
 export async function buildApp(s: Session): Promise<FastifyInstance> {
   const app = Fastify({ logger: false, bodyLimit: 128 * 1024 * 1024 });
   // Exposed so the studio's cross-origin export fetch can read the filename.
-  await app.register(cors, { origin: true, exposedHeaders: ["content-disposition", "x-patchcad-warning"] });
+  await app.register(cors, { origin: true, exposedHeaders: ["content-disposition", "x-patchcad-warning", "x-patchcad-unverified"] });
   await app.register(websocket);
 
   app.get("/api/health", async () => ({ ok: true }));

@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import type { CadBackend } from "@patchcad/backend-cad";
+import { unverifiedCandidate, type CadBackend } from "@patchcad/backend-cad";
 import { registerBomRoutes } from "./bom-routes.js";
 import { effectiveParams } from "./project.js";
 import type { Session } from "./session.js";
@@ -16,7 +16,7 @@ const kernelUrl = (req: { protocol: string; host: string }, kernelPath: string) 
   `${req.protocol}://${req.host}/api/kernel${kernelPath}`;
 
 const ExportParams = z.object({ format: z.enum(["stl", "3mf", "obj", "step"]) });
-const ExportQuery = z.object({ node: z.string().optional() });
+const ExportQuery = z.object({ node: z.string().optional(), includeUnverified: z.literal("1").optional() });
 
 /** The viewport's data, renders, exports and the BOM. */
 export function registerCadRoutes(app: FastifyInstance, s: Session): void {
@@ -57,7 +57,9 @@ export function registerCadRoutes(app: FastifyInstance, s: Session): void {
    * what you slice, since parts print flat and separately. Omit it for the
    * posed assembly. Streamed through here rather than linked to the kernel:
    * a cross-origin `a.download` ignores its filename, and a remote browser
-   * cannot reach :8621 at all.
+   * cannot reach :8621 at all. `includeUnverified=1` adds the unverified
+   * candidates of nodes stuck on their contract, named in
+   * `x-patchcad-unverified` and the warning; without it they are left out.
    */
   app.get("/api/project/export/:format", async (req, reply) => {
     const project = s.active;
@@ -65,10 +67,18 @@ export function registerCadRoutes(app: FastifyInstance, s: Session): void {
     const p = ExportParams.safeParse(req.params);
     const q = ExportQuery.safeParse(req.query);
     if (!p.success || !q.success) return reply.code(400).send({ error: (p.error ?? q.error)!.message });
+    const asked = q.data.node ? project.store.doc.nodes[q.data.node] : undefined;
+    if (asked && unverifiedCandidate(asked) && !q.data.includeUnverified) {
+      return reply.code(409).send({
+        error: `${asked.id} has no verified part, only an unverified candidate that failed ${asked.candidate!.stage}`,
+        hint: "pass includeUnverified=1 to export it anyway",
+      });
+    }
     const cad = project.backend as CadBackend;
     const result = await cad.exportGeometry(project.store.doc, project.workspace, {
       nodeId: q.data.node,
       format: p.data.format,
+      includeUnverified: q.data.includeUnverified === "1",
     });
     if (!result.ok || !result.file) {
       return reply.code(422).send({ error: result.error ?? "export failed", hint: result.hint });
@@ -76,8 +86,18 @@ export function registerCadRoutes(app: FastifyInstance, s: Session): void {
     const res = await fetch(`${cad.kernel.baseUrl}${result.file}`);
     if (!res.ok) return reply.code(502).send({ error: `kernel served ${res.status} for the export` });
     const slug = path.basename(project.dir) || "patchcad";
-    const name = q.data.node ? `${slug}-${q.data.node}` : slug;
-    if (result.export?.warning) reply.header("x-patchcad-warning", result.export.warning);
+    const unverified = q.data.includeUnverified
+      ? Object.values(project.store.doc.nodes)
+          .filter((n) => unverifiedCandidate(n) && !n.hidden && (!q.data.node || n.id === q.data.node))
+          .map((n) => `${n.id} (failed ${n.candidate!.stage})`)
+      : [];
+    if (unverified.length > 0) reply.header("x-patchcad-unverified", unverified.join(", "));
+    const name = `${q.data.node ? `${slug}-${q.data.node}` : slug}${unverified.length > 0 ? "-unverified" : ""}`;
+    const warning = [
+      unverified.length > 0 ? `UNVERIFIED, the gates rejected: ${unverified.join(", ")}` : "",
+      result.export?.warning ?? "",
+    ].filter(Boolean).join(" · ");
+    if (warning) reply.header("x-patchcad-warning", warning);
     return reply
       .header("content-disposition", `attachment; filename="${name.replace(/[^\w.-]/g, "_")}.${p.data.format}"`)
       .type("application/octet-stream")

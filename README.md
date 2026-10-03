@@ -249,6 +249,8 @@ hosted architect with free local generators:
 identical contract, in any project at any time, the node is reused with zero
 generator calls (the cached code is still verified). Seed it from an existing
 project with `pnpm --filter @patchcad/server exec tsx src/seed-library.ts <dir>`.
+Set `PATCHCAD_LIBRARY=/some/dir` to keep the library somewhere else, e.g. a
+throwaway one per benchmark run so it never feeds your own projects.
 
 **Export what you cooked.** The viewport bar exports the posed assembly, or a
 single part in its own frame, as STL, 3MF, OBJ or STEP (a posed STEP is an

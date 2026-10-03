@@ -1178,6 +1178,56 @@ describe("cookOne repair convergence", () => {
     expect(h.repairs[0]!.failure.stage).toBe("LOOKS");
     expect(h.repairs[0]!.failure.report).toContain("Does it have a leg? — iso: flat");
   });
+
+  /** code-1 dies in execute; every later draft executes and fails verify,
+   *  code-2 scoring best. */
+  const contractStuck = (attribution: "contract-infeasible" | "code-invalid") =>
+    scripted(
+      { "code-1": { stage: "G1", score: 1 } },
+      {
+        maxAttempts: 3,
+        verify: async (node) => {
+          const code = node.artifact!.code;
+          return { ok: false, stage: "G4", report: `${code} failed G4`, score: code === "code-2" ? 4 : 3.5 };
+        },
+        classifyFailure: () => attribution,
+      },
+    );
+
+  it("keeps the best executed attempt of a contract-infeasible node as an unverified candidate", async () => {
+    const deps = makeDeps(makeGraph(), sequenceProvider().provider, new MemoryLibrary(), contractStuck("contract-infeasible").backend);
+    await expect(cookOne(deps, "widget")).rejects.toThrow(/contract-infeasible/);
+    const node = deps.store.node("widget");
+    expect(node.status).toBe("error_contract");
+    expect(node.candidate).toEqual({ code: "code-2", hash: hashValue("code-2"), stage: "G4", report: "code-2 failed G4" });
+    // Never committed, never the artifact.
+    expect(node.history).toEqual([]);
+    expect(node.artifact).toBeNull();
+    expect(node.lastFailed).toMatchObject({ code: "code-3", stage: "G4" });
+  });
+
+  it("keeps no candidate for a code-invalid node, or one whose best never executed", async () => {
+    const invalid = makeDeps(makeGraph(), sequenceProvider().provider, new MemoryLibrary(), contractStuck("code-invalid").backend);
+    await expect(cookOne(invalid, "widget")).rejects.toThrow();
+    expect(invalid.store.node("widget").candidate).toBeUndefined();
+
+    const h = scripted({ "code-1": { stage: "G1", score: 1 }, "code-2": { stage: "G1", score: 1 }, "code-3": { stage: "G1", score: 1 } }, {
+      maxAttempts: 3,
+      classifyFailure: () => "contract-infeasible",
+    });
+    const never = makeDeps(makeGraph(), sequenceProvider().provider, new MemoryLibrary(), h.backend);
+    await expect(cookOne(never, "widget")).rejects.toThrow();
+    expect(never.store.node("widget").candidate).toBeUndefined();
+  });
+
+  it("drops the candidate when the node commits", async () => {
+    const graph = makeGraph();
+    graph.nodes.widget!.candidate = { code: "old", hash: hashValue("old"), stage: "G4", report: "old failed G4" };
+    const deps = makeDeps(graph, sequenceProvider().provider, new MemoryLibrary(), scripted({}).backend);
+    await cookOne(deps, "widget");
+    expect(deps.store.node("widget").status).toBe("ready");
+    expect(deps.store.node("widget").candidate).toBeUndefined();
+  });
 });
 
 describe("cookOne concurrency (one node, two cooks)", () => {

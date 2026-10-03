@@ -45,11 +45,18 @@ const GUIDANCE: Record<Exclude<Process, "fdm">, (toolRadius: number, allowUnderc
   resin: () => ["RESIN (SLA/DLP): walls of at least 0.6 mm and NO fully enclosed void — open every cavity with a drain hole of 2 mm or more."],
 };
 
-/** The generator's process lines: one line for FDM, a block for a vendor process. */
+/** The generator's process lines, a block per process; FDM's mirrors the kernel's fdm G4c rules. */
 export function processLines(node: Pick<NodeRecord, "kind" | "contract">): string {
   const payload = node.contract.payload as CadContractPayload;
   const s = sourcingOf(node);
-  if (!isVendorProcess(s)) return `Process: FDM, min wall ${payload.process.minWall} mm.`;
+  if (!isVendorProcess(s)) {
+    const { minWall, nozzle } = payload.process;
+    return [
+      `Process: FDM, min wall ${minWall} mm.`,
+      `  - make every wall at least ${Math.max(minWall, 2 * nozzle)} mm, two perimeters of the ${nozzle} mm nozzle; the gate fails one thinner than a single perimeter`,
+      "  - where the part's own frame allows, give it a flat lowest-Z face wide enough to stand on the bed without tipping",
+    ].join("\n");
+  }
   const guide = GUIDANCE[s.process as Exclude<Process, "fdm">](s.toolRadius ?? DEFAULT_TOOL_RADIUS_MM, !!s.allowUndercuts);
   return [
     `Process: FABRICATED by a vendor (${s.process}) in ${s.material ?? "the stated material"}${s.finish ? `, finish ${s.finish}` : ""}.`,
@@ -59,9 +66,11 @@ export function processLines(node: Pick<NodeRecord, "kind" | "contract">): strin
   ].join("\n");
 }
 
-/** G4c wire format, or undefined for anything that is not a vendor process. */
+/** G4c wire format: a vendor process, or "fdm" for a printed part (the
+ *  kernel's FDM rules). Undefined for bought hardware. */
 export function kernelProcess(node: Pick<NodeRecord, "kind" | "contract">): KernelProcess | undefined {
   const s = sourcingOf(node);
+  if (s.class === "print" && s.process === "fdm") return { kind: "fdm" };
   if (!isVendorProcess(s)) return undefined;
   return {
     kind: s.process!,

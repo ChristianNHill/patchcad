@@ -7,6 +7,8 @@ import { minePitfalls, type LibraryEntry, type LibraryListing, type NodeLibrary,
 /**
  * Content-addressed node library on disk:
  *   ~/.patchcad/library/<backendId>/<contractHash>.json
+ * or under `PATCHCAD_LIBRARY` when set, so a benchmark run keeps its captures
+ * out of the user's library.
  * One file per contract hash — the hash covers the full interface, so the
  * stored code is known-good for exactly that contract. Cross-project by
  * design: any project whose plan lands on an identical contract reuses the
@@ -18,7 +20,7 @@ import { minePitfalls, type LibraryEntry, type LibraryListing, type NodeLibrary,
  * that recur, mined into candidate pitfalls the backend merges.
  */
 export class FileLibrary implements NodeLibrary {
-  constructor(private root = path.join(os.homedir(), ".patchcad", "library")) {}
+  constructor(private root = process.env.PATCHCAD_LIBRARY || path.join(os.homedir(), ".patchcad", "library")) {}
 
   private file(backendId: string, contractHash: string): string {
     return path.join(this.root, backendId, `${contractHash}.json`);

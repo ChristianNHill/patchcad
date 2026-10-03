@@ -222,6 +222,10 @@ export const ProjectLedger = z.object({
 export type ProjectLedger = z.infer<typeof ProjectLedger>;
 export type LedgerBucket = keyof ProjectLedger;
 
+/** Code the gates rejected, with where and why. Never an artifact. */
+export const FailedCode = z.object({ code: z.string(), hash: z.string(), stage: z.string(), report: z.string() });
+export type FailedCode = z.infer<typeof FailedCode>;
+
 export const NodeRecord = z.object({
   id: z.string(),
   /** Domain-defined kind: shell|component|state|style|data|logic (code),
@@ -249,6 +253,15 @@ export const NodeRecord = z.object({
    *  committed part against it before generating; any other edit moves the
    *  hash past it. */
   expandedContractHash: z.string().optional(),
+  /** The best attempt of a node whose budget ran out on a contract it could
+   *  not meet (error_contract), kept when it at least executed. UNVERIFIED:
+   *  never the artifact, never committed; the BOM and export flag it as such.
+   *  Optional, so a doc without it parses as before. */
+  candidate: FailedCode.optional(),
+  /** The code of the round a failed cook surfaced, for the failure panel. Only
+   *  a commit writes `artifact`, so this is where failing code lives; a commit
+   *  clears it. Optional, for the same reason. */
+  lastFailed: FailedCode.optional(),
   cost: NodeCost.default(ZERO_COST),
 });
 export type NodeRecord = z.infer<typeof NodeRecord>;

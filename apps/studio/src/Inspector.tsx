@@ -6,6 +6,7 @@ import { ImageDrop, type RefDraft } from "./ImageDrop.js";
 import { groupParams, ParamRow } from "./params.js";
 import { MeasurementsSection, RenderSheet } from "./measurements.js";
 import { isFabricate, VendorBadge } from "./BomPanel.js";
+import { download } from "./download.js";
 
 /** What the attribution means, in words. The engine decides whether a stuck
  *  node is the generator's fault or the architect's; that verdict determines
@@ -21,6 +22,9 @@ const ATTRIBUTION: Record<CookFailure["attribution"], string> = {
  *  burned minutes and real money showed a red dot reading "error_code". */
 function FailurePanel({ nodeId }: { nodeId: string }) {
   const failure = useStudio((s) => s.failures[nodeId]);
+  // Failing code never becomes the artifact, so the code view keeps showing
+  // the committed part; the code that failed is shown here instead.
+  const lastFailed = useStudio((s) => s.graph?.nodes[nodeId]?.lastFailed);
   if (!failure) return null;
   return (
     <div className="section">
@@ -33,6 +37,43 @@ function FailurePanel({ nodeId }: { nodeId: string }) {
           </span>
         </div>
         <pre className="failure__message">{failure.message}</pre>
+        {lastFailed && (
+          <details>
+            <summary className="failure__attribution">the code that failed (not committed)</summary>
+            <pre className="code-view">{lastFailed.code}</pre>
+          </details>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** A node stuck on its contract keeps its best attempt (the engine's
+ *  `candidate`). The gates REJECTED it, so it is never shown as the part:
+ *  it exports only on an explicit ask, flagged in the request and the label. */
+function CandidatePanel({ node }: { node: NodeRecord }) {
+  const status = useStudio((s) => s.statuses[node.id]);
+  const [error, setError] = useState<string | null>(null);
+  if (status !== "error_contract" || !node.candidate) return null;
+  const save = async () =>
+    setError(
+      await download(
+        `/api/project/export/stl?${new URLSearchParams({ node: node.id, includeUnverified: "1" })}`,
+        `${node.id}-unverified.stl`,
+      ),
+    );
+  return (
+    <div className="section">
+      <span className="section__label">Best attempt</span>
+      <div className="failure">
+        <div className="failure__head">
+          <span className="failure__stage">unverified candidate — failed {node.candidate.stage}</span>
+          <span className="failure__attribution">the gates rejected it; export it only to inspect or fix by hand</span>
+        </div>
+        <BusyButton className="btn btn--quiet btn--tiny" onClick={save} busyLabel="exporting…">
+          export unverified STL
+        </BusyButton>
+        {error && <pre className="failure__message">{error}</pre>}
       </div>
     </div>
   );
@@ -195,6 +236,7 @@ export function Inspector({ graph }: { graph: GraphDoc }) {
       </div>
 
       <FailurePanel nodeId={node.id} />
+      <CandidatePanel node={node} />
 
       <MeasurementsSection node={node} />
 
@@ -230,7 +272,7 @@ export function Inspector({ graph }: { graph: GraphDoc }) {
       <div className="section section--grow">
         <span className="section__label">{graph.backend === "cad" ? "Geometry code" : "Module source"}</span>
         <pre className="code-view">
-          {code || (codeLoading ? "loading…" : "not cooked yet — nothing generated for this node so far")}
+          {code || (codeLoading ? "loading…" : "no committed code yet — nothing has passed the gates for this node")}
         </pre>
       </div>
       </div>

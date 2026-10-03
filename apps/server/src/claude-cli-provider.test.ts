@@ -1,6 +1,6 @@
 import path from "node:path";
 import os from "node:os";
-import { chmod, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { LlmCallError } from "@patchcad/engine";
@@ -78,5 +78,44 @@ echo '{"result":"no json here","total_cost_usd":0.1,"usage":{"input_tokens":10,"
     expect(err.message).toMatch(/error_during_execution/);
     expect(err.usage.usd).toBeCloseTo(0.3);
     expect(err.usage.inputTokens).toBe(30);
+  });
+
+  /** A fake vision `claude` that runs out of turns first, then answers; it
+   *  records its --max-turns so the test can see what it was given. */
+  async function maxTurnsCli(): Promise<{ bin: string; dir: string }> {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "patchcad-cli-"));
+    const bin = path.join(dir, "claude");
+    await writeFile(
+      bin,
+      `#!/bin/sh
+cat > /dev/null
+while [ $# -gt 0 ]; do [ "$1" = "--max-turns" ] && echo "$2" >> "${dir}/turns"; shift; done
+if [ -f "${dir}/called" ]; then
+  echo '{"type":"result","result":"{\\"code\\":\\"x\\"}","total_cost_usd":0.2,"usage":{"input_tokens":20,"output_tokens":2}}'
+  exit 0
+fi
+touch "${dir}/called"
+echo '{"type":"result","is_error":true,"subtype":"error_max_turns","total_cost_usd":0.1,"usage":{"input_tokens":10,"output_tokens":1}}'
+exit 1
+`,
+    );
+    await chmod(bin, 0o755);
+    return { bin, dir };
+  }
+
+  it("gives an image call three turns and retries error_max_turns once, billing both", async () => {
+    const { bin, dir } = await maxTurnsCli();
+    const provider = new ClaudeCliProvider({ bin });
+    const out = await provider.complete({
+      role: "generator",
+      system: "s",
+      label: "t",
+      schema,
+      messages: [{ role: "user", content: "go", images: [{ mediaType: "image/png", dataB64: "AA==" }] }],
+    });
+    expect(out.data).toEqual({ code: "x" });
+    expect(out.usage.usd).toBeCloseTo(0.3);
+    expect(out.usage.inputTokens).toBe(30);
+    expect((await readFile(path.join(dir, "turns"), "utf8")).trim().split("\n")).toEqual(["3", "3"]);
   });
 });

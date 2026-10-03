@@ -1230,6 +1230,7 @@ def build(p):
     swept(client)
     gear_mesh(client)
     audit_fixes(client)
+    bench_fixes(client)
     segmentation()
     catalog_parts()
 
@@ -1476,6 +1477,121 @@ def swept(client: httpx.Client) -> None:
     past = (slide(70.0).get("clash") or {}).get("swept")
     check("swept G5: a slider meets a stop inside its stroke, and not one past it",
           len(into) == 1 and into[0]["b"] == "stop" and past == [], f"{into} / {past}")
+
+
+# t4-006 as committed by the benchmark cook: a sphere cavity whose bottom pole
+# exported as an open edge until meshpart.weld dropped the collapsed sliver.
+BALL_SOCKET = """
+from build123d import *
+
+def build(p):
+    plate = Pos(0, 0, 2.5) * Box(44, 30, 5)
+    body = Pos(0, 0, 5 + 14) * Cylinder(13, 28)
+    part = plate + body
+    for sx in (-1, 1):
+        part = part - Pos(sx * 17, 0, 2.5) * Cylinder(2.25, 20)
+    part = part - Pos(0, 0, 22) * Sphere(10.4)
+    part = part - Pos(0, 0, 22 + 6.5) * Cylinder(8.5, 13)
+    return part
+"""
+
+THREAD = """
+from build123d import *
+
+def build(p):
+    core = Pos(0, 0, 8) * Cylinder(4.05, 16)
+    if not p['thread']:
+        return Pos(0, 0, 8) * Cylinder(5, 16)
+    prof = Plane.XZ * Polygon((3.7, -0.7), (5, -0.15), (5, 0.15), (3.7, 0.7), align=None)
+    return core + sweep(prof, Helix(2.0, 12.0, 4.0, center=(0, 0, 2.0)), is_frenet=True)
+"""
+
+
+def bench_fixes(client: httpx.Client) -> None:
+    """CADClamp benchmark zeros: a hole breaking out into a cavity, a keyed
+    bore, a sphere's pole in the export mesh, a thread inside try/except: pass,
+    and the FDM process rules."""
+    print("benchmark regressions")
+    n = time.time()
+
+    def run(code, **body):
+        return client.post("/execute", json={"code": code, "params": {"nonce": n, **body.pop("params", {})}, **body},
+                           timeout=60)
+
+    clamp = ("from build123d import *\ndef build(p):\n    _ = p['nonce']\n"
+             "    c = Pos(30, 0, 40) * Box(60, 20, 80) - Pos(40, 0, 40) * Box(40, 30, 50)\n"
+             "    return c - Pos(50, 0, 80 - p['depth'] / 2) * Cylinder(5.25, p['depth'] + 0.01)\n")
+    port = {"key": "screw_hole", "type": "CLEARANCE_HOLE", "pose": {"origin": [50, 0, 80], "zAxis": [0, 0, 1],
+            "xAxis": [1, 0, 0]}, "params": {"diameter": 10.5}}
+    through = run(clamp, params={"depth": 16}, ports=[port])
+    got = (through.json().get("measurements", {}).get("ports") or [{}])[0]
+    check("G3: a C-clamp screw hole through the top arm into the jaw is through, with its breakout depth",
+          through.status_code == 200 and got.get("through") is True and abs(got.get("breakout_depth", 0) - 65) < 0.1,
+          str(got or through.json().get("error")))
+    blind = run(clamp, params={"depth": 8}, ports=[port])
+    check("G3: a blind hole in the same arm still bottoms out",
+          blind.status_code == 422 and "bottoms out" in blind.json().get("error", ""), blind.json().get("error", ""))
+
+    hub = ("from build123d import *\ndef build(p):\n    _ = p['nonce']\n"
+           "    h = Pos(0, 0, 10) * Cylinder(20, 20) - Pos(0, 0, 10) * Cylinder(6, 22)\n"
+           "    if p['kind'] == 'key':\n        h = h - Pos(0, 6, 10) * Box(4, 3, 22)\n"
+           "    if p['kind'] == 'd':\n        h = h + Pos(0, 5.75, 10) * Box(12, 1.5, 20)\n    return h\n")
+    bore = {"key": "bore", "type": "BORE", "pose": {"origin": [0, 0, 20], "zAxis": [0, 0, 1], "xAxis": [1, 0, 0]},
+            "params": {"diameter": 12}}
+    for kind in ("plain", "key", "d"):
+        r = run(hub, params={"kind": kind}, ports=[bore])
+        got = (r.json().get("measurements", {}).get("ports") or [{}])[0]
+        check(f"G3: a {kind} Ø12 bore reads its centre within 0.05 and Ø12",
+              r.status_code == 200 and got.get("center_offset", 1) <= 0.05
+              and abs(got.get("measured_diameter", 0) - 12) <= 0.05, str(got or r.json().get("error")))
+
+    socket = run(BALL_SOCKET)
+    check("G2: the t4-006 ball socket's export mesh is watertight once the pole sliver is welded away",
+          socket.status_code == 200, socket.json().get("error", "")[:160])
+    touching = run("from build123d import *\ndef build(p):\n    _ = p['nonce']\n"
+                   "    return Box(10, 10, 10) + Pos(10, 10, 0) * Box(10, 10, 10)\n")
+    check("G2: bodies touching along an edge fail as a non-manifold export, located",
+          touching.status_code == 422 and touching.json().get("stage") == "G2"
+          and "non-manifold edge(s) at [5.00, 5.00" in touching.json().get("error", ""),
+          touching.json().get("error", "")[:160])
+    sphere_stl = client.post("/export", json={"parts": [{"code": "from build123d import *\ndef build(p):\n"
+                                                         "    return Sphere(10)\n", "params": {"nonce": n},
+                                                         "name": "ball", "matrix": []}], "format": "stl"}, timeout=60)
+    check("STL of a sphere is watertight (its poles welded)",
+          (sphere_stl.json().get("export") or {}).get("watertight") is True, str(sphere_stl.json())[:160])
+
+    optional = THREAD.replace("    return core + sweep(", "    try:\n        core = core + sweep(").replace(
+        "is_frenet=True)\n", "is_frenet=True)\n    except Exception:\n        pass\n    return core\n")
+    r = run(optional, params={"thread": True})
+    check("G0 rejects a thread swept inside try/except: pass",
+          r.status_code == 422 and r.json().get("stage") == "G0" and "may not be optional" in r.json().get("hint", ""),
+          r.json().get("error", ""))
+
+    thread_asserts = [{"kind": "helix", "radius": 4.5, "z": [3, 13], "pitch": 2.0},
+                      {"kind": "line_count", "from": [4.5, 0, 3], "to": [4.5, 0, 13], "crossings_min": 5,
+                       "crossings_max": 5}]
+    real = run(THREAD, params={"thread": True}, assertions=thread_asserts)
+    check("G4b: a real right-hand thread passes helix and line_count", real.status_code == 200,
+          real.json().get("error", "")[:200])
+    plain = run(THREAD, params={"thread": False}, assertions=thread_asserts)
+    errors = [f.get("error", "") for f in plain.json().get("failures") or []]
+    check("G4b: a plain cylinder fails both helix and line_count",
+          plain.status_code == 422 and any('"helix"' in e for e in errors) and any('"line_count"' in e for e in errors),
+          str(errors)[:200])
+
+    fdm = {"kind": "fdm"}
+    plate = run("from build123d import *\ndef build(p):\n    _ = p['nonce']\n    return Box(40, 30, p['t'])\n",
+                params={"t": 3}, process=fdm)
+    check("G4c fdm: a 3mm plate passes", plate.status_code == 200, plate.json().get("error", "")[:160])
+    fin = run("from build123d import *\ndef build(p):\n    _ = p['nonce']\n"
+              "    return Box(40, 30, 3) + Pos(0, 0, 6.5) * Box(0.3, 20, 4)\n", process=fdm)
+    rules = [f.get("rule") for f in fin.json().get("failures") or []]
+    check("G4c fdm: a 0.3mm fin fails wall", fin.status_code == 422 and "wall" in rules, str(rules))
+    tower = run("from build123d import *\ndef build(p):\n    _ = p['nonce']\n"
+                "    return Pos(0, 0, 15) * Box(4, 4, 30) + Pos(30, 0, 28) * Box(60, 4, 4)\n", process=fdm)
+    found = [f.get("rule") for f in (tower.json().get("measurements", {}).get("process") or {}).get("findings") or []]
+    check("G4c fdm: a part that tips over is a stability FINDING, never a failure",
+          "stability" in found and tower.json().get("stage") != "G4c", str(found or tower.json().get("error")))
 
 
 def audit_fixes(client: httpx.Client) -> None:

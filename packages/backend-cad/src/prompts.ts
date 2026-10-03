@@ -43,6 +43,8 @@ a fairing, a grip, a blade). Primitives plus fillet only ever make a boxy part:
   extrude(section, amount, taper=deg)
   Spline([(x, y), ...]) / Polyline(...) / Line(p1, p2) / RadiusArc(p1, p2, r)
   make_face(closed_wire) / mirror(shape, Plane.YZ)
+  Helix(pitch, height, radius)              # a thread's path; the thread itself is
+    sweep(Plane.XZ * Polygon((r0, -h), (r1, 0), (r0, h), align=None), Helix(pitch, length, r0), is_frenet=True)
   The cheapest smooth body is a loft through offset circles:
     loft([Plane.XY.offset(z) * Circle(r) for z, r in ((0, 8), (20, 14), (45, 6))])
   Sections must be sketches on planes, listed in order along the blend; a loft
@@ -56,6 +58,11 @@ RULES:
     of a geometry one — and a fillet/chamfer whose edges you cannot be certain
     of is exactly where that happens. If you are not sure the edge set exists,
     leave the edge sharp. Cosmetic rounding is never worth losing the node.
+  - A STATED FEATURE IS NEVER OPTIONAL: never wrap a thread, knurl, slot, rib
+    or any feature the spec names in try/except, and never guard it with a
+    volume or validity check that quietly returns the part without it. Let it
+    raise: the repair turn sees the error and the line, while a silently
+    dropped feature passes the size gates and ships the wrong part.
   - BUILD BUDGET: the kernel KILLS a build at 20 SECONDS and the node is lost —
     a timeout is not a slow pass, it is a failure with nothing to measure.
     Filleting every edge is what usually blows it: fillet(shape.edges(), r) on a

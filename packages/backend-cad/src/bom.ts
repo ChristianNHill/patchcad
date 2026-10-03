@@ -10,7 +10,9 @@ import { sourcingOf } from "./sourcing.js";
  * The bill of materials, built from the graph after a cook. A row exists only
  * for a node with a committed artifact, because everything in the BOM is
  * generated geometry: a node that never produced a part is listed under
- * `notGenerated`, never as a phantom line someone might order.
+ * `notGenerated`, never as a phantom line someone might order. A node stuck
+ * on its contract with only an unverified candidate is listed under
+ * `unverified`, never as generated.
  *
  * Quantities are placed copies (the assembly solver's instances), so four
  * screws through one seat are one row of four.
@@ -80,6 +82,14 @@ export interface Bom {
   print: PrintRow[];
   fabricate: FabricateRow[];
   notGenerated: { nodeId: string; title: string; class: string; status: string }[];
+  /** Best attempts the gates rejected (engine `candidate`): nothing to order. */
+  unverified: { nodeId: string; title: string; class: string; process: string; failedStage: string }[];
+}
+
+/** The node's gates-rejected best attempt, while the node is still stuck on
+ *  its contract. Unverified: the BOM and export flag it, never pass it off. */
+export function unverifiedCandidate(node: NodeRecord): NodeRecord["candidate"] {
+  return node.status === "error_contract" ? node.candidate : undefined;
 }
 
 /** Placed copies per node, from the same solve the viewport uses. */
@@ -136,10 +146,15 @@ function buyRow(node: NodeRecord): Omit<BuyRow, "qty" | "nodes"> {
 
 export function buildBom(graph: GraphDoc): Bom {
   const counts = instanceCounts(graph);
-  const bom: Bom = { buy: [], print: [], fabricate: [], notGenerated: [] };
+  const bom: Bom = { buy: [], print: [], fabricate: [], notGenerated: [], unverified: [] };
   const buy = new Map<string, BuyRow>();
   for (const node of Object.values(graph.nodes)) {
     const s = sourcingOf(node);
+    const candidate = unverifiedCandidate(node);
+    if (candidate) {
+      bom.unverified.push({ nodeId: node.id, title: node.title, class: s.class, process: s.process ?? "unspecified", failedStage: candidate.stage });
+      continue;
+    }
     if (!node.artifact?.code) {
       bom.notGenerated.push({ nodeId: node.id, title: node.title, class: s.class, status: node.status });
       continue;
@@ -180,7 +195,7 @@ const csvCell = (v: unknown) => {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 
-/** One table, three sections, then what was never generated. */
+/** One table, three sections, then what is unverified or was never generated. */
 export function bomCsv(bom: Bom): string {
   const head = ["section", "item", "description", "standard", "process", "material", "qty", "volume_mm3", "mass_g", "filament_m", "vendors", "vendor_package", "status"];
   const rows: unknown[][] = [
@@ -193,6 +208,7 @@ export function bomCsv(bom: Bom): string {
       "fabricate", r.nodeId, r.title, "", r.process, r.material, r.qty, r.volumeMm3, r.massG, "", "",
       r.vendorPackage ?? "", r.ready ? "custom — send to vendor" : "gates not passed",
     ]),
+    ...bom.unverified.map((r) => [r.class, r.nodeId, r.title, "", r.process, "", "", "", "", "", "", "", `unverified candidate — failed ${r.failedStage}`]),
     ...bom.notGenerated.map((r) => [r.class, r.nodeId, r.title, "", "", "", "", "", "", "", "", "", `not generated (${r.status})`]),
   ];
   return [head, ...rows].map((r) => r.map(csvCell).join(",")).join("\n") + "\n";

@@ -963,6 +963,15 @@ describe("contract assertions", () => {
       ],
     });
     expect(parsed.assertions).toHaveLength(6);
+    const features = CadContractPayload.parse({
+      ...base,
+      assertions: [
+        { kind: "helix", radius: 3.65, pitch: 1.25, hand: "right", starts: 1, tol: 0.2, z: [0, 30], center: [0, 0] },
+        { kind: "line_count", from: [-20, 0, 5], to: [20, 0, 5], crossings_min: 12, crossings_max: 12 },
+      ],
+    });
+    expect(features.assertions?.map((a) => a.kind)).toEqual(["helix", "line_count"]);
+    expect(CadContractPayload.safeParse({ ...base, assertions: [{ kind: "helix", radius: 4, hand: "up" }] }).success).toBe(false);
     expect(CadContractPayload.safeParse({ ...base, assertions: [{ kind: "colour", value: "red" }] }).success).toBe(false);
   });
 
@@ -1020,6 +1029,28 @@ describe("contract assertions", () => {
     // Two drain holes beyond the hub: the ports alone do not reach the count.
     expect(cadAssertionsCoherentLint.run(rotor([{ kind: "hole_count", min: 3 }], [hub]))).toEqual([]);
     expect(cadAssertionsCoherentLint.run(rotor([{ kind: "hole_count", min: 0, max: 0 }], []))).toEqual([]);
+  });
+
+  it("rejects a helix past the envelope and line counts that cannot fail or contradict", () => {
+    // The 80×40 box reaches hypot(40, 20) ≈ 44.7 mm from the Z axis.
+    expect(cadAssertionsCoherentLint.run(withAssertions([{ kind: "helix", radius: 4, pitch: 1.25 }]))).toEqual([]);
+    expect(cadAssertionsCoherentLint.run(withAssertions([{ kind: "helix", radius: 50 }]))[0]).toContain("farther from its axis");
+    // Off-centre: an axis at x=35 reaches hypot(75, 20) ≈ 77.6 mm.
+    expect(cadAssertionsCoherentLint.run(withAssertions([{ kind: "helix", radius: 50, center: [35, 0] }]))).toEqual([]);
+    expect(cadAssertionsCoherentLint.run(withAssertions([{ kind: "helix", radius: 3, z: [5, 5] }]))[0]).toContain("is empty");
+    expect(
+      cadAssertionsCoherentLint.run(withAssertions([{ kind: "line_count", from: [-40, 0, 0], to: [40, 0, 0], crossings_min: 6, crossings_max: 8 }])),
+    ).toEqual([]);
+    const out = cadAssertionsCoherentLint.run(
+      withAssertions([
+        { kind: "line_count", from: [-40, 0, 0], to: [40, 0, 0], crossings_min: 8, crossings_max: 6 },
+        { kind: "line_count", from: [1, 2, 3], to: [1, 2, 3], crossings_min: 1 },
+        { kind: "line_count", from: [-40, 0, 0], to: [40, 0, 0], crossings_min: 0 },
+      ]),
+    );
+    expect(out).toHaveLength(3);
+    expect(out[1]).toContain("from = to");
+    expect(out[2]).toContain("holds for every part");
   });
 
   it("does not call a loose max a contradiction", () => {

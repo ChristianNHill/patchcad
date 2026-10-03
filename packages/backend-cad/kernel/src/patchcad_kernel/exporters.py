@@ -21,7 +21,7 @@ from typing import Any
 import numpy as np
 
 from .gates import GateError
-from .meshpart import MeshPart, to_trimesh
+from .meshpart import EXPORT_TOL_MM, MeshPart, to_trimesh, weld
 from .render import _mesh_arrays, combine, transform
 
 MESH_FORMATS = {"stl", "3mf", "obj"}
@@ -126,11 +126,8 @@ def _export_step(parts: list[dict[str, Any]], tmp: str) -> dict[str, Any]:
 def _welded(shape: Any) -> Any:
     # Tessellation emits coincident vertices per face, which leaves every mesh
     # reading as open even when the solid is closed — and a slicer trusts that
-    # flag. merge_vertices only welds duplicates; it is NOT process(validate=True),
-    # which is documented to turn interior hole tunnels inside out.
-    mesh = to_trimesh(shape, 0.05, process=False).copy()  # finer than a render: this gets printed
-    mesh.merge_vertices()
-    return mesh
+    # flag. G2 checks this same weld (gates._g2_watertight).
+    return weld(to_trimesh(shape, EXPORT_TOL_MM, process=False).copy())  # finer than a render: this gets printed
 
 
 def _export_3mf(parts: list[dict[str, Any]], tmp: str) -> dict[str, Any]:
@@ -163,11 +160,11 @@ def _export_combined(parts: list[dict[str, Any]], tmp: str, fmt: str) -> dict[st
 
     meshed = []
     for part in parts:
-        v, t = _mesh_arrays(part["shape"], tol=0.05)
+        v, t = _mesh_arrays(part["shape"], tol=EXPORT_TOL_MM)
         for _, matrix in _copies(part["name"], part["matrices"]):
             meshed.append((transform(v, matrix) if matrix else v, t))
     v, t = combine(meshed)
     mesh = trimesh.Trimesh(vertices=v, faces=t, process=False)
-    mesh.merge_vertices()  # see _welded
+    weld(mesh)  # see _welded
     mesh.export(tmp, file_type=fmt)
     return {"parts": len(parts), "triangles": len(t), "watertight": bool(mesh.is_watertight)}

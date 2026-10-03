@@ -23,7 +23,7 @@ import numpy as np
 from .gates import GateError
 from .meshpart import MeshPart, to_trimesh
 
-PROCESS_KINDS = ("cnc", "sheet_metal", "laser_cut", "sls", "mjf", "resin")
+PROCESS_KINDS = ("fdm", "cnc", "sheet_metal", "laser_cut", "sls", "mjf", "resin")
 DEFAULT_TOOL_RADIUS_MM = 1.5
 POCKET_DEPTH_PER_WIDTH = 4.0
 MIN_WALL_MM = {"sls": 0.8, "mjf": 0.8, "resin": 0.6}
@@ -459,12 +459,102 @@ def _additive(shape: Any, kind: str) -> tuple[dict[str, Any], list[dict[str, Any
     return report, failures
 
 
+# ---------------------------------------------------------------------------
+# FDM (printed parts). Ported from CADClamp's engine checks (stability.py,
+# overhang.py; Apache-2.0, the same author).
+# ---------------------------------------------------------------------------
+
+FDM_LINE_MM = 0.4
+FDM_MIN_WALL_MM = 0.45         # one perimeter: thinner is not extruded at all
+FDM_GOOD_WALL_MM = 2 * FDM_LINE_MM
+CONTACT_BAND_MM = 0.3
+TIP_GAMMA_DEG = (5.0, 10.0)    # WillItPrint's safety angle, for parts up to / over 30mm wide
+TIP_WIDTH_CUTOFF_MM = 30.0
+OVERHANG_DEG = 60.0
+BRIDGE_DEG = 89.0              # a flat downface spans between supports: bridged, not overhung
+OVERHANG_FINDING_FRACTION = 0.05
+LAYER_MM = 0.2
+
+
+def _finding(rule: str, message: str, **detail: Any) -> dict[str, Any]:
+    return {"rule": rule, "message": message, **detail}
+
+
+def _fdm(shape: Any) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Wall blocks under one perimeter on a generated part. Everything else
+    is a finding: the part's frame is its assembly pose, not its print pose,
+    so tipping and overhang describe one way to print it, and an imported mesh
+    is the user's own geometry, which no repair round can change."""
+    from shapely.geometry import MultiPoint, Point
+
+    from .printability import thin_wall_mm
+
+    mesh = to_trimesh(shape, 0.2)
+    imported = isinstance(shape, MeshPart)
+    findings: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+
+    wall = thin_wall_mm(mesh)
+    report: dict[str, Any] = {"min_wall": None if wall is None else round(wall, 3)}
+    if wall is not None and wall < FDM_MIN_WALL_MM - EPS:
+        error = f"thinnest wall {wall:.2f} mm, under one {FDM_MIN_WALL_MM:g} mm perimeter"
+        if imported:
+            findings.append(_finding("wall", error))
+        else:
+            failures.append(_fail("fdm", "wall", error,
+                                  f"a nozzle cannot lay a wall thinner than one line: thicken it to at least "
+                                  f"{FDM_GOOD_WALL_MM:g} mm (two perimeters), or move the cuts on either side of it apart",
+                                  expected=FDM_GOOD_WALL_MM, measured=round(wall, 3)))
+    elif wall is not None and wall < FDM_GOOD_WALL_MM - EPS:
+        findings.append(_finding("wall", f"thinnest wall {wall:.2f} mm is under two perimeters "
+                                         f"({FDM_GOOD_WALL_MM:g} mm): it prints weak"))
+
+    # Stability: the tip angle of the centre of mass over the bed-contact hull.
+    z_min = float(mesh.bounds[0][2])
+    contact = mesh.vertices[mesh.vertices[:, 2] < z_min + CONTACT_BAND_MM][:, :2]
+    width = float(max(mesh.extents[0], mesh.extents[1]))
+    gamma = TIP_GAMMA_DEG[0] if width <= TIP_WIDTH_CUTOFF_MM else TIP_GAMMA_DEG[1]
+    hull = MultiPoint([tuple(p) for p in contact]).convex_hull if len(contact) >= 3 else None
+    if hull is None or hull.geom_type != "Polygon":
+        report["stability"] = {"tip_angle_deg": None, "gamma_deg": gamma}
+        findings.append(_finding("stability", "the part touches the bed along a line or a point, not a face: "
+                                              "it rolls or tips as printed in its own frame"))
+    else:
+        com = mesh.center_mass
+        height = max(float(com[2]) - z_min, 1e-9)
+        dist = hull.exterior.distance(Point(float(com[0]), float(com[1])))
+        margin = dist if hull.contains(Point(float(com[0]), float(com[1]))) else -dist
+        tip = math.degrees(math.atan2(margin, height))
+        report["stability"] = {"tip_angle_deg": round(tip, 2), "gamma_deg": gamma,
+                               "footprint_mm2": round(float(hull.area), 2)}
+        if tip < gamma / 2:
+            findings.append(_finding("stability", f"tip angle {tip:.1f}° over the bed contact, under {gamma / 2:g}°: "
+                                                  "printed in its own frame it may topple", measured=round(tip, 2)))
+
+    # Overhang: area-weighted downfaces past 60° from vertical, above the
+    # first layer, flat bridges exempt.
+    theta = np.degrees(np.arcsin(np.clip(-mesh.face_normals[:, 2], 0.0, 1.0)))
+    area = mesh.area_faces
+    over = (mesh.triangles_center[:, 2] > z_min + LAYER_MM) & (theta > OVERHANG_DEG) & (theta < BRIDGE_DEG)
+    frac = float(area[over].sum() / area.sum()) if area.sum() else 0.0
+    report["overhang_area_fraction"] = round(frac, 4)
+    if frac > OVERHANG_FINDING_FRACTION:
+        findings.append(_finding("overhang", f"{frac:.0%} of the surface overhangs more than {OVERHANG_DEG:g}° "
+                                             "from vertical: it needs support printed in its own frame",
+                                 measured=round(frac, 4)))
+    if findings:
+        report["findings"] = findings
+    return report, failures
+
+
 def g4c_process(shape: Any, process: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """(report, failures) for the process the contract names."""
     kind = process.get("kind", "")
     if kind not in PROCESS_KINDS:
         return {"kind": kind, "skipped": "no DFM rules for this process"}, []
-    if kind in MIN_WALL_MM:
+    if kind == "fdm":
+        rules = [("fdm", _fdm)]
+    elif kind in MIN_WALL_MM:
         rules = [("wall", lambda s: _additive(s, kind))]
     elif isinstance(shape, MeshPart):
         return {"kind": kind}, [_fail(kind, "brep", "an imported mesh has no faces or edges to check",

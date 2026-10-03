@@ -38,8 +38,9 @@ const LOOKS = "LOOKS";
 
 type Failure = { stage: string; report: string };
 type Draft = { code: string; testCode: string };
-/** One generation round that did not commit. */
-type Attempt = Draft & { attempt: number; failure: Failure; score?: number };
+/** One generation round that did not commit. `executed`: it failed in
+ *  verify, so the backend's execute gates passed. */
+type Attempt = Draft & { attempt: number; failure: Failure; score?: number; executed?: boolean };
 
 /** Unscored attempts rank equal, so ties go to the latest. */
 const rank = (a: Attempt) => a.score ?? 0;
@@ -314,6 +315,8 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Pro
         if (measurements !== undefined && measurements !== null) {
           n.measurements = { version: n.version, paramsHash: hashValue(n.params), data: measurements };
         }
+        delete n.candidate;
+        delete n.lastFailed;
       },
       { immediate: true },
     );
@@ -350,9 +353,8 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Pro
    *  cost a part that already verified. A contract with no `visualChecks` is
    *  not looked at: with no question there is nothing to judge against but
    *  the judge's taste, and no render is spent finding that out. */
-  const inspectArtifact = async () => {
+  const inspectArtifact = async (node: NodeRecord) => {
     try {
-      const node = store.node(nodeIdValue);
       const checks = (node.contract.payload as { visualChecks?: unknown } | undefined)?.visualChecks;
       const questions = Array.isArray(checks) ? checks.filter((q): q is string => typeof q === "string" && q.trim() !== "") : [];
       if (questions.length === 0) return null;
@@ -390,18 +392,20 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Pro
     // queued: repairing → building is not a legal transition.
     if (store.node(nodeIdValue).status === "repairing") setStatus("queued");
     setStatus("building");
-    store.applyOp((g) => {
-      const n = g.nodes[nodeIdValue]!;
-      n.artifact = { code, testCode, dts, hash: hashValue(code) };
-    });
-    const exec = await backend.execute(store.node(nodeIdValue), workspace, graph);
+    const artifact = { code, testCode, dts, hash: hashValue(code) };
+    const node = { ...store.node(nodeIdValue), artifact };
+    const exec = await backend.execute(node, workspace, graph);
     let failure: { stage: string; report: string } | null = exec.ok ? null : exec;
     if (exec.ok) {
       checkAbort();
       setStatus("verifying");
-      const verify = await backend.verify(store.node(nodeIdValue), graph, workspace);
-      const verdict = verify.ok && look && deps.inspect && backend.renderArtifact ? await inspectArtifact() : null;
+      const verify = await backend.verify(node, graph, workspace);
+      const verdict = verify.ok && look && deps.inspect && backend.renderArtifact ? await inspectArtifact(node) : null;
       if (verify.ok && !verdict) {
+        own();
+        store.applyOp((g) => {
+          g.nodes[nodeIdValue]!.artifact = artifact;
+        });
         await storeInterface();
         commit(cause, verify.measurements);
         await backend.previewAdapter?.hotSwap(store.doc, workspace, [nodeIdValue]);
@@ -417,7 +421,7 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Pro
   };
 
   // What the node held before this cook. A fresh start modifies this, never a
-  // failed draft, and a prebuilt miss puts it back.
+  // failed draft. Only a commit ever replaces it: drafts are gated on copies.
   const original = store.node(nodeIdValue).artifact;
 
   // -- preparation: e.g. a generated mesh the deterministic artifact loads --
@@ -447,6 +451,11 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Pro
     const failed = await tryPrebuilt(prebuilt.code, prebuilt.testCode ?? "", "registry");
     if (!failed) return;
     // Never fall through to an LLM for registry parts — surface instead.
+    own();
+    store.applyOp((g) => {
+      g.nodes[nodeIdValue]!.lastFailed = { code: prebuilt.code, hash: hashValue(prebuilt.code), stage: "registry", report: failed.slice(0, 2000) };
+    });
+    store.emit({ type: "node:updated", projectId, node: store.node(nodeIdValue) });
     setStatus("error_code", {
       stage: "registry",
       message: `registry artifact failed gates: ${failed.slice(0, 1800)}`,
@@ -508,14 +517,6 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Pro
       if (failed === null) return reused(cand.entry.contractHash);
       log(`"${cand.entry.title}" did not satisfy this contract (${failed.slice(0, 120)})`);
     }
-  }
-
-  // A prebuilt miss left its candidate installed; put back what the node had.
-  if (store.node(nodeIdValue).artifact !== original) {
-    own();
-    store.applyOp((g) => {
-      g.nodes[nodeIdValue]!.artifact = original;
-    });
   }
 
   // Mined once per cook, not per attempt: the graph and the node's contract
@@ -637,7 +638,7 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Pro
     return drafts;
   };
 
-  type Gated = { ok: true; verify: VerifyResult } | { ok: false; failure: Failure; score?: number };
+  type Gated = { ok: true; verify: VerifyResult } | { ok: false; failure: Failure; score?: number; executed: boolean };
 
   /** Run drafts through execute + verify side by side. Each sees a shallow
    *  copy of the node carrying its own artifact, so candidates never share
@@ -659,12 +660,12 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Pro
         const exec = await backend.execute(node, workspace, graph);
         if (!exec.ok) {
           log(`${tag(i)}execute failed: ${exec.report.slice(0, 200)}`);
-          return { ok: false, failure: { stage: exec.stage, report: exec.report }, score: exec.score };
+          return { ok: false, failure: { stage: exec.stage, report: exec.report }, score: exec.score, executed: false };
         }
         const verify = await backend.verify(node, graph, workspace);
         if (!verify.ok) {
           log(`${tag(i)}verify failed: ${verify.report.slice(0, 200)}`);
-          return { ok: false, failure: { stage: verify.stage, report: verify.report }, score: verify.score };
+          return { ok: false, failure: { stage: verify.stage, report: verify.report }, score: verify.score, executed: true };
         }
         return { ok: true, verify };
       }),
@@ -673,15 +674,16 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Pro
       if (r.status === "fulfilled") return r.value;
       const report = `the backend threw: ${(r.reason as Error)?.message ?? String(r.reason)}`;
       log(`${tag(i)}${report.slice(0, 200)}`);
-      return { ok: false, failure: { stage: "execute", report } };
+      return { ok: false, failure: { stage: "execute", report }, executed: false };
     });
     checkAbort();
     setStatus("verifying");
     return results;
   };
 
-  /** Make a gated draft the node's artifact: what inspect renders, what the
-   *  commit records, and what a failed node shows. */
+  /** Make a draft that passed every gate the node's artifact, right before
+   *  its commit. Nothing else writes `artifact`: a failed draft never
+   *  replaces the committed part (or, via persist, its version's code file). */
   const install = (d: Draft) => {
     own();
     store.applyOp((g) => {
@@ -740,6 +742,8 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Pro
   let best: Attempt | undefined;
   /** Gate-passing code a looks-wrong verdict sent back for a rewrite. */
   let bestPassing: (Draft & { verify: VerifyResult }) | undefined;
+  /** The latest round, which the failure the node surfaces describes. */
+  let lastRound: Attempt | undefined;
   /** Consecutive repair rounds that did not beat `best`. */
   let stale = 0;
 
@@ -803,7 +807,6 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Pro
     for (const [i, d] of drafts.entries()) {
       const gated = results[i]!;
       if (gated.ok) {
-        install(d);
         // -- inspect: does it LOOK like the part that was asked for? --
         // Gates prove measurements; only a picture catches "measurably correct
         // and completely the wrong object". Worth at most one rewrite, and
@@ -811,9 +814,10 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Pro
         // committing nothing.
         const verdict =
           deps.inspect && backend.renderArtifact && inspectRetries < 1 && attempt < maxAttempts
-            ? await inspectArtifact()
+            ? await inspectArtifact({ ...store.node(nodeIdValue), artifact: { code: d.code, testCode: d.testCode, hash: hashValue(d.code) } })
             : null;
         if (!verdict) {
+          install(d);
           // Which failure a repair cleared, for the pitfall miner. No code.
           if (repairedFrom && repairedFrom.failure.stage !== LOOKS) {
             const { stage, report } = repairedFrom.failure;
@@ -836,13 +840,13 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Pro
         };
         continue;
       }
-      const a: Attempt = { ...d, attempt, failure: gated.failure, score: gated.score };
+      const a: Attempt = { ...d, attempt, failure: gated.failure, score: gated.score, executed: gated.executed };
       if (!round || rank(a) > rank(round)) round = a;
     }
     if (round?.failure.stage === LOOKS) inspectRetries += 1;
 
-    install(round!);
     failures.push(round!.failure);
+    lastRound = round;
     // Staleness is only measurable when the backend scores; without scores
     // every round ties and the loop chains repairs exactly as it always did.
     if (attempt > 1 && !fresh && round!.score !== undefined && best?.score !== undefined) {
@@ -870,7 +874,19 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number): Pro
     failures,
     attempts: maxAttempts,
   });
+  // The failing code is kept BESIDE the node, never as its artifact: the last
+  // round's for the failure panel, and, when the contract could not be met,
+  // the best try that at least executed, which a person may export flagged.
   const last = failures.at(-1)!;
+  own();
+  store.applyOp((g) => {
+    const n = g.nodes[nodeIdValue]!;
+    n.lastFailed = { code: lastRound!.code, hash: hashValue(lastRound!.code), stage: last.stage, report: last.report.slice(0, 2000) };
+    if (attribution === "contract-infeasible" && best?.executed) {
+      n.candidate = { code: best.code, hash: hashValue(best.code), stage: best.failure.stage, report: best.failure.report.slice(0, 2000) };
+    } else delete n.candidate;
+  });
+  store.emit({ type: "node:updated", projectId, node: store.node(nodeIdValue) });
   const detail = {
     stage: last.stage,
     message: last.report.slice(0, 2000),

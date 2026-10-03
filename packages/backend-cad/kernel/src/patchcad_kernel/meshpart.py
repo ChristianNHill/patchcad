@@ -25,6 +25,7 @@ import numpy as np
 import trimesh
 
 TESSELLATION_LIMIT = 500_000  # faces; imports beyond this get decimated
+EXPORT_TOL_MM = 0.05  # STL/3MF/OBJ tessellation
 
 # Alignment pegs (joint mode "pegs"): the PEG IS SMALLER THAN ITS SOCKET —
 # 0.3 mm diametral clearance is the standard FDM slip fit; equal diameters
@@ -148,6 +149,19 @@ def to_trimesh(shape: Any, tol: float, process: bool = True) -> trimesh.Trimesh:
 
 
 _MESH_MEMO: dict[tuple[int, float, bool], tuple[Any, trimesh.Trimesh]] = {}
+
+
+def weld(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    """Weld an OCP tessellation in place the way an export must: merge the
+    per-face duplicate vertices, then drop the triangles the merge collapsed.
+    OCCT fans a sphere's pole with a sliver whose two pole vertices coincide;
+    welded, it is a triangle with a repeated corner, and it left one open and
+    one non-manifold edge at every pole, so any part with a sphere in it
+    exported non-watertight. Never process(validate=True): see the module."""
+    mesh.merge_vertices()
+    f = mesh.faces
+    mesh.update_faces((f[:, 0] != f[:, 1]) & (f[:, 1] != f[:, 2]) & (f[:, 0] != f[:, 2]))
+    return mesh
 
 
 def reset_mesh_memo() -> None:

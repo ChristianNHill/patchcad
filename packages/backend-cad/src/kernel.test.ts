@@ -234,3 +234,26 @@ describe("CadBackend kernel request · assertions", () => {
     expect((await sent(withAssertions([]))).solids).toBe(1);
   });
 });
+
+describe("CadBackend export · unverified candidates", () => {
+  const exported = async (includeUnverified?: boolean) => {
+    const g = structuredClone(graph);
+    Object.assign(g.nodes.plate!, {
+      status: "error_contract",
+      candidate: { code: "def build(p): candidate", hash: "c", stage: "G4b", report: "assertion failed" },
+    });
+    const kernel = new KernelClient();
+    const sent: string[][] = [];
+    kernel.export = async (parts) => {
+      sent.push(parts.map((p) => p.code));
+      return { ok: true, hash: "e" };
+    };
+    await new CadBackend({ kernel }).exportGeometry(g, ws, { format: "stl", includeUnverified });
+    return sent[0]!;
+  };
+
+  it("leaves a contract-stuck node out unless asked, then sends its candidate, never its failed artifact", async () => {
+    expect(await exported()).toEqual([]);
+    expect(await exported(true)).toEqual(["def build(p): candidate"]);
+  });
+});

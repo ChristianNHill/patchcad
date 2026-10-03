@@ -115,7 +115,15 @@ pool = None  # set at startup; parent process stays OCP-free
 # Every one of these overturns cached passes.
 # 16 -> 17: LINEAR_BEARING_SEAT, CLIP_GROOVE and RAIL_MOUNT have probes; a port
 # of those types failed "no probe" before, and passes now when the part is right.
-GATES_VERSION = 17
+# 17 -> 18: a hole that breaks out into a cavity is through (a C-clamp's screw
+# hole into the jaw "bottomed out" on the far arm); hole slices refit without
+# stray crossings and read the inscribed circle (a keyway read Ø12 as Ø12.52,
+# 0.74mm off centre); G2 fails a non-watertight export mesh, welded the way
+# exporters weld it; G0 rejects a try/except that silently drops a boolean,
+# sweep, loft, revolve or helix, and a feature added only if a volume test
+# passes; G4b helix and line_count; G4c "fdm" (wall blocks under 0.45mm on
+# generated parts; stability, overhang and thin walls are findings).
+GATES_VERSION = 18
 # Tap drills and clearances come from the catalog, so a catalog edit changes
 # verdicts too. Keyed by content, not by remembering to bump GATES_VERSION.
 CATALOG_DIGEST = hashlib.sha256(
