@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { GraphDoc } from "@patchcad/shared";
+import { reexpandGraph } from "@patchcad/engine";
 import { CadBackend } from "./index.js";
 import { buildBom } from "./bom.js";
 import { buildSequence, feasibleSequence, insertionQueries, instructionsDocument, type InsertionCheck } from "./instructions.js";
@@ -54,7 +55,7 @@ describe("buildSequence", () => {
     const seq = buildSequence(g, scene);
     expect(seq.subassemblies).toEqual([expect.objectContaining({ id: "A", root: "j1_motor", nodes: ["j1_motor", "j1_motor_pulley"] })]);
     const bench = seq.steps.findIndex((s) => s.holds === "j1_motor");
-    const attach = seq.steps.findIndex((s) => s.action === "attach");
+    const attach = seq.steps.findIndex((s) => s.attaches);
     expect(bench).toBeGreaterThan(-1);
     expect(attach).toBe(bench + 1);
     // On the bench, only the motor is in the picture.
@@ -85,12 +86,38 @@ describe("buildSequence", () => {
   });
 });
 
+describe("hinges", () => {
+  /** The cooked folding phone stand: a pin printed on the back plate, an e-clip on it. */
+  const stand = () => GraphDoc.parse(JSON.parse(readFileSync(new URL("fixtures/real-folding-phone-stand.json", import.meta.url), "utf8")));
+
+  it("the e-clip goes on after the half it keeps on", () => {
+    const g = stand();
+    const seq = buildSequence(g, new CadBackend().solveScene(g));
+    expect(stepOf(seq, "hinge_pin_clip")).toBeGreaterThan(stepOf(seq, "front-plate"));
+    expect(seq.steps[stepOf(seq, "hinge_pin_clip")]).toMatchObject({ action: "snap", moving: [expect.objectContaining({ held: true })] });
+  });
+
+  it("a separate hinge pin goes through both halves after b is laid in between a's knuckles", () => {
+    const backend = new CadBackend();
+    const g = reexpandGraph(stand(), backend as never)!.graph;
+    const seq = buildSequence(g, backend.solveScene(g));
+    const pin = Object.values(g.nodes).find((n) => n.kind === "pin")!.id;
+    const laid = stepOf(seq, "front-plate");
+    expect(laid).toBeLessThan(stepOf(seq, pin));
+    expect(seq.steps[laid]!.title).toMatch(/^Hold the Front plate .* in place: the .* goes through it next$/);
+    expect(seq.steps[laid]!.moving).toEqual([expect.objectContaining({ key: "front-plate", held: true })]);
+    // Not pressed in first like an alignment dowel.
+    expect(seq.steps.some((s) => s.n < laid + 1 && s.hardware.some((h) => h.nodes.includes(pin)))).toBe(false);
+  });
+});
+
 describe("feasibleSequence", () => {
-  /** Stands in for the kernel: `part` cannot get past `by` once `by` is placed. */
-  const blocks = (pairs: [string, string][]): InsertionCheck => async (queries) =>
+  /** Stands in for the kernel: `part` cannot get past `by` once `by` is placed,
+   *  and `rests` lists what a part comes to rest against (the 1 mm nudge). */
+  const blocks = (pairs: [string, string][], rests: [string, string][] = []): InsertionCheck => async (queries) =>
     queries.map((q) => ({
       id: q.id,
-      blocked: pairs.filter(([part, by]) => q.moving.includes(part) && q.still.includes(by)).map(([part, by]) => ({ part, by })),
+      blocked: (q.travel_mm ? rests : pairs).filter(([part, by]) => q.moving.includes(part) && q.still.includes(by)).map(([part, by]) => ({ part, by })),
     }));
 
   it("moves a part ahead of what would block its way in", async () => {
@@ -105,11 +132,23 @@ describe("feasibleSequence", () => {
     expect(seq.sequenceProblems).toEqual([]);
   });
 
+  it("waits for everything a part comes to rest against, not only what it mates", async () => {
+    const { g, scene } = example("cad-belt-drive");
+    // Say the turntable rests on the driven pulley: it then waits for it,
+    // though its only mate is the shaft and no sweep says it is blocked.
+    const naive = buildSequence(g, scene);
+    expect(stepOf(naive, "turntable")).toBeLessThan(stepOf(naive, "j1_driven_pulley"));
+    const seq = await feasibleSequence(g, scene, blocks([], [["turntable", "j1_driven_pulley"]]));
+    expect(stepOf(seq, "turntable")).toBeGreaterThan(stepOf(seq, "j1_driven_pulley"));
+    expect(seq.steps[stepOf(seq, "turntable")]!.notes).not.toContain("Fit this before the Turntable: it would block the way afterwards.");
+    expect(seq.sequenceProblems).toEqual([]);
+  });
+
   it("builds a blocked sub-assembly in place instead", async () => {
     const { g, scene } = example("cad-belt-drive");
     const seq = await feasibleSequence(g, scene, blocks([["j1_motor_pulley", "base"]]));
     expect(seq.subassemblies).toEqual([]);
-    expect(seq.steps.some((s) => s.action === "attach")).toBe(false);
+    expect(seq.steps.some((s) => s.attaches)).toBe(false);
     // In place, the pulley goes on the motor after the motor is on the base;
     // the fake still says base blocks it, and no order can move the base.
     expect(seq.sequenceProblems.some((p) => /runs into base/.test(p))).toBe(true);
@@ -133,7 +172,10 @@ describe("feasibleSequence", () => {
     const seq = await feasibleSequence(g, scene, async () => {
       throw new Error("kernel down");
     });
-    expect(seq.sequenceProblems).toEqual([expect.stringContaining("insertion check did not run: kernel down")]);
+    expect(seq.sequenceProblems).toEqual([
+      expect.stringContaining("landing check did not run: kernel down"),
+      expect.stringContaining("insertion check did not run: kernel down"),
+    ]);
   });
 
   it("sweeps each step's new copies past its context, one query per direction", () => {

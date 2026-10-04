@@ -614,6 +614,8 @@ body {
   letter-spacing: var(--tracking-tight);
 }
 .modal__rationale { color: var(--color-ink-2); font-size: var(--text-sm); margin: 0 0 var(--space-md); line-height: 1.55; }
+.modal__warnings { color: var(--color-warn); font-size: var(--text-sm); line-height: 1.5; margin: 0 0 var(--space-md); }
+.modal__warnings ul { margin: var(--space-xs) 0 0; padding-left: var(--space-lg); }
 .modal__error { white-space: pre-wrap; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--color-danger); }
 .modal__meta {
   color: var(--color-muted);

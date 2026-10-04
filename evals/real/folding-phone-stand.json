@@ -1,0 +1,108 @@
+{
+  "id": "folding-phone-stand",
+  "name": "Folding Smart Phone Stand by Lopatka (Printables 18362): two printed halves on a filament hinge pin",
+  "category": "consumer-item",
+  "sources": [
+    {
+      "url": "https://www.printables.com/model/18362-folding-smart-phone-stand",
+      "what": "product page (description, license, files)"
+    },
+    {
+      "url": "https://files.printables.com/media/prints/18362/stls/179983_18984b13-93c3-4fb6-b8d6-0567219a7b11/foldingstand.step",
+      "what": "STEP"
+    }
+  ],
+  "license": "CC-BY-4.0",
+  "overallDimsMm": {
+    "x": 70.1,
+    "y": 65.7,
+    "z": 12.0,
+    "note": "measured per half from STEP: each half 70.1 x 65.7 x 6.0; folded thickness ~12 estimated (two 6mm plates); STEP lays the halves side by side flat (144.2 x 65.8 x 6.0)"
+  },
+  "parts": [
+    {
+      "name": "left half",
+      "qty": 1,
+      "source": "printed",
+      "material": "PLA (any)",
+      "dimsMm": "70.1x65.7x6.0",
+      "notes": "carries 4 hinge knuckles (measured)"
+    },
+    {
+      "name": "right half",
+      "qty": 1,
+      "source": "printed",
+      "material": "PLA (any)",
+      "dimsMm": "70.1x65.7x6.0",
+      "notes": "carries 3 hinge knuckles (measured)"
+    },
+    {
+      "name": "hinge pin",
+      "qty": 1,
+      "source": "bought",
+      "material": "1.75mm filament offcut",
+      "dimsMm": "dia 1.75 x 55",
+      "notes": "author: 55mm piece of 1.75mm filament"
+    }
+  ],
+  "hardware": [
+    {
+      "class": "pin",
+      "size": "1.75mm filament x 55mm",
+      "qty": 1,
+      "notes": "glued at both ends with a very small drop of super glue"
+    }
+  ],
+  "joins": [
+    {
+      "a": "left half",
+      "b": "right half",
+      "method": "pin",
+      "qty": 1,
+      "notes": "7 interleaved knuckles (4+3), each ~8mm long, knuckle OD 6.0mm, bore dia 2.5mm (measured), hinge span ~56mm"
+    },
+    {
+      "a": "hinge pin",
+      "b": "knuckles",
+      "method": "glue",
+      "qty": 2,
+      "notes": "one drop each end, keep glue off the halves"
+    }
+  ],
+  "motion": [
+    {
+      "between": [
+        "left half",
+        "right half"
+      ],
+      "type": "hinge",
+      "travel": "folds flat closed to the open stand angle (stop angle not published)"
+    }
+  ],
+  "assembly": {
+    "steps": 3,
+    "stepsSource": "author's assembly paragraph (close halves, insert filament, glue ends)",
+    "order": [
+      "print both halves flat, no supports",
+      "close halves and insert 55mm 1.75mm filament through knuckles",
+      "glue pin ends"
+    ]
+  },
+  "referenceCad": {
+    "available": true,
+    "url": "https://files.printables.com/media/prints/18362/stls/179983_18984b13-93c3-4fb6-b8d6-0567219a7b11/foldingstand.step",
+    "format": "STEP",
+    "license": "CC-BY-4.0",
+    "partCount": 2,
+    "keyDims": {
+      "bboxMm": "144.2 x 65.8 x 6.0 (measured from STEP, halves side by side)",
+      "halfMm": "70.1 x 65.7 x 6.0 each (measured)",
+      "knuckleOdMm": "6.0 (r=3.0 measured)",
+      "pinBoreMm": "2.5 (r=1.25 measured)",
+      "knuckleLengthMm": "~8 each, 7 total (measured)",
+      "hingeSpanMm": "~56 (measured)"
+    }
+  },
+  "confidence": "high: license, pin length/diameter and glue method from the author; dims, knuckle count and bore measured from STEP. Opening angle and folded thickness estimated.",
+  "notes": "<9g filament, <1h10m print per author. Scaling 1.6x lets 2.85mm filament be the pin at 88mm length. Alternative considered: Printables 129986 (CC-BY, OpenSCAD print-in-place, snap-lock 2 positions, no STEP). Local STEP copy: (local scratch copy)"
+}

@@ -1,0 +1,80 @@
+{
+  "id": "real-round-stool",
+  "facts": "evals/real/ikea-frosta-stool.json",
+  "prompt": "a flat-pack round stool 450mm tall with a 350mm-diameter, 25mm-thick seat and four bent plywood legs, each leg an L shape about 40mm wide and 20mm thick: a short horizontal arm screwed under the seat with three M6 countersunk screws and a long arm that runs down and splays out so the feet span about 420mm",
+  "why": "Real BOM: 1 seat + 4 identical bent legs, 12 countersunk screws, 1 instruction step. The legs are the curved-geometry test.",
+  "expect": {
+    "nodes": {
+      "min": 2,
+      "max": 3
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "globalProblems": 0,
+    "assembly": {
+      "parts": 17,
+      "contacts": 4,
+      "joints": [
+        {
+          "motion": "fixed",
+          "hardware": [
+            "shcs|button|csk"
+          ],
+          "count": 1
+        }
+      ],
+      "bom": [
+        {
+          "family": "shcs|button|csk",
+          "minQty": 12
+        }
+      ],
+      "bbox": {
+        "value": [
+          420,
+          420,
+          450
+        ],
+        "tol": 0.15,
+        "sorted": true
+      }
+    }
+  },
+  "reference": {
+    "partsMade": 5,
+    "hardware": {
+      "countersunk screw ~M6x30": 12
+    },
+    "steps": 1,
+    "order": [
+      "seat upside down",
+      "each leg: 3 screws"
+    ],
+    "cad": null
+  }
+}

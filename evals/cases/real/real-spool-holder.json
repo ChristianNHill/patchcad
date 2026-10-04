@@ -1,0 +1,112 @@
+{
+  "id": "real-spool-holder",
+  "facts": "evals/real/spool-holder-608.json",
+  "prompt": "a self-centring filament spool holder: a 140x32mm printed base plate with a cover plate screwed on by four M5x16 screws and nuts, two side walls carried on four 120x23x7mm gear racks that slide through the base and are linked by three 30mm spur gears on 608 bearings so both walls close in symmetrically from 175mm apart, and four 28mm rollers on 608 bearings (two per wall) that the spool rests on",
+  "why": "MIT/CC-BY, STEP published (15 printed instances). 9x 608, 4 M5 screws + nuts; racks slide, gears and rollers turn.",
+  "expect": {
+    "nodes": {
+      "min": 4,
+      "max": 8
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "globalProblems": 0,
+    "assembly": {
+      "parts": 24,
+      "contacts": 3,
+      "joints": [
+        {
+          "motion": "prismatic",
+          "travel": 60
+        },
+        {
+          "motion": "revolute",
+          "hardware": [
+            "bearing|bearing_flanged"
+          ],
+          "count": 2,
+          "travel": 360
+        }
+      ],
+      "bom": [
+        {
+          "family": "bearing",
+          "key": "608",
+          "minQty": 7
+        },
+        {
+          "family": "shcs|button|csk",
+          "key": "M5",
+          "minQty": 4
+        },
+        {
+          "family": "hex_nut",
+          "key": "M5",
+          "minQty": 4
+        }
+      ],
+      "bbox": {
+        "value": [
+          140,
+          205,
+          42
+        ],
+        "tol": 0.15,
+        "sorted": true
+      }
+    }
+  },
+  "reference": {
+    "partsMade": 15,
+    "hardware": {
+      "608": 9,
+      "M5x16": 4,
+      "M5 nut": 4
+    },
+    "steps": null,
+    "cad": {
+      "license": "MIT",
+      "partCount": 15,
+      "bboxMm": [
+        140,
+        204.7,
+        42
+      ],
+      "rack": [
+        120,
+        22.7,
+        7
+      ],
+      "roller": [
+        28,
+        7
+      ],
+      "gearOd": 30.5
+    }
+  }
+}

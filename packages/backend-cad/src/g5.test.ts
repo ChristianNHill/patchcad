@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { GraphDoc } from "@patchcad/shared";
 import { CadBackend, cadPlanGeometryLint, fitFindings, hardwareAllowances, type ClashResult, type KernelClient } from "./index.js";
@@ -549,5 +550,34 @@ describe("G5 hardware: designed overlap and fit bands", () => {
     const g = (d: number) => graph([bearing, shaft(d)], [["b608", "bore", "axle", "pin"]]);
     expect(fitFindings(g(8))).toEqual([]);
     expect(fitFindings(g(7.7))).toEqual([expect.objectContaining({ kind: "fit", measured: 0.15 })]);
+  });
+});
+
+describe("G5 clash against catalog hardware the host is not mated to", () => {
+  // Real plans from the 2026-10-04 evals, as the kernel reported them. Neither
+  // pair shares an edge, so before this neither host got a repair round and
+  // both ended error_contract.
+  const load = (name: string) => GraphDoc.parse(JSON.parse(readFileSync(new URL(`fixtures/${name}`, import.meta.url), "utf8")));
+
+  it("two-link-arm: sends base a Ø4 hole through the web between its bushing seats", () => {
+    const g = load("g5-two-link-arm.json");
+    expect(g.edges.some((e) => [e.from, e.to].sort().join("|") === "base|shoulder_shaft")).toBe(false);
+    const [f] = clashFindings(g, { parts: 8, pairs_tested: 1, clashes: [{ a: "base#0", b: "shoulder_shaft#0", volume_mm3: 23.31, at: [-0.12, 0, 0] }] }, solvePlan(g).instances);
+    expect(f).toMatchObject({ blame: ["base"], repair: { nodeId: "base" } });
+    expect(f!.message).toContain("it gets a repair round");
+    // The 28mm shaft, Ø4, on the base's z axis through its 10mm plate.
+    expect(f!.repair!.report).toMatch(/shaft is a Ø4\.0 cylinder on its axis from \[0, 0, -?\d+(\.\d+)?\] to \[0, 0, -?\d+(\.\d+)?\]/);
+    const [z0, z1] = [...f!.repair!.report.matchAll(/\[0, 0, (-?[\d.]+)\]/g)].map((m) => Number(m[1]));
+    expect(Math.min(z0!, z1!)).toBeLessThanOrEqual(-5);
+    expect(Math.max(z0!, z1!)).toBeGreaterThanOrEqual(5);
+    expect(f!.repair!.report).toContain("Ø4.6 hole through any web or wall");
+  });
+
+  it("hand-winch: sends crank-hub the drum gear's tip circle", () => {
+    const g = load("g5-hand-winch.json");
+    const [f] = clashFindings(g, { parts: 12, pairs_tested: 1, clashes: [{ a: "gear-drum#0", b: "crank-hub#0", volume_mm3: 1.27, at: [12.63, -12, 43] }] }, solvePlan(g).instances);
+    expect(f).toMatchObject({ blame: ["crank-hub"], repair: { nodeId: "crank-hub" } });
+    // module 1.5 × (45 + 2) teeth: Ø70.5, centred on its face width.
+    expect(f!.repair!.report).toContain("gear is a Ø70.5 cylinder");
   });
 });

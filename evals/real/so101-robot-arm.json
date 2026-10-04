@@ -1,0 +1,322 @@
+{
+  "id": "so101-robot-arm",
+  "name": "SO-101 follower robot arm (TheRobotStudio / Hugging Face LeRobot), 6 STS3215 servos incl. gripper",
+  "category": "open-hardware-mechanism",
+  "sources": [
+    {
+      "url": "https://github.com/TheRobotStudio/SO-ARM100",
+      "what": "repo: BOM (README), STLs, STEP, URDF"
+    },
+    {
+      "url": "https://huggingface.co/docs/lerobot/so101",
+      "what": "assembly instructions"
+    },
+    {
+      "url": "https://github.com/TheRobotStudio/SO-ARM100/blob/main/STEP/SO101/SO101%20Assembly.step",
+      "what": "STEP"
+    },
+    {
+      "url": "https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf",
+      "what": "URDF joint limits"
+    }
+  ],
+  "license": "Apache-2.0",
+  "overallDimsMm": {
+    "x": 110.9,
+    "y": 319.4,
+    "z": 253.4,
+    "note": "bbox of SO101 Assembly.step in its modelled pose (measured); reach changes with pose"
+  },
+  "parts": [
+    {
+      "name": "Base_SO101",
+      "qty": 1,
+      "source": "printed",
+      "material": "PLA+",
+      "dimsMm": "110.9x87.0x72.0",
+      "notes": "measured"
+    },
+    {
+      "name": "Base_motor_holder_SO101",
+      "qty": 1,
+      "source": "printed",
+      "material": "PLA+",
+      "dimsMm": "",
+      "notes": "README common parts"
+    },
+    {
+      "name": "Rotation_Pitch_SO101 (shoulder)",
+      "qty": 1,
+      "source": "printed",
+      "material": "PLA+",
+      "dimsMm": "46.0x60.5x84.3",
+      "notes": "measured"
+    },
+    {
+      "name": "Motor_holder_SO101_Base",
+      "qty": 1,
+      "source": "printed",
+      "material": "PLA+",
+      "dimsMm": "55.1x38.2x28.3",
+      "notes": "measured"
+    },
+    {
+      "name": "Upper_arm_SO101",
+      "qty": 1,
+      "source": "printed",
+      "material": "PLA+",
+      "dimsMm": "142.2x24.5x67.3",
+      "notes": "measured"
+    },
+    {
+      "name": "Under_arm_SO101 (forearm)",
+      "qty": 1,
+      "source": "printed",
+      "material": "PLA+",
+      "dimsMm": "130.7x24.0x64.4",
+      "notes": "measured"
+    },
+    {
+      "name": "Motor_holder_SO101_Wrist",
+      "qty": 1,
+      "source": "printed",
+      "material": "PLA+",
+      "dimsMm": "56.7x28.7x37.5",
+      "notes": "measured"
+    },
+    {
+      "name": "Wrist_Roll_Pitch_SO101",
+      "qty": 1,
+      "source": "printed",
+      "material": "PLA+",
+      "dimsMm": "62.3x35.7x77.8",
+      "notes": "measured"
+    },
+    {
+      "name": "Wrist_Roll_Follower_SO101 (fixed jaw)",
+      "qty": 1,
+      "source": "printed",
+      "material": "PLA+",
+      "dimsMm": "65.2x52.0x105.4",
+      "notes": "measured; follower-specific"
+    },
+    {
+      "name": "Moving_Jaw_SO101",
+      "qty": 1,
+      "source": "printed",
+      "material": "PLA+",
+      "dimsMm": "48.1x23.0x92.1",
+      "notes": "measured; follower-specific"
+    },
+    {
+      "name": "WaveShare_Mounting_Plate_SO101",
+      "qty": 1,
+      "source": "printed",
+      "material": "PLA+",
+      "dimsMm": "",
+      "notes": "README common parts"
+    },
+    {
+      "name": "STS3215 7.4V 1/345 servo",
+      "qty": 6,
+      "source": "bought",
+      "material": "",
+      "dimsMm": "45.2x24.7x37.8",
+      "notes": "measured envelope incl. horn"
+    },
+    {
+      "name": "Waveshare bus servo adapter board",
+      "qty": 1,
+      "source": "bought",
+      "material": "",
+      "dimsMm": "42x33 PCB",
+      "notes": ""
+    },
+    {
+      "name": "5V power supply, USB-C cable, table clamp",
+      "qty": 1,
+      "source": "bought",
+      "material": "",
+      "dimsMm": "",
+      "notes": "README BOM (clamp 2-pack)"
+    }
+  ],
+  "hardware": [
+    {
+      "class": "servo",
+      "size": "Feetech STS3215 7.4V 1/345 (C001)",
+      "qty": 6,
+      "notes": "README follower BOM"
+    },
+    {
+      "class": "screw",
+      "size": "M2x6 self-tapping (guide wording)",
+      "qty": 24,
+      "notes": "guide counts: J1 4+2, J2 4, J3 4, J4 4, J5 2, gripper 2+2; STEP shows 22 #1 + 2 #0 fillister tapping screws"
+    },
+    {
+      "class": "screw",
+      "size": "M3x6 pan head",
+      "qty": 45,
+      "notes": "STEP count; includes 6 horn screws"
+    },
+    {
+      "class": "nut",
+      "size": "M3 hex",
+      "qty": 2,
+      "notes": "STEP"
+    },
+    {
+      "class": "screw",
+      "size": "M2.5x4 + M2.5x6 hex standoffs",
+      "qty": 4,
+      "notes": "on the bus servo adapter (STEP)"
+    },
+    {
+      "class": "other",
+      "size": "servo horn pair",
+      "qty": 6,
+      "notes": "supplied with servos; bottom horn unscrewed except wrist (one horn)"
+    }
+  ],
+  "joins": [
+    {
+      "a": "STS3215 servo",
+      "b": "Base_SO101",
+      "method": "screw",
+      "qty": 4,
+      "notes": "M2x6, 2 top + 2 bottom"
+    },
+    {
+      "a": "Motor_holder_SO101_Base",
+      "b": "Base_SO101",
+      "method": "screw",
+      "qty": 2,
+      "notes": "M2x6 one each side"
+    },
+    {
+      "a": "Rotation_Pitch_SO101 (shoulder)",
+      "b": "STS3215 servo",
+      "method": "screw",
+      "qty": 8,
+      "notes": "M3x6 into horns, 4 top + 4 bottom"
+    },
+    {
+      "a": "Upper_arm_SO101",
+      "b": "STS3215 servo",
+      "method": "screw",
+      "qty": 8,
+      "notes": "4 M3x6 each side to motor 2 horns"
+    },
+    {
+      "a": "Under_arm_SO101 (forearm)",
+      "b": "STS3215 servo",
+      "method": "screw",
+      "qty": 8,
+      "notes": "4 M3x6 each side to motor 3 horns"
+    },
+    {
+      "a": "Wrist_Roll_Pitch_SO101",
+      "b": "STS3215 servo",
+      "method": "screw",
+      "qty": 8,
+      "notes": "wrist to motor 4, 4 M3x6 both sides"
+    },
+    {
+      "a": "Wrist_Roll_Follower_SO101 (fixed jaw)",
+      "b": "STS3215 servo",
+      "method": "screw",
+      "qty": 4,
+      "notes": "to motor 5 horn"
+    },
+    {
+      "a": "Moving_Jaw_SO101",
+      "b": "STS3215 servo",
+      "method": "screw",
+      "qty": 8,
+      "notes": "gripper claw to gripper motor horns, 4 M3x6 both sides"
+    }
+  ],
+  "motion": [
+    {
+      "between": [
+        "Rotation_Pitch_SO101 (shoulder)",
+        "Base_SO101"
+      ],
+      "type": "rotate",
+      "travel": "shoulder_pan -110..110deg (URDF)"
+    },
+    {
+      "between": [
+        "Upper_arm_SO101",
+        "Rotation_Pitch_SO101 (shoulder)"
+      ],
+      "type": "hinge",
+      "travel": "shoulder_lift -100..100deg"
+    },
+    {
+      "between": [
+        "Under_arm_SO101 (forearm)",
+        "Upper_arm_SO101"
+      ],
+      "type": "hinge",
+      "travel": "elbow_flex -96.8..96.8deg"
+    },
+    {
+      "between": [
+        "Wrist_Roll_Pitch_SO101",
+        "Under_arm_SO101 (forearm)"
+      ],
+      "type": "hinge",
+      "travel": "wrist_flex -95..95deg"
+    },
+    {
+      "between": [
+        "Wrist_Roll_Follower_SO101 (fixed jaw)",
+        "Wrist_Roll_Pitch_SO101"
+      ],
+      "type": "rotate",
+      "travel": "wrist_roll -157.2..162.8deg"
+    },
+    {
+      "between": [
+        "Moving_Jaw_SO101",
+        "Wrist_Roll_Follower_SO101 (fixed jaw)"
+      ],
+      "type": "hinge",
+      "travel": "gripper -10..100deg"
+    }
+  ],
+  "assembly": {
+    "steps": 25,
+    "stepsSource": "HF LeRobot SO-101 guide: 6 sections (Joint 1-5, Gripper) with 25 bullet steps for the follower (7+4+3+4+3+4); leader adds 4",
+    "order": [
+      "motor id setup (software)",
+      "joint 1: base motor + base holder + shoulder",
+      "joint 2: shoulder lift motor + upper arm",
+      "joint 3: elbow motor + forearm",
+      "joint 4: wrist motor holder + motor 4",
+      "joint 5: wrist roll motor + wrist",
+      "gripper: fixed jaw, gripper motor, moving jaw",
+      "calibration"
+    ]
+  },
+  "referenceCad": {
+    "available": true,
+    "url": "https://github.com/TheRobotStudio/SO-ARM100/raw/main/STEP/SO101/SO101%20Assembly.step",
+    "format": "STEP",
+    "license": "Apache-2.0",
+    "partCount": 97,
+    "keyDims": {
+      "note": "97 top-level component instances / 266 solids (servo internals and the controller PCB's SMD components inflate solids)",
+      "bboxMm": "110.9 x 319.4 x 253.4 (measured, modelled pose)",
+      "printedPartsInStep": "10 named printed parts + 4 unnamed Component1-4 (measured)",
+      "servoEnvelopeMm": "45.2 x 37.8 x 24.7 (STS3215, measured)",
+      "upperArmMm": "142.2 x 24.5 x 67.3",
+      "forearmMm": "130.7 x 24.0 x 64.4",
+      "baseMm": "110.9 x 87.0 x 72.0"
+    }
+  },
+  "confidence": "high for BOM, servo count, printed part list, joint limits, guide steps and STEP-measured dims; medium for screw totals (guide says M2x6, STEP models imperial #1/#0 tapping screws; M3x6 total from STEP)",
+  "notes": "Small open 5-DOF arm + servo gripper; satisfies the 'gripper or small arm' slot. STS3215 servo gear ratio 1/345 (internal). Leader arm variant uses mixed 1/191 and 1/147 servos and a handle/trigger instead of the moving jaw."
+}

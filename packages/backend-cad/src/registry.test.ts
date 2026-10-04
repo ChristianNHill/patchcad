@@ -152,6 +152,15 @@ describe("resolveHardware", () => {
     expect(resolveHardware(node({ kind: "gear" }))).toContain('flat = p.get("flat", 0)');
   });
 
+  it("clocks a gear's D-flat to its HUB_BORE's xAxis", () => {
+    // hand-winch: pinion_left_hub's xAxis was -x, the flat was cut on +x, and
+    // the probe (circle on the port's -x half) read the press bore as Ø8.28.
+    const hub = (xAxis: number[]) => ({ params: [], payload: { ports: [{ type: "HUB_BORE", pose: { origin: [0, 0, -5], zAxis: [0, 0, -1], xAxis }, params: { diameter: 8, flat: 3 } }] } });
+    expect(resolveHardware(node({ kind: "gear", contract: hub([-1, 0, 0]) as never }))).toContain("hole - Rot(0, 0, 180) * Pos(flat + nominal / 2, 0, 0)");
+    expect(resolveHardware(node({ kind: "gear", contract: hub([0, 1, 0]) as never }))).toContain("Rot(0, 0, 90) * Pos(");
+    expect(resolveHardware(node({ kind: "gear", contract: hub([1, 0, 0]) as never }))).toContain("hole - Pos(flat + nominal / 2, 0, 0)");
+  });
+
   it("builds the threaded rod as one cylinder at its ISO pitch diameter", () => {
     // d - 0.6495·P: M4 (P 0.7) is Ø3.545, M5 (P 0.8) Ø4.48.
     expect(resolveHardware(node({ kind: "threaded_rod", params: { thread: "M4" } }))).toContain("Cylinder(1.7725, L)");

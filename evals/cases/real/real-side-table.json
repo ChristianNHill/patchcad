@@ -1,0 +1,78 @@
+{
+  "id": "real-side-table",
+  "facts": "evals/real/ikea-lack-side-table.json",
+  "prompt": "a flat-pack square side table, 550x550mm top and 450mm tall overall: a 50mm-thick top panel and four 50x50x400mm square legs, each leg spun onto a double-ended M6 dowel screw (hanger bolt) threaded into a pilot hole near each corner of the top's underside",
+  "why": "The simplest real flat-pack: 1 top + 4 legs, 4 double-ended screws, 1 instruction step. A real product's overall size and its four leg-to-top joints, nothing else.",
+  "expect": {
+    "nodes": {
+      "min": 2,
+      "max": 3
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "globalProblems": 0,
+    "assembly": {
+      "parts": 9,
+      "contacts": 4,
+      "joints": [
+        {
+          "motion": "fixed",
+          "count": 4
+        }
+      ],
+      "bom": [
+        {
+          "family": "threaded_rod|shcs|dowel",
+          "minQty": 4
+        }
+      ],
+      "bbox": {
+        "value": [
+          550,
+          550,
+          450
+        ],
+        "tol": 0.15,
+        "sorted": true
+      }
+    }
+  },
+  "reference": {
+    "partsMade": 5,
+    "hardware": {
+      "double-ended screw": 4
+    },
+    "steps": 1,
+    "order": [
+      "top upside down",
+      "4 screws",
+      "legs spun on"
+    ],
+    "cad": null
+  }
+}

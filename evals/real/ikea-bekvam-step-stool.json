@@ -1,0 +1,58 @@
+{
+  "id": "ikea-bekvam-step-stool",
+  "name": "IKEA BEKVAM step stool, 50 cm (two-step)",
+  "category": "flatpack-furniture",
+  "sources": [
+    { "url": "https://www.ikea.com/om/en/p/bekvaem-step-stool-white-40178888/", "what": "product page (article 401.788.88; W 43 x D 39 x H 50 cm, max load 100 kg)" },
+    { "url": "https://www.ikea.com/om/en/assembly_instructions/bekvaem-step-stool-white__AA-323406-9-100.pdf", "what": "assembly instructions (AA-323406-9, 8 pages, 7 numbered steps)" },
+    { "url": "https://www.ikea.com/us/en/assembly_instructions/bekvaem-step-stool-rubberwood__AA-2559719-3-100.pdf", "what": "assembly instructions for the rubberwood edition (not read; listed for reference)" },
+    { "url": "https://3dwarehouse.sketchup.com/model/uc0c6b60d-3ada-4e4f-8099-01a42c068dd5/IKEA-Bekvam", "what": "community SketchUp model (visual, license per 3D Warehouse terms)" }
+  ],
+  "license": "proprietary (facts only)",
+  "overallDimsMm": { "x": 430, "y": 390, "z": 500, "note": "x=width (seat length, along the rails), y=depth (along the side frames, step side to back), z=height; from the product page" },
+  "parts": [
+    { "name": "side frame", "qty": 2, "source": "made", "material": "solid wood (beech/birch/rubberwood by edition), white edition lacquered", "dimsMm": "~390 wide at the floor x ~500 high, legs ~30x40 section", "notes": "Each side frame arrives as a pre-joined A-shape: two splayed legs plus a cross piece; the front leg is shorter (carries the step). Shape from the instructions; section sizes estimated." },
+    { "name": "rail", "qty": 4, "source": "made", "material": "solid wood", "dimsMm": "~370x~40x~25", "notes": "Span between the side frames. Two lower rails (one carries a warning label and supports the step), two upper rails under the seat. Upper rails have a vertical through-hole for the seat bolts. Length estimated from 430 overall width minus frame thickness." },
+    { "name": "step", "qty": 1, "source": "made", "material": "solid wood", "dimsMm": "~400x~150x~18", "notes": "Board with a notch at each end; 2 dowels in its end grain locate it in the side frames. Size estimated." },
+    { "name": "seat", "qty": 1, "source": "made", "material": "solid wood, edge-glued", "dimsMm": "430x~330x~18", "notes": "Top board with a hand-hold slot; bolted from below through the upper rails. Width from product page, depth/thickness estimated." }
+  ],
+  "hardware": [
+    { "class": "screw", "size": "connector screw with large flat hex-socket head, coarse wood thread (IKEA 100044407 / 100086), approx 6x60 mm (estimated)", "qty": 8, "notes": "Joins rails to side frames end-on: 2 in step 1, 2 in step 2, 4 in step 5. Instructions show the head must sit flush." },
+    { "class": "bolt", "size": "machine screw with flat hex-socket head (IKEA 105111), approx M6x40 (estimated)", "qty": 3, "notes": "Fixes the seat from below through the upper rails (step 6); seat presumably has pre-fitted threaded inserts (not stated)." },
+    { "class": "dowel", "size": "fluted wood dowel (IKEA 101350), approx 8x30 mm (estimated)", "qty": 2, "notes": "Pushed into the step's two ends (step 3)." },
+    { "class": "other", "size": "allen key (IKEA 100092)", "qty": 1, "notes": "Tool, included." },
+    { "class": "other", "size": "allen-key handle/holder (IKEA 121030)", "qty": 1, "notes": "Plastic T-handle the key slots into; tool, included." }
+  ],
+  "joins": [
+    { "a": "rail", "b": "side frame", "method": "screw", "qty": 8, "notes": "Each of the 4 rails is screwed end-on into both side frames with one connector screw per end." },
+    { "a": "step", "b": "side frame", "method": "dowel", "qty": 2, "notes": "Step slides onto the lower rail; its end dowels engage holes in each side frame, captured when the second frame is screwed on (no screws through the step)." },
+    { "a": "seat", "b": "rail", "method": "screw", "qty": 3, "notes": "3 machine screws up through the upper rails into the seat underside." }
+  ],
+  "motion": [
+    { "between": ["seat", "side frame"], "type": "fixed", "travel": "none" },
+    { "between": ["step", "side frame"], "type": "fixed", "travel": "none" }
+  ],
+  "assembly": {
+    "steps": 7,
+    "stepsSource": "official instructions AA-323406-9, numbered steps 1-7 on pages 3-7 (page 2 = parts list and tool panel)",
+    "order": [
+      "1: two lower rails into the first side frame (2 connector screws), with orientation check of the labelled rail",
+      "2: two upper rails into the same frame (2 connector screws)",
+      "3: 2 dowels into the step ends",
+      "4: slide the step onto the lower rails",
+      "5: second side frame onto all four rails (4 connector screws), capturing the step",
+      "6: turn over, bolt the seat on from below (3 machine screws)",
+      "7: stand upright, press down to check it sits level on all four feet"
+    ]
+  },
+  "referenceCad": {
+    "available": false,
+    "url": "https://3dwarehouse.sketchup.com/model/uc0c6b60d-3ada-4e4f-8099-01a42c068dd5/IKEA-Bekvam",
+    "format": "SketchUp (visual mesh, not engineering CAD; not opened)",
+    "license": "3D Warehouse general model license (not verified)",
+    "partCount": null,
+    "keyDims": {}
+  },
+  "confidence": "high for overall dims (430x390x500), max load 100 kg, hardware classes and counts (8x 100044407/100086, 3x 105111, 2x 101350 dowels, key 100092 + holder 121030) and the 7-step order - all read from the IKEA page and the instructions' parts list and step drawings. low for every component dimension and screw thread size (estimated from drawings and overall dims).",
+  "notes": "Good small test of a frame: 2 pre-joined side frames + 4 rails + 2 boards, 13 hardware pieces, one captured (dowel-only) part. Side frames splay outward toward the floor."
+}

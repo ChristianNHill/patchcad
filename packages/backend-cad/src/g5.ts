@@ -361,18 +361,40 @@ function hostOf(graph: GraphDoc, a: string, b: string): { host: string; hw: stri
 
 const fmt = (v: number[]) => `[${v.join(", ")}]`;
 
+/** Kinds whose registry body is centred on z = 0 along z; the rest sit on
+ *  z = 0 with the body +z (SEAT_POSE). */
+const CENTRED_HARDWARE = new Set(["gear", "dowel", "dowel_screw", "oring"]);
+
+/** A catalog part as the solid a host must clear: the cylinder its catalog
+ *  dims (a gear: its tip circle) sweep along its own z, from where its frame
+ *  convention starts it. Null when the row carries no Ø or length. */
+function hardwareCylinder(graph: GraphDoc, n: NodeRecord): { d: number; z0: number; z1: number } | null {
+  const d =
+    n.kind === "gear"
+      ? hwDim(n, "module") * (hwDim(n, "teeth") + 2)
+      : Math.max(...["od", "d", "flangeD", "headD"].map((k) => hwDim(n, k)).filter(Number.isFinite));
+  const len = [num(graph, param(n, "length")), ...["thickness", "width", "height", "length"].map((k) => hwDim(n, k))].find((v) => Number.isFinite(v) && v > 0);
+  if (!Number.isFinite(d) || d <= 0 || len === undefined) return null;
+  return CENTRED_HARDWARE.has(n.kind) ? { d, z0: -len / 2, z1: len / 2 } : { d, z0: 0, z1: len };
+}
+
 /**
- * Whose CODE a clash between two MATED parts is: when the shared material
- * lies inside one part's envelope and outside the other's, the other part's
- * material has left its own claim and entered its partner's (a hinge leaf's
- * plate running into the other leaf's knuckle). That part can be repaired
- * against its partner's envelope, which is contract data, so the repair stays
- * hermetic. Inside both or neither, the poses are what disagree. Against
- * catalog hardware it is always the host: the hardware cannot change.
+ * Whose CODE a clash is. Against catalog hardware it is always the host's,
+ * mated or not: the hardware cannot change, and a shaft run through a base's
+ * web between its two bushing seats has no edge to the base at all
+ * (two-link-arm: base error_contract with no repair round, twice). The hint
+ * carries the hardware's own cylinder in the host's frame, from its catalog
+ * dims, because its contract envelope is only rough.
+ *
+ * Between two MATED parts, when the shared material lies inside one part's
+ * envelope and outside the other's, the other part's material has left its
+ * own claim and entered its partner's (a hinge leaf's plate running into the
+ * other leaf's knuckle). That part can be repaired against its partner's
+ * envelope, which is contract data, so the repair stays hermetic. Inside both
+ * or neither, the poses are what disagree.
  */
 function clashRepair(graph: GraphDoc, instances: Record<string, Mat4[]>, c: { a: string; b: string; at: number[]; volume_mm3: number }) {
   const [a, b] = [nodeOf(c.a), nodeOf(c.b)];
-  if (!graph.edges.some((e) => (e.from === a && e.to === b) || (e.from === b && e.to === a))) return undefined;
   const worldOf = (key: string) => instances[nodeOf(key)]?.[Number(key.split("#")[1] ?? 0)];
   const [wa, wb] = [worldOf(c.a), worldOf(c.b)];
   if (!wa || !wb) return undefined;
@@ -380,14 +402,23 @@ function clashRepair(graph: GraphDoc, instances: Record<string, Mat4[]>, c: { a:
   const localTo = (w: Mat4) => (q: readonly number[]) => transformPoint(invertRigid(w), q).map((v) => Math.round(v * 100) / 100);
   const pair = hostOf(graph, a, b);
   if (pair) {
-    const kind = graph.nodes[pair.hw]!.kind;
+    const hw = graph.nodes[pair.hw]!;
+    const [wHost, wHw] = pair.host === a ? [wa, wb] : [wb, wa];
+    const local = localTo(wHost);
+    const cyl = hardwareCylinder(graph, hw);
+    const toHost = (z: number) => local(transformPoint(wHw, [0, 0, z]));
+    const solid = cyl
+      ? ` The ${hw.kind} is a Ø${cyl.d.toFixed(1)} cylinder on its axis from ${fmt(toHost(cyl.z0))} to ${fmt(toHost(cyl.z1))} (this part's frame). ` +
+        `Keep ≥${RELIEF_MM}mm clear of it wherever it passes this part: a Ø${(cyl.d + 2 * RELIEF_MM).toFixed(1)} hole through any web or wall it runs through, or this part's material kept outside that Ø where it sits beside it.`
+      : "";
     return {
       nodeId: pair.host,
       report:
-        `G5 clash with ${pair.hw}: ${c.volume_mm3.toFixed(1)} mm³ of this part sits inside the catalog ${kind} ${pair.hw} near ${fmt(localTo(pair.host === a ? wa : wb)(p))} (this part's frame). ` +
+        `G5 clash with ${pair.hw}: ${c.volume_mm3.toFixed(1)} mm³ of this part sits inside the catalog ${hw.kind} ${pair.hw} near ${fmt(local(p))} (this part's frame).${solid} ` +
         `${pair.hw} is exact and never changes, so this part makes room for it: cut the seat, bore or pocket it sits in to its full diameter and depth, and keep every port where it is.`,
     };
   }
+  if (!graph.edges.some((e) => (e.from === a && e.to === b) || (e.from === b && e.to === a))) return undefined;
   const holding = (id: string, w: Mat4) => posedEnvelope(graph, id, w).find((o) => contains(o, p));
   const [inA, inB] = [holding(a, wa), holding(b, wb)];
   if (!inA === !inB) return undefined;

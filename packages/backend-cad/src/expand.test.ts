@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { GraphDoc } from "@patchcad/shared";
 import { architectOutputToGraph, reexpandGraph, type ArchitectOutput } from "@patchcad/engine";
 import { CadBackend, type CadContractPayload } from "./index.js";
-import { cadJointRuleLint, expandJoints, graphMates, jointAxes, jointErrors, staleJoints } from "./expand.js";
+import { cadJointRuleLint, expandJoints, graphMates, jointAxes, jointErrors, jointInput, staleJoints } from "./expand.js";
 import { reachableTravel } from "./plan-geometry.js";
 import { solveAssembly } from "./assembly.js";
 import { boundDependents, resolvePose } from "./bindings.js";
@@ -204,7 +204,8 @@ describe("a spinning rotor", () => {
     expect(param(out, "j1_bearing_a", "sku")).toBe("BRG-625");
     expect(param(out, "j1_shaft", "sku")).toBe("DSHAFT-5");
     expect(param(out, "j1_shaft", "length")).toBe(34); // 2 collars of 6 + housing 14 + hub 8
-    expect(ports(out, "base")).toEqual(["rotor_face:FLAT_FACE", "j1_seat_a:BEARING_SEAT", "j1_seat_b:BEARING_SEAT"]);
+    // the web between the two seats gets the shaft's slip bore (two-link-arm's 23mm³)
+    expect(ports(out, "base")).toEqual(["rotor_face:FLAT_FACE", "j1_seat_a:BEARING_SEAT", "j1_seat_b:BEARING_SEAT", "j1_shaft_bore:BORE"]);
     expect(ports(out, "rotor")).toEqual(["base_face:FLAT_FACE", "j1_hub:HUB_BORE"]);
     expect(param(out, "base", "j1_seat_od")).toBe(16);
     expect(param(out, "rotor", "j1_flat")).toBe(2);
@@ -277,6 +278,9 @@ describe("every recipe expands to a plan the CAD lints accept", () => {
     ["MG996R direct drive, two holes per tab", { motion: "revolute", driven: true, speedClass: "low", torqueClass: "medium" }, 4, 6],
     ["STS3215 direct drive, standing on a's face", { motion: "revolute", driven: true, speedClass: "low", torqueClass: "high" }, 4, 6],
     ["NEMA 14 direct drive as stated", { motion: "revolute", driven: true, prefer: { family: "nema14" } }, 6, 10],
+    ["a dowel through a thin b", { intent: "alignment", prefer: { family: "dowel", key: "5" } }, 20, 6],
+    ["threaded-rod stud as stated", { intent: "serviceable", prefer: { family: "threaded_rod", key: "M6" } }, 40, 40],
+    ["wood: dowel screw as stated", { prefer: { family: "dowel_screw", key: "6" } }, 50, 60],
     ["wood: glued furniture dowels", { intent: "alignment" }, 18, 40],
     ["wood: confirmat", { intent: "permanent" }, 16, 60],
     ["wood: cam lock and dowels", { lateral: 18 }, 18, 60],
@@ -505,18 +509,46 @@ describe("drives", () => {
     expect(lintAll(out)).toEqual([]);
     expect(out.edges.some((e) => e.from === "base" && e.to === "lid")).toBe(false);
     const at = solved(out);
-    expect(at("j1_coupler")).toEqual([[0, 0, 11]]);
-    expect(at("j1_lead_screw")).toEqual([[0, 0, 23.5]]);
-    expect(at("lid")).toEqual([[0, 0, 40.5]]); // 30.5 over the face: coupler, the nut's flange, 1mm
-    expect(at("j1_lead_nut")).toEqual([[0, 0, 40.5]]);
+    // a 10mm base: the shaft tip 14 up, so the coupler sits 2 off the face
+    expect(at("j1_coupler")).toEqual([[0, 0, 12]]);
+    expect(at("j1_lead_screw")).toEqual([[0, 0, 24.5]]);
+    expect(at("lid")).toEqual([[0, 0, 41.5]]); // 31.5 over the face: gap 2, coupler, the nut's flange, 1mm
+    expect(at("j1_lead_nut")).toEqual([[0, 0, 41.5]]);
     expect(at("j1_rod")).toEqual([[20, 0, 1.2]]);
-    expect(at("j1_linear_bearing")).toEqual([[20, 0, 40.5]]);
-    expect(param(out, "j1_rod", "length")).toBe(169.3); // socket 8.8 + 30.5 + stroke 100 + b 30
+    expect(at("j1_linear_bearing")).toEqual([[20, 0, 41.5]]);
+    expect(param(out, "j1_rod", "length")).toBe(170.3); // socket 8.8 + 31.5 + stroke 100 + b 30
     const { scene } = new CadBackend().solveScene(graphOf(out));
     expect(scene.joints).toEqual([expect.objectContaining({
       type: "prismatic", direction: [0, 0, 1], limits: [0, 100], moving: ["lid", "j1_lead_nut", "j1_linear_bearing"],
       coupled: [{ origin: [0, 0, 10], direction: [0, 0, 1], ratio: 45, moving: ["j1_coupler", "j1_lead_screw"] }],
     })]);
+  });
+
+  it("a lead screw whose b another slide places only puts its nut on the screw's line (asm-lead-screw-lift)", () => {
+    // The architect's plan: PL (guided, so no rod of its own) and a P1 guide
+    // rod, both on the platform. P1 placed it 1mm off the base; the nut wanted
+    // it at PL's 30.5 rest height: "lift_lead_nut spans 29.50mm more …".
+    const plan = JSON.parse(readFileSync(new URL("./fixtures/asm-lead-screw-lift-draft.json", import.meta.url), "utf8")) as ArchitectOutput;
+    const g = graphOf(expandJoints(plan));
+    const nodes = Object.values(g.nodes).map((n) => ({ id: n.id, ports: Object.fromEntries((n.contract.payload as CadContractPayload).ports.map((p) => [p.name, resolvePose(g, p.pose)])) }));
+    expect(solveAssembly(nodes, graphMates(g), "base").problems).toEqual([]);
+  });
+
+  it("a lead screw lifting an 8mm platform: the LM8UU sits in a boss under it (asm-lead-screw-lift)", () => {
+    const out = driven({ motion: "prismatic", driven: true, strokeMm: 120 }, 8, 8);
+    expect(lintAll(out)).toEqual([]);
+    const seat = (out.nodes[1]!.contract.payload as CadContractPayload).ports.find((p) => p.name === "j1_lm_seat")!;
+    expect(seat.pose.origin).toEqual([expect.any(Number), 0, -17.2]); // the boss face, 17.2 below the platform toward a
+  });
+
+  it("a lead screw from a 3mm end plate: the guide rod's socket stands in a boss on the plate", () => {
+    const out = driven({ motion: "prismatic", driven: true, strokeMm: 100 }, 3, 30);
+    expect(lintAll(out)).toEqual([]);
+    const rod = (out.nodes[0]!.contract.payload as CadContractPayload).ports.find((p) => p.name === "j1_rod")!;
+    expect(rod.params).toMatchObject({ depth: "(param(base.thickness)) + 5" }); // 3 + 5 = 8
+    const at = solved(out);
+    expect(at("j1_rod")).toEqual([[20, 0, 1.2]]); // boss top 9.2, socket 8
+    expect(param(out, "j1_rod", "length")).toBe(170.3); // the shaft tip 21 up lifts the coupler to 9
   });
 
   it("a belt carriage: rail screwed down at every hole, motor and idler past its ends, b slotted over the belt", () => {
@@ -936,6 +968,58 @@ function twoHinges(lidR: [number, number, number]) {
   return { ...plates({}), nodes: [box, lid] as never, entryNodeId: "box", joints: [joint("hinge-left", "l"), joint("hinge-right", "r")] } as ArchitectOutput;
 }
 
+describe("a shaft whose length is an expression", () => {
+  it("gets an envelope as long as the shaft, not a 2mm stub (two-link-arm)", () => {
+    const out = expandJoints(plates({ motion: "revolute", wallA: 14, wallB: 8 }, 8, 14));
+    const shaft = out.nodes.find((n) => n.id === "j1_shaft")!;
+    const length = shaft.contract.params.find((p) => p.name === "length")!.default as number;
+    const [vol] = (shaft.contract.payload as CadContractPayload).envelope.volumes as { h?: number }[];
+    expect(length).toBeGreaterThan(10);
+    expect(vol!.h).toBeGreaterThanOrEqual(length);
+  });
+});
+
+describe("travel: a magnitude, the direction is expansion's", () => {
+  const limitsOf = (travel?: number) => {
+    const plan = twoHinges([63, 0, 0]);
+    for (const j of plan.joints!) Object.assign(j, travel ? { travel } : {});
+    return expandJoints(plan).joints!.map((j) => (j as { limits?: number[] }).limits);
+  };
+  it("turns the way the parts allow, from rest", () => {
+    const [lo, hi] = limitsOf()[0] as [number, number];
+    expect(limitsOf(10)[0]).toEqual(hi >= 10 ? [0, 10] : [-10, 0]);
+    // more than the open side reaches, but the other side does: that side
+    const far = Math.max(hi, -lo!);
+    const near = Math.min(hi!, -lo!);
+    if (far > near) expect(limitsOf(Math.floor(far))[0]).toEqual(hi >= -lo! ? [0, Math.floor(far)] : [-Math.floor(far), 0]);
+  });
+  it("keeps explicit limits, and the lint states the frame and offers travel", () => {
+    const plan = twoHinges([63, 0, 0]);
+    for (const j of plan.joints!) Object.assign(j, { limits: [-300, 300] });
+    const problems = lintAll(expandJoints(plan));
+    expect(problems.find((p) => p.includes("states limits [-300, 300]"))).toMatch(/degrees about a\.port's \+z .* right-handed, 0 being the pose the mates place.*travel: <degrees>/);
+  });
+});
+
+describe("derived travel is clamped to the travel the brief states", () => {
+  // asm-hinged-box: derived [-35, 145]°, the lid hit the box at 145°; the brief asks 0 to 110.
+  const sweep = (limits: [number, number], goal: string, derived = true) => {
+    const g = graphOf(expandJoints(twoHinges([63, 0, 0])));
+    for (const j of g.joints) Object.assign(j, { limits, limitsSource: derived ? "derived" : undefined });
+    g.brief = { ...g.brief, goal };
+    return jointAxes(g)[0]!.limits;
+  };
+  it("sweeps the stated span from rest, toward the side that reaches it", () => {
+    expect(sweep([-35, 145], "a lid that opens from 0 to 110 degrees")).toEqual([0, 110]);
+    expect(sweep([-145, 35], "a lid that opens from 0 to 110 degrees")).toEqual([-110, 0]);
+  });
+  it("leaves stated limits, a brief with no travel, and a reach short of it alone", () => {
+    expect(sweep([-35, 145], "a lid that opens from 0 to 110 degrees", false)).toEqual([-35, 145]);
+    expect(sweep([-35, 145], "a lid on a hinge")).toEqual([-35, 145]);
+    expect(sweep([-35, 90], "a lid that opens from 0 to 110 degrees")).toEqual([-35, 90]);
+  });
+});
+
 describe("a second joint on an axis already solved constrains only the axis", () => {
   it("leaves each hinge's place along the line free", () => {
     // 63 between the lid's knuckles against 60 on the box: 3mm along the axis.
@@ -947,6 +1031,68 @@ describe("a second joint on an axis already solved constrains only the axis", ()
   it("names the joints and the offset when the lines disagree", () => {
     const { problems } = solved(expandJoints(twoHinges([60, 2.1, 0])));
     expect(problems).toEqual([expect.stringMatching(/^hinge-right axis is 2\.10mm off hinge-left's axis/)]);
+  });
+});
+
+describe("real-product leftovers", () => {
+  it("a part's min_wall assertion is the wall its joints leave (asm-hinged-box)", () => {
+    const out = plates({ motion: "revolute", wallA: 24, wallB: 16, shaftHint: 3 }, 16, 24);
+    const box = out.nodes[0]!.contract.payload as CadContractPayload;
+    box.assertions = [{ kind: "min_wall", mm: 2.4 }];
+    (out.nodes[1]!.contract.payload as CadContractPayload).process.minWall = 1.6;
+    const inp = jointInput(graphOf(out), out.joints![0] as never);
+    expect(inp).toMatchObject({ minWallA: 2.4, minWall: 1.6 });
+  });
+
+  it("a lead screw whose moving body rides wheels of its own mints no guide rod (real-linear-actuator)", () => {
+    const slide = (wheels: boolean) => {
+      const out = plates({ motion: "prismatic", driven: true, strokeMm: 100 }, 30, 10);
+      out.nodes.push(part("wheel", 10, [face("hub", 0)]) as never);
+      (out.nodes[1]!.contract.payload as CadContractPayload).ports.push(face("axle", 30) as never);
+      if (wheels) out.joints!.push({ id: "w1", a: { node: "lid", port: "axle" }, b: { node: "wheel", port: "hub" }, intent: "serviceable", motion: "revolute", duty: "continuous", load: "light", access: "both_sides", wallA: 10, wallB: 10 } as never);
+      return out;
+    };
+    expect(jointInput(graphOf(slide(true)), slide(true).joints![0] as never)).toMatchObject({ guided: true });
+    // Wheels on a spacer fixed under the moving body still guide it.
+    const spaced = slide(false);
+    spaced.nodes.push(part("spacer", 10, [face("top", 10), face("axle", 0)]) as never);
+    spaced.joints!.push({ id: "f1", a: { node: "lid", port: "axle" }, b: { node: "spacer", port: "top" }, intent: "permanent", load: "light", access: "both_sides", wallA: 10, wallB: 10 } as never);
+    spaced.joints!.push({ id: "w1", a: { node: "spacer", port: "axle" }, b: { node: "wheel", port: "hub" }, intent: "serviceable", motion: "revolute", duty: "continuous", load: "light", access: "both_sides", wallA: 10, wallB: 10 } as never);
+    expect(jointInput(graphOf(spaced), spaced.joints![0] as never)).toMatchObject({ guided: true });
+    expect(jointInput(graphOf(slide(false)), slide(false).joints![0] as never)).toMatchObject({ guided: false });
+    const ids = (out: ArchitectOutput) => out.nodes.map((n) => n.id);
+    expect(ids(expandJoints(slide(true)))).not.toContain("j1_rod");
+    expect(ids(expandJoints(slide(true)))).toContain("j1_lead_nut");
+    expect(ids(expandJoints(slide(false)))).toEqual(expect.arrayContaining(["j1_rod", "j1_linear_bearing"]));
+  });
+
+  /** A tilt cradle between a yoke's two arms on x, one stated F623 a side. */
+  const yoke = () => {
+    const at = (name: string, x: number, dir: 1 | -1) => ({ name, type: "FLAT_FACE" as const, pose: { origin: [x, 0, 0], zAxis: [dir, 0, 0] as [number, number, number], xAxis: [0, 1, 0] as [number, number, number] }, params: { size: 12 } });
+    const box = (o: number[], dims: number[]) => ({ kind: "box" as const, pose: { origin: o, zAxis: [0, 0, 1], xAxis: [1, 0, 0] }, dims });
+    const frame = part("yoke", 10, [at("arm_l", -40, 1), at("arm_r", 40, -1)], { envelope: { volumes: [box([-45, 0, 0], [10, 30, 30]), box([45, 0, 0], [10, 30, 30]), box([0, 0, -19], [100, 30, 10])], clearance: 0.4 } as never });
+    const cradle = part("cradle", 8, [at("end_l", -38.5, -1), at("end_r", 38.5, 1)], { envelope: { volumes: [box([0, 0, 0], [77, 16, 16])], clearance: 0.4 } as never });
+    const joint = (s: "l" | "r") => ({
+      id: `tilt-${s}`, a: { node: "yoke", port: `arm_${s}` }, b: { node: "cradle", port: `end_${s}` },
+      intent: "serviceable", motion: "revolute", load: "light", wallA: 10, wallB: 8, prefer: { family: "bearing_flanged", key: "F623" },
+    });
+    return expandJoints({ ...plates({}), nodes: [frame, cradle] as never, entryNodeId: "yoke", joints: [joint("l"), joint("r")] } as ArchitectOutput);
+  };
+
+  it("seats one flanged bearing in each arm and hangs the cradle between them (real-pan-tilt-head)", () => {
+    const out = yoke();
+    expect(out.joints!.map((j) => (j as { expanded?: string }).expanded)).toEqual([
+      "M1f|bearing=bearing_flanged:F623|shaft=d_shaft:3|spacer=washer:M3",
+      "M1f|bearing=bearing_flanged:F623|shaft=d_shaft:3|spacer=washer:M3",
+    ]);
+    expect(ports(out, "yoke")).toEqual(expect.arrayContaining(["tilt_l_seat_a:BEARING_SEAT", "tilt_r_seat_a:BEARING_SEAT"]));
+    const { instances, problems } = solved(out);
+    expect(problems).toEqual([]);
+    // Flange on the arm's face (x = ±40), the washer on it, the cradle on the washer.
+    expect(instances["tilt-l_bearing"]!.map(at3)).toEqual([[-40, 0, 0]]);
+    expect(instances["tilt-l_spacer"]!.map(at3)).toEqual([[-39, 0, 0]]);
+    expect(instances["cradle"]!.map(at3)).toEqual([[0, 0, 0]]);
+    expect(lintAll(out)).toEqual([]);
   });
 });
 
@@ -1037,11 +1183,15 @@ describe("a drum on its shaft between two plates", () => {
 
 describe("a wheel on its own bearings, on an axle fixed in a thin plate", () => {
   // real-linear-actuator: 24mm V-wheels on two 625s each, a 3mm gantry plate.
-  const gantry = (wheels: 1 | 4) => {
+  const gantry = (wheels: 1 | 4, rail = false) => {
     const at = (name: string, x: number, y: number) => ({ name, type: "FLAT_FACE" as const, pose: { origin: [x, y, 0], zAxis: [0, 0, -1] as [number, number, number], xAxis: [1, 0, 0] }, params: { size: 12 } });
     const spots = [[-40, -30], [40, -30], [-40, 30], [40, 30]].slice(0, wheels);
     const plate = part("plate", 3, spots.map(([x, y], k) => at(`wheel_${k}`, x!, y!)), {
-      envelope: { volumes: [{ kind: "box", pose: { origin: [0, 0, 1.5], zAxis: [0, 0, 1], xAxis: [1, 0, 0] }, dims: [127, 88, 3] }], clearance: 0.4 } as never,
+      envelope: { volumes: [
+        { kind: "box", pose: { origin: [0, 0, 1.5], zAxis: [0, 0, 1], xAxis: [1, 0, 0] }, dims: [127, 88, 3] },
+        // a rail between the wheel rows, 1mm off each rim
+        ...(rail ? [{ kind: "box", pose: { origin: [0, 0, -6], zAxis: [0, 0, 1], xAxis: [1, 0, 0] }, dims: [127, 34, 12.5] }] : []),
+      ], clearance: 0.4 } as never,
     });
     const wheel = part("v-wheel", 12, [face("hub_face", 0, 12, [0, 0, 1])], {
       envelope: { volumes: [{ kind: "cylinder", pose: { origin: [0, 0, -6], zAxis: [0, 0, 1], xAxis: [1, 0, 0] }, d: 24, h: 12 }], clearance: 0.4 } as never,
@@ -1057,6 +1207,8 @@ describe("a wheel on its own bearings, on an axle fixed in a thin plate", () => 
     expect(out.joints![0]!.expanded).toMatch(/^M1h\|.*hub_bearing_a=bearing:625/);
     expect(ports(out, "v-wheel")).toEqual(expect.arrayContaining(["wheel_0_seat_a:BEARING_SEAT", "wheel_0_seat_b:BEARING_SEAT"]));
     expect(ports(out, "plate")).toContain("wheel_0_axle:HUB_BORE");
+    // The axle places the wheel through its face port: an edge needs it required (real-linear-actuator's plan declared it provided).
+    expect(out.nodes.find((n) => n.id === "v-wheel")!.contract.requires.map((p) => p.key)).toContain("hub_face");
     const { problems, instances } = solved(out);
     expect(problems).toEqual([]);
     // the wheel's face 1mm past the plate's underside
@@ -1071,5 +1223,12 @@ describe("a wheel on its own bearings, on an axle fixed in a thin plate", () => 
     const { problems, instances } = solved(gantry(4));
     expect(problems).toEqual([]);
     expect(instances["v-wheel"]).toHaveLength(4);
+  });
+
+  it("turns each copy of the wheel a full circle about its own axle, not about the first one's", () => {
+    // real-linear-actuator: the other three copies swept about wheel-0's axle into the plate.
+    const g = graphOf(gantry(4, true));
+    for (const def of jointAxes(g)) expect(reachableTravel(g, def)).toEqual([-180, 180]);
+    expect(lintAll(gantry(4, true)).filter((p) => p.includes("continuous"))).toEqual([]);
   });
 });

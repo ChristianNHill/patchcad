@@ -1,0 +1,87 @@
+{
+  "id": "real-drawer-organiser",
+  "facts": "evals/real/drawer-desk-organiser.json",
+  "prompt": "a 3D-printed desk drawer unit: a 146x203x102mm case open at the front holding two stacked drawers, each 130x195x48mm with a handle, sliding in and out on the case's internal runners, and an 8mm top plate located on the case by 5mm dowel pins",
+  "why": "CC-BY-NC-4.0, STEP published: case + top plate + 2 drawers (+ handles, face inserts, 10 printed 5x10 pins). Two prismatic drawer joints.",
+  "expect": {
+    "nodes": {
+      "min": 3,
+      "max": 6
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "globalProblems": 0,
+    "assembly": {
+      "parts": 6,
+      "contacts": 2,
+      "joints": [
+        {
+          "motion": "prismatic",
+          "count": 2,
+          "travel": 150
+        }
+      ],
+      "bom": [
+        {
+          "family": "dowel",
+          "minQty": 2
+        }
+      ],
+      "bbox": {
+        "value": [
+          146,
+          203,
+          110
+        ],
+        "tol": 0.15,
+        "sorted": true
+      }
+    }
+  },
+  "reference": {
+    "partsMade": 8,
+    "hardware": {
+      "dowel pin 5x10 (printed)": 10
+    },
+    "steps": null,
+    "cad": {
+      "license": "CC-BY-NC-4.0",
+      "partCount": 5,
+      "caseMm": [
+        146.05,
+        203.2,
+        109.6
+      ],
+      "drawerMm": [
+        129.65,
+        194.8,
+        48
+      ]
+    }
+  }
+}

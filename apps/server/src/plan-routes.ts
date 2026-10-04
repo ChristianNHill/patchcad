@@ -82,6 +82,8 @@ export function registerPlanRoutes(app: FastifyInstance, s: Session): void {
         rationale: result.rationale,
         usage: result.usage,
         repaired: result.repaired,
+        // The coverage critic's leftovers: an LLM judgement, so shown, never blocking.
+        warnings: result.critic?.warnings ?? [],
       };
     } catch (err) {
       s.recordUnbilled(spend, "plan failed");

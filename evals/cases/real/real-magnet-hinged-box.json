@@ -1,0 +1,83 @@
+{
+  "id": "real-magnet-hinged-box",
+  "facts": "evals/real/magnet-hinged-box.json",
+  "prompt": "a 3D-printed accessory box 150x112mm and 56mm tall closed: a 28mm-deep base and a 28mm-deep lid joined along one long edge by two pinned knuckle hinges (6.4mm knuckles), held shut by eight 4x2mm disc magnets, four in the base front and four in the lid front",
+  "why": "CC-BY-4.0, STEP published: base + lid, 2 hinges, 8 magnets, 2 steps. Revolute lid plus a magnet catch from the registry.",
+  "expect": {
+    "nodes": {
+      "min": 2,
+      "max": 4
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "globalProblems": 0,
+    "assembly": {
+      "parts": 12,
+      "contacts": 1,
+      "joints": [
+        {
+          "motion": "revolute",
+          "travel": 110
+        }
+      ],
+      "bom": [
+        {
+          "family": "disc_magnet",
+          "qty": 8
+        }
+      ],
+      "bbox": {
+        "value": [
+          150,
+          112,
+          56
+        ],
+        "tol": 0.15,
+        "sorted": true
+      }
+    }
+  },
+  "reference": {
+    "partsMade": 2,
+    "hardware": {
+      "disc magnet 4x2": 8
+    },
+    "steps": 2,
+    "cad": {
+      "license": "CC-BY-4.0",
+      "partCount": 2,
+      "halfMm": [
+        150,
+        112,
+        28.2
+      ],
+      "knuckleDia": 6.4,
+      "hinges": 2
+    }
+  }
+}

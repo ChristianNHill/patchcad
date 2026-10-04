@@ -11,7 +11,7 @@ export * from "./plan-geometry.js";
 export * from "./mesh-source.js";
 export { CHEAT_SHEET, normalizeCadCode } from "./prompts.js";
 export { useLearnedPitfalls } from "./pitfalls.js";
-export { fixFrameFlips } from "./frame-flip.js";
+export { autoFixPlan, fixFrameFlips, fixSpans } from "./frame-flip.js";
 export * from "./sourcing.js";
 export * from "./dfm.js";
 export * from "./bom.js";
@@ -19,9 +19,11 @@ export * from "./joints.js";
 export * from "./expand.js";
 export * from "./segment-joints.js";
 export * from "./instructions.js";
+export * from "./plan-summary.js";
 import type {
   CheckAdvisory,
   CheckFinding,
+  ArchitectOutput,
   CheckResult,
   LlmImage,
   DomainBackend,
@@ -250,14 +252,18 @@ import { FASTENING_HARDWARE, REGISTRY_HARDWARE, REGISTRY_SOLIDS, resolveDetermin
 import { CadJoint } from "./joints.js";
 import { CATALOG, skuFor } from "./catalog.js";
 import { cadJointRuleLint, expandJoints, gearMeshJoints, graphMates, isJointHardware, jointAxes } from "./expand.js";
+import { gearHubName, mintDefaultGearPorts, mintNamedGearPorts } from "./gear-ports.js";
 import { kinematicJoints, poseToMat, solveAssembly, type AssemblyNode } from "./assembly.js";
 import { resolveBinding, resolveDim, resolvePose } from "./bindings.js";
 import { DIAMETER_KEYS, clashFindings, contactQueries, fitFindings, hardwareAllowances, threadAllowances } from "./g5.js";
 import { cadPlanGeometryLint } from "./plan-geometry.js";
 import { silhouetteAdvisories } from "./silhouette.js";
 import { geometrySourceGuidance, isMeshNode, meshNodeCode, meshSourceLint, prepareMeshNode, type MeshSource } from "./mesh-source.js";
-import { Sourcing, cadSourcingLint, markCncSetups } from "./sourcing.js";
-import { fixFrameFlips } from "./frame-flip.js";
+import { Sourcing, cadSourcingLint, markCncSetups, sourcingOf } from "./sourcing.js";
+import { summarizeCadPlan } from "./plan-summary.js";
+import { assemblyInstructions } from "./instructions.js";
+import { assemblyFindings, assemblyPlanDefects, cadAssemblyPlanLint } from "./feasibility.js";
+import { autoFixPlan } from "./frame-flip.js";
 import { G4C_SCORE, kernelProcess } from "./dfm.js";
 import { unverifiedCandidate } from "./bom.js";
 import { WORKED_PLAN, WORKED_PLAN_GOAL } from "./worked-plan.js";
@@ -706,7 +712,7 @@ export const cadMateConnectivityLint = {
     // extruder's pinion and main gear were dropped from the plan instead.
     const gearHelp = (id: string) =>
       graph.nodes[id]!.kind === "gear"
-        ? ` A gear is positioned by the shaft or hub it turns on, never by the gear it meshes with: give ${id} a HUB_BORE port and an edge from that shaft (a pinion on a motor: the motor's shaft → ${id}'s HUB_BORE), or make it a revolute joint's b. Keep it in the plan; the mesh with its partner follows from the centre distance.`
+        ? ` A gear is positioned by the shaft or hub it turns on, never by the gear it meshes with: add an edge from that shaft to ${id}.${gearHubName(graph.nodes[id]!) ?? "bore"} (its HUB_BORE; a pinion on a motor: the motor's shaft → ${id}.${gearHubName(graph.nodes[id]!) ?? "bore"}), or make ${id}.face a revolute joint's b. Keep it in the plan; the mesh with its partner follows from the centre distance.`
         : "";
     return ids
       .filter((id) => !seen.has(id))
@@ -1258,12 +1264,18 @@ function cadPlanning(meshAvailable: boolean) {
       { kind: "nut", description: "Registry hex nut (never LLM-generated).", guidance: "Use when a screw is captured by a nut rather than threading into a boss or insert. One param: thread." },
       { kind: "insert", description: "Registry heat-set threaded insert (never LLM-generated).", guidance: "Use for screws threading into printed plastic — the durable choice over tapping the plastic directly. One param: thread." },
       { kind: "threaded_rod", description: "Registry threaded rod / stud, real ISO profile (never LLM-generated).", guidance: "Use for a stud captured by nuts at both ends. Params: thread and length." },
-      { kind: "gear", description: "Registry involute spur gear (never LLM-generated).", guidance: "Params: module, teeth, pressure_angle, thickness, bore. Mesh distance between two gears is module * (teeth_a + teeth_b) / 2." },
+      { kind: "gear", description: "Registry involute spur gear (never LLM-generated).", guidance: "Params: module, teeth, pressure_angle, thickness, bore. Mesh distance between two gears is module * (teeth_a + teeth_b) / 2. Declare no ports: it gets `bore` (HUB_BORE) and `face` (FLAT_FACE) on its -z face; wire a shaft to `bore` or name `face` as a joint's b." },
       ...catalogKinds(),
     ],
     jointSchema: CadJoint,
-    expandPlan: (...args: Parameters<typeof expandJoints>) => markCncSetups(expandJoints(...args)),
-    autoFix: fixFrameFlips,
+    expandPlan: (out: ArchitectOutput, live?: Parameters<typeof expandJoints>[1]) =>
+      markCncSetups(mintDefaultGearPorts(expandJoints(mintNamedGearPorts(out), live))),
+    autoFix: autoFixPlan,
+    critic: {
+      summarize: summarizeCadPlan,
+      repairHint:
+        "Add a part the brief names as its own node, mated into the assembly. Add a motion or a piece of hardware the brief names (an axle, pin, bearing, gear pair, spring, screw) as a JOINT between the two parts it connects, with the motion it has and `prefer` naming that hardware, so plan expansion mints it. A joint whose hardware will not fit is fixed, never dropped.",
+    },
     paramUnit: "mm",
     payloadSchema: CadContractPayload as z.ZodType<CadContractPayload>,
     graphLints: [
@@ -1279,6 +1291,7 @@ function cadPlanning(meshAvailable: boolean) {
       cadHardwareSeatLint,
       cadMateConnectivityLint,
       cadPlanGeometryLint,
+      cadAssemblyPlanLint,
       meshSourceLint(meshAvailable),
       cadSourcingLint,
       cadJointRuleLint,
@@ -1453,6 +1466,12 @@ function cadPlanning(meshAvailable: boolean) {
       "  strokeMm (prismatic), shaftHint/threadHint (mm / M3..M8), allowPrinted",
       "  (a printed pin pivot), lateral (room for a side nut trap), hubFit press",
       "  (b pressed onto the shaft: a wheel onto its axle; default slip).",
+      "  A printed pin can only take a b that slides onto it; b between a's",
+      "  knuckles (an interleaved hinge) gets a separate pin, filament stock for",
+      "  shaftHint 1.75. printInPlace: true (revolute, both FDM) when a and b print",
+      "  as ONE piece, the pin captive: a print-in-place hinge, a fidget, or a",
+      "  brief that says it prints assembled. Nothing is inserted, so never with",
+      "  hardware, and never for parts that must come apart.",
       "  STATED HARDWARE IS BINDING. When the brief names hardware (type, size,",
       "  quantity), put it in `prefer` and its size in the hint too: \"two 4mm",
       "  dowels\" = prefer {family: dowel, key: \"4\"}, shaftHint 4, count 2; \"M5",
@@ -1462,12 +1481,12 @@ function cadPlanning(meshAvailable: boolean) {
       "  {family: shaft, key: \"3\"} (any Ø3 shaft or pin); also hex_nut, heatset_std,",
       "  bushing, lm_uu, spur_gear, mgn_rail. Only rules that use it are tried;",
       "  if it cannot fit, the lint names what it needs. Never drop it.",
-      "  limits (revolute): degrees about a.port's +z, right-handed; travel 0 is",
-      "  the pose the mates place (open flat, above). When the brief states a",
-      "  travel (\"opens 0 to 110°\", \"swings at least 120°\"), write limits that",
-      "  cover it in that frame: a lid modelled open flat behind its box is",
-      "  closed at 180, so \"opens 0 to 110°\" is [70, 180] (or [-180, -70] when",
-      "  -z turns it over the box; the travel lint names the clear side).",
+      "  travel (revolute): when the brief states one (\"opens 0 to 110°\", \"swings",
+      "  at least 120°\"), place b at the pose the travel starts from (a lid CLOSED",
+      "  on its box) and write travel: 110. Expansion turns it whichever way the",
+      "  parts allow and writes the limits; never work out a direction by hand.",
+      "  limits only when the direction matters beyond that: degrees about",
+      "  a.port's +z, right-handed, 0 = the pose the mates place.",
       "  One part placed several times (four identical wheels) is one node whose",
       "  joints all name the SAME b.port; joints on opposite faces of a on one",
       "  axis line share one axle. Never two joints on one a.port + b.port pair:",
@@ -1521,6 +1540,11 @@ function cadPlanning(meshAvailable: boolean) {
       "have a reason), thickness, bore (0 for none). The gear is centered on the",
       "origin. Two meshing gears sit module * (teeth_a + teeth_b) / 2 apart; put",
       "that distance in the parts that carry their shafts, via expressions.",
+      "Leave a gear's ports empty: every gear gets `bore` (HUB_BORE, Ø = bore)",
+      "and `face` (FLAT_FACE), both on its -z face, normal -z. Position it by",
+      "what it turns on: an edge from a shaft or spigot to <gear>.bore, or a",
+      "revolute joint whose b is <gear>.face (the joint cuts the hub). Any other",
+      "port name an edge or joint gives a gear is minted there too.",
       "",
       "Layout-first: choose each part's envelope primitives, then assign ports at",
       "the mating faces, and size hole/boss diameters from the fastener registry",
@@ -2068,6 +2092,24 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
           `clash check did not run: ${(err as Error).message}. Parts may overlap without this reporting it — the gate is skipped, not passed.`,
         );
       }
+    }
+    // Plan defects no sweep can see (a gear hanging off its shaft's end is
+    // unsupported, not blocked): the contract's, so the part is blocked for T3.
+    // Both are blocked: the fix is the part's own seat or mate, read against the other.
+    for (const d of assemblyPlanDefects(graph)) {
+      findings.push({ nodeA: d.node, nodeB: d.other, kind: "assembly", measured: 1, expected: 0, message: `Assembly: ${d.message}` });
+    }
+    // Feasibility: can each part actually get to its pose? The sequencer's
+    // insertion sweeps (instructions.ts) after G5, no pages drawn.
+    const made = posed.filter((p) => sourcingOf(graph.nodes[p.key.split("#")[0]!]!).class !== "buy");
+    if (made.length >= 2) {
+      const { sequence } = await assemblyInstructions(graph, { instances, joints }, this.kernel, { importDir: this.importDir(ws), render: false });
+      const skipped = sequence.sequenceProblems.find((s) => s.startsWith("insertion check did not run"));
+      if (skipped) {
+        incomplete = true;
+        problems.push(skipped);
+      }
+      findings.push(...assemblyFindings(graph, sequence, instances));
     }
     problems.push(...findings.map((f) => f.message));
     const ok = problems.length === 0;

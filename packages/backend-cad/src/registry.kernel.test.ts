@@ -92,4 +92,47 @@ describe.skipIf(!live)("catalog parts build in the kernel", () => {
     }
     expect(failures).toEqual([]);
   }, 60_000);
+
+  it("passes G3 on a joint-minted gear hub: slip and press, round and D, either clocking", async () => {
+    // hand-winch: pinion_left_hub posed zAxis -z, xAxis -x, D-flat 3 on +x of
+    // the gear measured Ø8.28 against a 7.90..8.00 press band.
+    const failures: string[] = [];
+    const jobs = [15, 45, 60].flatMap((teeth) =>
+      (["slip", "press"] as const).flatMap((fit) =>
+        [0, 3].flatMap((flat) =>
+          [
+            { zAxis: [0, 0, -1], xAxis: [-1, 0, 0], z: -5 },
+            { zAxis: [0, 0, 1], xAxis: [1, 0, 0], z: 5 },
+            { zAxis: [0, 0, 1], xAxis: [0, 1, 0], z: 5 },
+          ].map((f) => ({ teeth, fit, flat, ...f })),
+        ),
+      ),
+    );
+    for (let i = 0; i < jobs.length; i += 6) {
+      await Promise.all(
+        jobs.slice(i, i + 6).map(async (j) => {
+          const port = {
+            type: "HUB_BORE",
+            pose: { origin: [0, 0, j.z], zAxis: j.zAxis, xAxis: j.xAxis },
+            params: { diameter: "param(g.j_shaft_d)", fit: j.fit, depth: 10, ...(j.flat ? { flat: "param(g.j_flat)" } : {}) },
+          };
+          const node = { id: "g", kind: "gear", params: {}, contract: { params: [], payload: { ports: [{ name: "hub", ...port }] } } } as unknown as NodeRecord;
+          const params = { module: 1.5, teeth: j.teeth, pressure_angle: 20, thickness: 10, bore: 8, j_shaft_d: 8, j_flat: 3 };
+          const res = await fetch(`${base}/execute`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              code: resolveHardware(node)!,
+              params,
+              ports: [{ key: "hub", ...port, params: { ...port.params, diameter: 8, ...(j.flat ? { flat: 3 } : {}) } }],
+              solids: 1,
+            }),
+          });
+          const body = (await res.json()) as { ok: boolean; stage?: string; error?: string };
+          if (!body.ok) failures.push(`z${j.teeth} ${j.fit} flat${j.flat} x${j.xAxis.join(",")}: ${body.stage} ${body.error}`);
+        }),
+      );
+    }
+    expect(failures).toEqual([]);
+  }, 300_000);
 });

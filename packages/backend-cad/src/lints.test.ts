@@ -566,7 +566,7 @@ describe("cadMateConnectivityLint", () => {
     (doc.nodes as Record<string, { kind: string }>).pinion!.kind = "gear";
     const [problem] = cadMateConnectivityLint.run(doc);
     expect(problem).toMatch(/pinion: no chain of edges/);
-    expect(problem).toMatch(/never by the gear it meshes with: give pinion a HUB_BORE port/);
+    expect(problem).toMatch(/never by the gear it meshes with: add an edge from that shaft to pinion.bore/);
     expect(problem).toMatch(/Keep it in the plan/);
   });
 });

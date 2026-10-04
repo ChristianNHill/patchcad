@@ -1,0 +1,53 @@
+{
+  "id": "ikea-knagglig-box",
+  "name": "IKEA KNAGGLIG box, pine, 46x31x25 cm",
+  "category": "flatpack-furniture",
+  "sources": [
+    { "url": "https://www.ikea.com/gb/en/p/knagglig-box-pine-70292359/", "what": "product page (article 702.923.59; W 46 x D 31 x H 25 cm; package 47x29x6 cm, 2.25 kg)" },
+    { "url": "https://www.ikea.com/gb/en/assembly_instructions/knagglig-box-pine__AA-1159337-8-100.pdf", "what": "assembly instructions (AA-1159337-8, 8 pages, 8 numbered steps)" }
+  ],
+  "license": "proprietary (facts only)",
+  "overallDimsMm": { "x": 460, "y": 310, "z": 250, "note": "x=width (long side), y=depth, z=height; from the product page" },
+  "parts": [
+    { "name": "long side panel", "qty": 2, "source": "made", "material": "solid pine slats on two vertical battens (pre-assembled)", "dimsMm": "460x250x~30 incl. battens", "notes": "Three horizontal slats nailed/stapled to an upright batten at each end. Slat count from drawings; thickness estimated." },
+    { "name": "bottom panel", "qty": 1, "source": "made", "material": "solid pine slats on two cross battens (pre-assembled)", "dimsMm": "~400x~250x~25", "notes": "Slatted floor; its battens' ends sit inside the long sides and take the long screws. Size estimated from overall dims." },
+    { "name": "end board", "qty": 4, "source": "made", "material": "solid pine", "dimsMm": "~310x~70x~12", "notes": "Two plain boards per end, screwed across the ends of the side-panel battens. Size estimated." },
+    { "name": "handle board", "qty": 2, "source": "made", "material": "solid pine", "dimsMm": "~310x~70x~12 with a central hand-hold cut-out", "notes": "Top board at each end with the hand-hold notch. Size estimated." }
+  ],
+  "hardware": [
+    { "class": "screw", "size": "long pan-head Phillips wood screw (IKEA 108363), approx 4x50 mm (estimated)", "qty": 4, "notes": "Join the bottom panel to the long sides (2 per side: steps 2 and 4). Hand screwdriver only - instructions show no power drill." },
+    { "class": "screw", "size": "short countersunk Phillips wood screw (IKEA 108560), approx 3.5x25 mm (estimated)", "qty": 24, "notes": "Fix the end and handle boards: 8 + 4 per end (steps 5-8), 2 per board end." }
+  ],
+  "joins": [
+    { "a": "bottom panel", "b": "long side panel", "method": "screw", "qty": 4, "notes": "Bottom slides into the side panel, then 2 long screws per side through the side batten into the bottom batten end." },
+    { "a": "end board", "b": "long side panel", "method": "screw", "qty": 16, "notes": "Each plain end board bridges both side panels' battens: 2 screws at each end of the board (4 boards x 4 screws)." },
+    { "a": "handle board", "b": "long side panel", "method": "screw", "qty": 8, "notes": "2 screws at each end of each handle board (2 boards x 4 screws)." }
+  ],
+  "motion": [
+    { "between": ["bottom panel", "long side panel"], "type": "fixed", "travel": "none" }
+  ],
+  "assembly": {
+    "steps": 8,
+    "stepsSource": "official instructions AA-1159337-8, numbered steps 1-8 on pages 3-8 (page 2 = tools and parts list: 4x 108363, 24x 108560, Phillips screwdriver)",
+    "order": [
+      "1: slide bottom panel into first long side",
+      "2: 2 long screws",
+      "3: second long side onto the bottom",
+      "4: 2 long screws",
+      "5: two plain end boards on the first end (8 short screws)",
+      "6: handle board on the first end (4 short screws), turn box over",
+      "7: two plain end boards on the second end (8 short screws)",
+      "8: handle board on the second end (4 short screws)"
+    ]
+  },
+  "referenceCad": {
+    "available": false,
+    "url": null,
+    "format": null,
+    "license": null,
+    "partCount": null,
+    "keyDims": {}
+  },
+  "confidence": "high for overall dims (460x310x250), part count (2 sides + 1 bottom + 4 end boards + 2 handle boards = 9), hardware counts (4x 108363, 24x 108560) and the 8-step order - read from the IKEA page and instruction drawings; the screw totals reconcile with the per-step callouts (2+2 long, 8+4+8+4 short). low for individual board sizes and screw sizes (estimated).",
+  "notes": "Chosen over the LACK wall shelf (30x26x5 cm, AA-200208-15), which is one pre-made part plus 2 hidden keyhole brackets and 2 not-included wall screws in 2 steps - too little assembly to test joints. KNAGGLIG has 9 parts, 28 screws of 2 sizes and a repeated end sub-assembly."
+}

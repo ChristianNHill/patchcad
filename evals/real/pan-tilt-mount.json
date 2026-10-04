@@ -1,0 +1,338 @@
+{
+  "id": "pan-tilt-mount",
+  "name": "isaac879 stepper-driven 3D-printed pan-tilt camera mount (head of the '3-Axis Slider')",
+  "category": "open-hardware-mechanism",
+  "sources": [
+    {
+      "url": "https://github.com/isaac879/Pan-Tilt-Mount",
+      "what": "repo (MIT): README, parts list PDF, per-part STEP + assembly STEP, firmware"
+    },
+    {
+      "url": "https://github.com/isaac879/Pan-Tilt-Mount/blob/TMC2208-Drivers/3-Axis%20Slider%20Parts%20List.pdf",
+      "what": "BOM"
+    },
+    {
+      "url": "https://github.com/isaac879/Pan-Tilt-Mount/blob/TMC2208-Drivers/3-Axis%20Slider%20CAD%20STEP%20Exports/3-axis%20slider%20Assembly.stp",
+      "what": "STEP"
+    },
+    {
+      "url": "https://www.thingiverse.com/thing:4547074",
+      "what": "STL/STEP mirror"
+    },
+    {
+      "url": "https://youtu.be/1FfB7cLkUyQ",
+      "what": "project video (no written assembly guide)"
+    }
+  ],
+  "license": "MIT",
+  "overallDimsMm": {
+    "x": 182.3,
+    "y": 202.7,
+    "z": 190.3,
+    "note": "pan-tilt head only (74 solids, slider subassembly excluded), measured from assembly STEP; full 3-axis slider incl. 500mm 2040 rail = 539.2 x 202.7 x 243.9"
+  },
+  "parts": [
+    {
+      "name": "144 tooth herringbone gear base mount",
+      "qty": 1,
+      "source": "printed",
+      "material": "PLA (not stated)",
+      "dimsMm": "152.1x152.1x24.5",
+      "notes": "fixed pan ring gear + base; measured"
+    },
+    {
+      "name": "pan mount",
+      "qty": 1,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "182.3x181.4x18.8",
+      "notes": "rotating pan platform; measured"
+    },
+    {
+      "name": "pan mount bearing clamp",
+      "qty": 1,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "132x132x8.9",
+      "notes": "measured"
+    },
+    {
+      "name": "base mount bearing clip ring",
+      "qty": 1,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "152x152x2",
+      "notes": "measured"
+    },
+    {
+      "name": "tilt U-mount",
+      "qty": 1,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "71.7x141.6x66.1",
+      "notes": "camera cradle; measured"
+    },
+    {
+      "name": "gear side support",
+      "qty": 1,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "58.5x29x116",
+      "notes": "measured"
+    },
+    {
+      "name": "idle side support",
+      "qty": 1,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "58.5x29x116",
+      "notes": "measured"
+    },
+    {
+      "name": "gear side bearing mount / idle side bearing mount",
+      "qty": 2,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "",
+      "notes": "in BOM, not separate in assembly STEP"
+    },
+    {
+      "name": "hall effect stepper mount",
+      "qty": 1,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "42.1x4.7x42",
+      "notes": "measured"
+    },
+    {
+      "name": "17 tooth herringbone gear (pan pinion)",
+      "qty": 1,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "19.5x19.5x18",
+      "notes": "measured ('Flexi' variant in STEP)"
+    },
+    {
+      "name": "21 tooth herringbone gear (tilt pinion)",
+      "qty": 1,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "~19.8 OD x 19.7",
+      "notes": "measured"
+    },
+    {
+      "name": "64 tooth herringbone gear (tilt)",
+      "qty": 1,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "57.5 OD x 13",
+      "notes": "measured"
+    },
+    {
+      "name": "NEMA17 42x42x23mm stepper",
+      "qty": 2,
+      "source": "bought",
+      "material": "",
+      "dimsMm": "42x42x23",
+      "notes": "pan + tilt"
+    },
+    {
+      "name": "thin-section ball bearing 127x146.05x12.7 (INA CSXU050-2RS) or printable bearing + 28x 6mm BBs",
+      "qty": 1,
+      "source": "bought",
+      "material": "",
+      "dimsMm": "146 OD x 12.8 (measured)",
+      "notes": "pan bearing"
+    },
+    {
+      "name": "control PCB + Arduino Nano + TMC2208 drivers",
+      "qty": 1,
+      "source": "bought",
+      "material": "",
+      "dimsMm": "",
+      "notes": "electronics omitted from hardware below"
+    }
+  ],
+  "hardware": [
+    {
+      "class": "motor",
+      "size": "NEMA17 42x42x23mm stepper",
+      "qty": 2,
+      "notes": "head; the slider adds a 42x42x40mm"
+    },
+    {
+      "class": "bearing",
+      "size": "127x146.05x12.7 thin-section (INA CSXU050-2RS)",
+      "qty": 1,
+      "notes": "pan axis"
+    },
+    {
+      "class": "bearing",
+      "size": "F623ZZ 3x10x4 flanged",
+      "qty": 2,
+      "notes": "head (BOM total 6 incl. slider idlers; STEP shows 2 in head)"
+    },
+    {
+      "class": "magnet",
+      "size": "6.4x1.7mm / 3.2x1.7mm neodymium",
+      "qty": 6,
+      "notes": "BOM 2 + 4, for hall homing (whole 3-axis build)"
+    },
+    {
+      "class": "screw",
+      "size": "M3 button head 12mm",
+      "qty": 14,
+      "notes": "head counts from STEP; BOM (whole build): 40mm x4, 20mm x3, 16mm x10, 12mm x14, 8mm x5, 6mm x5, 3.5mm x1"
+    },
+    {
+      "class": "screw",
+      "size": "M3 button head 16mm",
+      "qty": 10,
+      "notes": "STEP head"
+    },
+    {
+      "class": "screw",
+      "size": "M3 button head 6mm",
+      "qty": 5,
+      "notes": "STEP head"
+    },
+    {
+      "class": "screw",
+      "size": "M3 button head 8mm / 20mm / 3.5mm",
+      "qty": 3,
+      "notes": "1 each in STEP head"
+    },
+    {
+      "class": "nut",
+      "size": "M3 hex (nyloc in BOM)",
+      "qty": 14,
+      "notes": "STEP head; BOM 16 total"
+    },
+    {
+      "class": "nut",
+      "size": "M3 square",
+      "qty": 10,
+      "notes": ""
+    },
+    {
+      "class": "screw",
+      "size": "2mm x 6mm self-tapping",
+      "qty": 2,
+      "notes": "BOM 3"
+    },
+    {
+      "class": "screw",
+      "size": "1/4in camera mounting bolt",
+      "qty": 1,
+      "notes": ""
+    }
+  ],
+  "joins": [
+    {
+      "a": "pan mount",
+      "b": "thin-section ball bearing 127x146.05x12.7 (INA CSXU050-2RS) or printable bearing + 28x 6mm BBs",
+      "method": "bearing",
+      "qty": 1,
+      "notes": "clamped by pan mount bearing clamp; outer race in base mount retained by clip ring (inferred from names)"
+    },
+    {
+      "a": "pan mount bearing clamp",
+      "b": "pan mount",
+      "method": "screw",
+      "qty": 0,
+      "notes": "M3 bolts + nuts; count not stated"
+    },
+    {
+      "a": "NEMA17 42x42x23mm stepper",
+      "b": "pan mount",
+      "method": "screw",
+      "qty": 4,
+      "notes": "pan motor rides on pan mount, 17T pinion meshes fixed 144T base gear"
+    },
+    {
+      "a": "gear side support",
+      "b": "pan mount",
+      "method": "screw",
+      "qty": 0,
+      "notes": "count not stated"
+    },
+    {
+      "a": "idle side support",
+      "b": "pan mount",
+      "method": "screw",
+      "qty": 0,
+      "notes": ""
+    },
+    {
+      "a": "tilt U-mount",
+      "b": "gear side support",
+      "method": "bearing",
+      "qty": 1,
+      "notes": "pivot on F623ZZ; 64T gear on U-mount driven by 21T on tilt motor"
+    },
+    {
+      "a": "tilt U-mount",
+      "b": "idle side support",
+      "method": "bearing",
+      "qty": 1,
+      "notes": "F623ZZ"
+    },
+    {
+      "a": "17 tooth herringbone gear (pan pinion)",
+      "b": "NEMA17 42x42x23mm stepper",
+      "method": "press_fit",
+      "qty": 1,
+      "notes": "on 5mm shaft (method not stated)"
+    }
+  ],
+  "motion": [
+    {
+      "between": [
+        "pan mount",
+        "144 tooth herringbone gear base mount"
+      ],
+      "type": "rotate",
+      "travel": "360deg+ (range not stated; hall-effect homing); ratio 144:17 = 8.47:1, 0.0133deg/microstep"
+    },
+    {
+      "between": [
+        "tilt U-mount",
+        "gear side support"
+      ],
+      "type": "hinge",
+      "travel": "range not stated; ratio 64:21 = 3.05:1, 0.0369deg/microstep"
+    }
+  ],
+  "assembly": {
+    "steps": 0,
+    "stepsSource": "no written guide; assembly shown only in the YouTube video",
+    "order": [
+      "base mount + pan bearing + clip ring",
+      "pan mount + bearing clamp",
+      "pan motor + 17T pinion",
+      "gear/idle side supports with F623ZZ bearings",
+      "tilt U-mount with 64T gear",
+      "tilt motor + 21T pinion",
+      "hall sensors/magnets, PCB, wiring"
+    ]
+  },
+  "referenceCad": {
+    "available": true,
+    "url": "https://github.com/isaac879/Pan-Tilt-Mount/raw/TMC2208-Drivers/3-Axis%20Slider%20CAD%20STEP%20Exports/3-axis%20slider%20Assembly.stp",
+    "format": "STEP",
+    "license": "MIT",
+    "partCount": 111,
+    "keyDims": {
+      "note": "111 solids / 33 distinct labels for full 3-axis slider; pan-tilt head = 74 solids",
+      "headBboxMm": "182.3 x 202.7 x 190.3 (measured)",
+      "fullBboxMm": "539.2 x 202.7 x 243.9 (measured)",
+      "panBearingMm": "146.0 OD x 12.8 (measured)",
+      "baseGear144TMm": "152.1 OD x 24.5",
+      "tiltGear64TMm": "57.5 OD x 13",
+      "pinion17TMm": "19.5 OD x 18",
+      "panMountMm": "182.3 x 181.4 x 18.8"
+    }
+  },
+  "confidence": "high for BOM (PDF verbatim), gear ratios (README), STEP part names/counts/dims; medium for joins (inferred from part names and STEP layout); travel ranges not published",
+  "notes": "Chose a stepper pan-tilt (bearing + herringbone gears) over a servo one because it ships an assembly STEP and full BOM. Hardware qtys above are head-only from STEP unless marked BOM."
+}

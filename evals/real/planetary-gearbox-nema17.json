@@ -1,0 +1,232 @@
+{
+  "id": "planetary-gearbox-nema17",
+  "name": "Modular 3D-printed planetary gearbox for NEMA17 (RomanHujer 'Modular planetary gearbox 1024:1'), stackable 4:1 stages",
+  "category": "open-hardware-mechanism",
+  "sources": [
+    {
+      "url": "https://github.com/romanhujer/Modular-gearbox",
+      "what": "repo (FreeCAD source planetary_gear_v1.FCStd + STLs, AGPL-3.0)"
+    },
+    {
+      "url": "https://www.thingiverse.com/thing:2586962",
+      "what": "product page with hardware list (Thingiverse license field: GPL-3.0)"
+    },
+    {
+      "url": "https://youtu.be/6pDPNkWU2vo",
+      "what": "author's demo video (not reviewed)"
+    }
+  ],
+  "license": "AGPL-3.0 (GitHub repo) / GPL-3.0 (Thingiverse listing)",
+  "overallDimsMm": {
+    "x": 41,
+    "y": 41,
+    "z": 0,
+    "note": "41x41 square housing measured from FCStd body shapes; height depends on stage count (one body I = 19mm, each body II stage = 10.5mm); z not stated for a full 1024:1 stack, so left 0"
+  },
+  "parts": [
+    {
+      "name": "body I (motor-side housing with 27T ring)",
+      "qty": 1,
+      "source": "printed",
+      "material": "PLA/PETG (not stated)",
+      "dimsMm": "41x41x19",
+      "notes": "measured from FCStd shape 'Tělo I'; bolts to NEMA17 face"
+    },
+    {
+      "name": "body II (stage housing with 27T ring)",
+      "qty": 1,
+      "source": "printed",
+      "material": "not stated",
+      "dimsMm": "41x41x10.5",
+      "notes": "one per additional 4:1 stage (stacked); measured 'teloII'"
+    },
+    {
+      "name": "sun gear I (motor pinion, 9T m1.2)",
+      "qty": 1,
+      "source": "printed",
+      "material": "not stated",
+      "dimsMm": "24x24x12.3",
+      "notes": "fits 5mm NEMA17 shaft; measured 'SUN I Final'"
+    },
+    {
+      "name": "planet gear 9T m1.2",
+      "qty": 3,
+      "source": "printed",
+      "material": "not stated",
+      "dimsMm": "12.9x13.1x5",
+      "notes": "3 per stage; FCGear params teeth=9, module=1.2, PA 20deg"
+    },
+    {
+      "name": "carrier with integrated next-stage sun",
+      "qty": 1,
+      "source": "printed",
+      "material": "not stated",
+      "dimsMm": "31x31x10.3",
+      "notes": "'Unasec + Sun' = carrier (unášeč) fused with 9T sun of next stage; one per stage"
+    },
+    {
+      "name": "carrier lower plate",
+      "qty": 1,
+      "source": "printed",
+      "material": "not stated",
+      "dimsMm": "31x31x8.5",
+      "notes": "'Unasec spodek final'; carrier halves joined with M2 screws"
+    },
+    {
+      "name": "top/output gear",
+      "qty": 1,
+      "source": "printed",
+      "material": "not stated",
+      "dimsMm": "not measured",
+      "notes": "STL top_gear_v1; FCStd also contains a helical 10T/29T m1.3 pair (output stage, unconfirmed)"
+    },
+    {
+      "name": "support",
+      "qty": 1,
+      "source": "printed",
+      "material": "not stated",
+      "dimsMm": "not measured",
+      "notes": "STL support_v1"
+    },
+    {
+      "name": "NEMA17 stepper motor",
+      "qty": 1,
+      "source": "bought",
+      "material": "",
+      "dimsMm": "42.3x42.3",
+      "notes": ""
+    }
+  ],
+  "hardware": [
+    {
+      "class": "motor",
+      "size": "NEMA17 stepper",
+      "qty": 1,
+      "notes": "Thingiverse list"
+    },
+    {
+      "class": "screw",
+      "size": "2x6mm self-tapping",
+      "qty": 15,
+      "notes": "Thingiverse list; FCStd models M2x4/M2x6 ISO2009 screws on the carriers"
+    },
+    {
+      "class": "rod",
+      "size": "M3x80 threaded rod",
+      "qty": 4,
+      "notes": "tie-rods through the stacked housings into the NEMA17 face"
+    },
+    {
+      "class": "screw",
+      "size": "M3x8",
+      "qty": 3,
+      "notes": ""
+    },
+    {
+      "class": "nut",
+      "size": "M3",
+      "qty": 7,
+      "notes": ""
+    },
+    {
+      "class": "nut",
+      "size": "M5",
+      "qty": 1,
+      "notes": ""
+    },
+    {
+      "class": "screw",
+      "size": "M5x20",
+      "qty": 1,
+      "notes": "output side (role not stated)"
+    }
+  ],
+  "joins": [
+    {
+      "a": "body I",
+      "b": "NEMA17 motor",
+      "method": "screw",
+      "qty": 4,
+      "notes": "M3x80 threaded rods + M3 nuts clamp the housing stack to the motor's M3 holes"
+    },
+    {
+      "a": "body II",
+      "b": "body I",
+      "method": "screw",
+      "qty": 4,
+      "notes": "same 4 tie-rods pass through every stacked housing"
+    },
+    {
+      "a": "sun gear I",
+      "b": "NEMA17 motor shaft",
+      "method": "press_fit",
+      "qty": 1,
+      "notes": "5mm D-shaft bore (fit method not stated)"
+    },
+    {
+      "a": "carrier lower plate",
+      "b": "carrier with sun",
+      "method": "screw",
+      "qty": 3,
+      "notes": "2x6 self-tapping screws double as planet axles (inferred from 15 screws ~ 3 per stage x 5 stages)"
+    }
+  ],
+  "motion": [
+    {
+      "between": [
+        "sun gear I",
+        "body I"
+      ],
+      "type": "rotate",
+      "travel": "continuous; motor input"
+    },
+    {
+      "between": [
+        "planet gear 9T m1.2",
+        "carrier with integrated next-stage sun"
+      ],
+      "type": "rotate",
+      "travel": "continuous; planets orbit inside fixed 27T ring"
+    },
+    {
+      "between": [
+        "carrier with integrated next-stage sun",
+        "body II"
+      ],
+      "type": "rotate",
+      "travel": "continuous; stage ratio 1+27/9 = 4:1, stacked 4/16/64/256/1024:1"
+    }
+  ],
+  "assembly": {
+    "steps": 0,
+    "stepsSource": "no written guide; author points to a YouTube video",
+    "order": [
+      "press sun I onto NEMA17 shaft",
+      "body I with 3 planets on carrier",
+      "repeat body II + carrier/sun per extra 4:1 stage",
+      "top/output gear and support",
+      "4x M3x80 tie rods + nuts through stack into motor"
+    ]
+  },
+  "referenceCad": {
+    "available": true,
+    "url": "https://github.com/romanhujer/Modular-gearbox/raw/master/planetary_gear_v1.FCStd",
+    "format": "FreeCAD FCStd (BREP shapes read via OCP)",
+    "license": "AGPL-3.0",
+    "partCount": 35,
+    "keyDims": {
+      "note": "FCStd is a design workspace, not a placed assembly: 35 visible leaf shapes (1 solid each) all at local origin across 5 design variants; NOT a per-build part count",
+      "housingFootprintMm": "41.0 x 41.0 (measured, bodies I and II)",
+      "bodyIHeightMm": "19.0 (measured)",
+      "bodyIIHeightMm": "10.5 (measured)",
+      "chamferedHousingMm": "41 x 41 x 22.5 (measured)",
+      "carrierOdMm": "31.0 (measured)",
+      "planetOdMm": "~13 (12.9x13.1 measured), 5.0 thick",
+      "sunIMm": "24 x 24 x 12.3 (measured)",
+      "gearParams": "sun 9T, planet 9T, ring 27T, module 1.2, PA 20deg, clearance 0.25 (FCGear object properties)",
+      "stageRatio": "4:1 (1 + 27/9)"
+    }
+  },
+  "confidence": "medium — gear teeth/module and housing dims read directly from the FreeCAD file; hardware list verbatim from Thingiverse; part roles inferred from Czech labels (Tělo=body, unášeč=carrier); per-stage part split and joins partly inferred; no written assembly guide",
+  "notes": "Picked over the Galileo Clockwork planetary (GPL-3.0, STEP) to avoid overlapping the Voron CW2 entry. Hardware list appears to be for the full 1024:1 stack; per-stage quantities not given."
+}

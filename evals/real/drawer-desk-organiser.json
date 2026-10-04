@@ -1,0 +1,167 @@
+{
+  "id": "drawer-desk-organiser",
+  "name": "Full Desk Organizer & Monitor Stand + Stackable Drawers by Sixpack99 (Printables 1616624), narrow 146mm case",
+  "category": "consumer-item",
+  "sources": [
+    {
+      "url": "https://www.printables.com/model/1616624-full-desk-organizer-monitor-stand-stackable",
+      "what": "product page (description, license, files)"
+    },
+    {
+      "url": "https://www.printables.com/model/1616624-full-desk-organizer-monitor-stand-stackable-drawer/files",
+      "what": "STEP files per case/drawer size"
+    }
+  ],
+  "license": "CC-BY-NC-4.0",
+  "overallDimsMm": {
+    "x": 146.05,
+    "y": 203.2,
+    "z": 109.6,
+    "note": "measured from STEP '146 8in Drawer Case - Narrow': case body 146.05 x 203.2 x 101.6 plus 8mm top plate. Author: ~4-3/8in tall, 8in deep."
+  },
+  "parts": [
+    {
+      "name": "drawer case (narrow 146)",
+      "qty": 1,
+      "source": "printed",
+      "material": "PLA",
+      "dimsMm": "146.05x203.2x101.6",
+      "notes": "measured"
+    },
+    {
+      "name": "top plate (narrow)",
+      "qty": 1,
+      "source": "printed",
+      "material": "PLA",
+      "dimsMm": "146.05x203.2x8",
+      "notes": "measured (2nd solid in case STEP)"
+    },
+    {
+      "name": "drawer (146 v2, no dividers)",
+      "qty": 2,
+      "source": "printed",
+      "material": "PLA",
+      "dimsMm": "129.65x194.8x48",
+      "notes": "measured; qty 2 per standard-height case inferred from the 101.6mm case vs 48mm drawer"
+    },
+    {
+      "name": "drawer face plate insert (v2)",
+      "qty": 2,
+      "source": "printed",
+      "material": "PLA (contrast colour)",
+      "dimsMm": "119.15x2.7x42.5",
+      "notes": "measured, separate solid in drawer STEP"
+    },
+    {
+      "name": "drawer handle",
+      "qty": 2,
+      "source": "printed",
+      "material": "PLA",
+      "dimsMm": "48x11x14",
+      "notes": "measured; optional, fastened with M3x8"
+    },
+    {
+      "name": "M5x10 dowel pin",
+      "qty": 10,
+      "source": "printed",
+      "material": "PLA (or metal dowel pins)",
+      "dimsMm": "dia 5 x 10",
+      "notes": "printed set of 10"
+    },
+    {
+      "name": "dovetail clip",
+      "qty": 10,
+      "source": "printed",
+      "material": "PLA",
+      "dimsMm": "3 thick (set of 10 bbox 90.4x48x3)",
+      "notes": "join modules side by side"
+    },
+    {
+      "name": "TPU foot",
+      "qty": 0,
+      "source": "printed",
+      "material": "TPU",
+      "dimsMm": "",
+      "notes": "optional; count not stated"
+    }
+  ],
+  "hardware": [
+    {
+      "class": "screw",
+      "size": "M3x8",
+      "qty": 0,
+      "notes": "optional, for drawer handles, screwed straight into drawer holes (no inserts needed); count per handle not stated"
+    },
+    {
+      "class": "dowel",
+      "size": "M5x10 (printed by default, metal optional)",
+      "qty": 10,
+      "notes": "author: all printed, no metal hardware required"
+    }
+  ],
+  "joins": [
+    {
+      "a": "top plate / stacked case",
+      "b": "drawer case",
+      "method": "pin",
+      "qty": 0,
+      "notes": "M5 dowel pins; case has r=2.0 and r=2.6 cylindrical holes (measured); pins per joint not stated"
+    },
+    {
+      "a": "case",
+      "b": "adjacent case / corner module",
+      "method": "snap",
+      "qty": 0,
+      "notes": "dovetail clips"
+    },
+    {
+      "a": "face plate insert",
+      "b": "drawer",
+      "method": "press_fit",
+      "qty": 2,
+      "notes": "v2 drawers (fit method inferred)"
+    },
+    {
+      "a": "handle",
+      "b": "drawer",
+      "method": "screw",
+      "qty": 2,
+      "notes": "optional M3x8"
+    }
+  ],
+  "motion": [
+    {
+      "between": [
+        "drawer",
+        "drawer case"
+      ],
+      "type": "slide",
+      "travel": "~195mm max (drawer depth 194.8 measured; actual stop not published)"
+    }
+  ],
+  "assembly": {
+    "steps": 0,
+    "stepsSource": "no numbered instructions published; modular kit assembled with pins + clips",
+    "order": [
+      "print case, top plate, drawers, pins, clips",
+      "pin top plate to case",
+      "clip adjacent cases / corner",
+      "insert drawers, optional handles with M3x8"
+    ]
+  },
+  "referenceCad": {
+    "available": true,
+    "url": "https://www.printables.com/model/1616624-full-desk-organizer-monitor-stand-stackable-drawer/files",
+    "format": "STEP",
+    "license": "CC-BY-NC-4.0",
+    "partCount": 5,
+    "keyDims": {
+      "caseBboxMm": "146.05 x 203.2 x 109.6 (measured, 2 solids: case + top plate)",
+      "drawerBboxMm": "129.65 x 205.8 x 48 (measured, 3 solids: drawer, face insert, handle)",
+      "caseMinusDrawerWidthMm": "16.4 (146.05-129.65, walls + clearance)",
+      "pinHoleRadiiMm": "2.0, 2.6, 2.62 (measured in case)"
+    }
+  },
+  "confidence": "high: license, all-printed design, M3x8 handles, M5x10 pins, dovetail clips from the author; case and drawer dims measured from STEP. Medium/low: drawers per case, pins per joint, slide travel, screws per handle.",
+  "notes": "partCount 5 = 2 solids (case STEP) + 3 solids (drawer STEP). Also offered: wide 260mm cases (need 300mm bed), 150/200/225/240/250 sizes, Gridfinity cases, 34.8244deg corner piece, monitor-stand top plates. Considered Printables 1033655 (CC-BY-NC-ND, STL only) and 1648563 (CC-BY-NC-SA, STL only). Local STEP copies: (local scratch copy)"
+}

@@ -1,0 +1,42 @@
+{
+  "id": "ikea-lack-side-table",
+  "name": "IKEA LACK side table, 55x55 cm",
+  "category": "flatpack-furniture",
+  "sources": [
+    { "url": "https://www.ikea.com/us/en/p/lack-side-table-white-30449908/", "what": "product page (article 304.499.08; 21 5/8 x 21 5/8 x 17 3/4 in, max load 22 lb)" },
+    { "url": "https://www.ikea.com/gb/en/p/lack-side-table-white-30449908/", "what": "product page (metric, 55x55 cm)" },
+    { "url": "https://www.ikea.com/us/en/assembly_instructions/lack-side-table-white__AA-2606170-1-100.pdf", "what": "assembly instructions (AA-2606170-1, 2025; 4 pages: 1 illustrated + 3 pages of multilingual warnings)" },
+    { "url": "https://www.ikea.com/us/en/assembly_instructions/lack-side-table-white__AA-207276-4-1.pdf", "what": "assembly instructions, older edition (AA-207276-4, 2006; 1 page, same content)" },
+    { "url": "https://www.printables.com/model/320128-ikea-lack-side-table-model-freecad", "what": "community FreeCAD model (not opened; license unverified)" }
+  ],
+  "license": "proprietary (facts only)",
+  "overallDimsMm": { "x": 550, "y": 550, "z": 450, "note": "x=width, y=depth, z=height; from the product page (55x55 cm, H 45 cm / 17 3/4 in)" },
+  "parts": [
+    { "name": "tabletop", "qty": 1, "source": "made", "material": "board-on-frame (particleboard/fibreboard skins over paper honeycomb fill), painted", "dimsMm": "550x550x50", "notes": "50 mm thickness is the widely used community figure (450 total - 400 leg); not on the IKEA page. Pre-drilled pilot hole near each corner on the underside." },
+    { "name": "leg", "qty": 4, "source": "made", "material": "board-on-frame / particleboard, painted", "dimsMm": "50x50x400", "notes": "Square section 50 mm and length 400 mm are community-measured (3D-printer-enclosure builds), not IKEA-published. Pre-drilled centre hole in the top end." }
+  ],
+  "hardware": [
+    { "class": "screw", "size": "double-ended wood dowel screw (hanger bolt with wood thread both ends and a centre collar), IKEA part 115980, approx M6-class x ~70 mm (length estimated from the drawing)", "qty": 4, "notes": "Counted from the instructions parts callout '4x 115980'. No tools needed; driven by hand into the top, then the leg is spun onto the protruding end." }
+  ],
+  "joins": [
+    { "a": "leg", "b": "tabletop", "method": "screw", "qty": 4, "notes": "Each leg: one double-ended dowel screw, half into the tabletop underside corner, half into the leg end. Leg axis vertical, inset at each corner flush with the top's edges." }
+  ],
+  "motion": [
+    { "between": ["leg", "tabletop"], "type": "fixed", "travel": "none" }
+  ],
+  "assembly": {
+    "steps": 1,
+    "stepsSource": "official instructions AA-2606170-1: one un-numbered illustrated panel (parts callout 4x 115980, screw into top, spin leg on), plus a 'work on a soft surface' panel; remaining pages are warnings (do not sit, max load 10 kg)",
+    "order": ["lay tabletop upside down on a soft surface", "hand-thread 4 dowel screws into the corner pilot holes", "spin each leg onto its screw until tight", "turn upright"]
+  },
+  "referenceCad": {
+    "available": true,
+    "url": "https://www.printables.com/model/320128-ikea-lack-side-table-model-freecad",
+    "format": "FreeCAD (per listing title)",
+    "license": "unverified (search snippet said public domain; page returned 403, so not confirmed)",
+    "partCount": null,
+    "keyDims": { "top": "550x550x50 (community)", "leg": "50x50x400 (community)" }
+  },
+  "confidence": "high for overall dims, max load (10 kg / 22 lb), part count (1 top + 4 legs), hardware (4x part 115980 double-ended screw) and single-panel assembly - read directly from the IKEA page and both instruction editions. medium for 50 mm top thickness and 50x50x400 legs (consistent community figures, not IKEA-published). low for the screw's thread size/length (estimated from the drawing).",
+  "notes": "Simplest possible flat-pack: 5 parts, 4 identical joints, no allen key. Legs are on the corners, so the leg pattern is 4 points at (+/-250, +/-250) mm from centre if legs are flush with the top edge (derived from 550 top and 50 legs)."
+}

@@ -243,6 +243,10 @@ function checkPorts(probes: Probe[], want: PortExpect): Miss[] {
 /** Hardware a joint minted. The architect never decided it, so it is not
  *  over-decomposition, and expand.ts sends G3 no ports for it on purpose. */
 const jointHardware = (doc: GraphDoc, n: NodeRecord) => jointOwner(doc, n.id) !== undefined;
+/** Not a decomposition choice either: catalog hardware the architect declared
+ *  itself (a threaded rod, a clamp nut) resolves from the registry at zero LLM
+ *  calls, so counting it against nodes.max failed a gearbox for buying a nut. */
+const hardware = (doc: GraphDoc, n: NodeRecord) => jointHardware(doc, n) || REGISTRY_HARDWARE.has(n.kind);
 
 /** Mates G5's fit check reads (fitFindings): a bearing in its seat, a shaft in
  *  a bearing or bore, a screw in a clearance hole. No fit finding over an
@@ -389,9 +393,9 @@ function score(
 
   if (e.nodes?.min != null && nodes.length < e.nodes.min)
     misses.push(`${nodes.length} nodes, expected at least ${e.nodes.min}`);
-  const designed = nodes.filter((n) => !jointHardware(store.doc, n));
+  const designed = nodes.filter((n) => !hardware(store.doc, n));
   if (e.nodes?.max != null && designed.length > e.nodes.max)
-    misses.push(`${designed.length} nodes (plus ${nodes.length - designed.length} joint hardware), expected at most ${e.nodes.max} (over-decomposed)`);
+    misses.push(`${designed.length} nodes (plus ${nodes.length - designed.length} hardware), expected at most ${e.nodes.max} (over-decomposed)`);
 
   if (e.allReady !== false) {
     const notReady = nodes.filter((n) => n.status !== "ready");
@@ -754,6 +758,11 @@ async function selfTest(): Promise<void> {
   }), new EventBus(), async () => {});
   expect("joint hardware is neither over-decomposition nor an unprobed port",
     score({ id: "t", prompt: "p", expect: { nodes: { max: 1 } } }, jointed, []).misses, "quiet");
+  const bought = (kind: string) => node("rod", { kind }, { volume_mm3: 1, bbox: { size: [1, 1, 1] }, ports: [] });
+  expect("a catalog part the architect declared is not over-decomposition",
+    score({ id: "t", prompt: "p", expect: { nodes: { max: 1 } } }, mk({ p: node("p", {}, goodPlate), rod: bought("threaded_rod") }), []).misses, "quiet");
+  expect("a second generated part still is",
+    score({ id: "t", prompt: "p", expect: { nodes: { max: 1 } } }, mk({ p: node("p", {}, goodPlate), rod: bought("part") }), []).misses, "fire", "over-decomposed");
 
   // A boss reports measured_pilot and never measured_diameter, so a case that
   // asserts `diameter` on one fails as "measured by nothing" — a defect in the
@@ -1036,7 +1045,7 @@ async function runCase(c: EvalCase, capUsd: number) {
   const planMs = Date.now() - t0;
   plan.graph.brief.refs = refs.map((r) => r.ref);
   // One draft plus one call per lint-repair round.
-  const archCalls = 1 + plan.lintRounds.length;
+  const archCalls = 1 + plan.lintRounds.length + (plan.critic?.calls ?? 0);
 
   if (flag("dry")) {
     const dir = path.join(repoRoot, "evals", "results", ".work", c.id);
@@ -1044,11 +1053,11 @@ async function runCase(c: EvalCase, capUsd: number) {
     fs.writeFileSync(path.join(dir, "plan.json"), JSON.stringify(plan.graph, null, 1));
     const all = Object.values(plan.graph.nodes);
     const planned = all.map((n) => ({ id: n.id, kind: n.kind }));
-    const designed = all.filter((n) => !jointHardware(plan.graph, n)).length;
+    const designed = all.filter((n) => !hardware(plan.graph, n)).length;
     const { min = 0, max = Infinity } = c.expect.nodes ?? {};
     // The only expectation a plan alone can answer.
     const misses = planned.length < min || designed > max
-      ? [`planned ${designed} nodes (plus ${planned.length - designed} joint hardware), expected ${min}..${max}`] : [];
+      ? [`planned ${designed} nodes (plus ${planned.length - designed} hardware), expected ${min}..${max}`] : [];
     return {
       id: c.id, pass: misses.length === 0, dry: true, misses,
       usd: plan.usage.usd, calls: archCalls, nodes: planned.length,
@@ -1141,6 +1150,7 @@ async function runCase(c: EvalCase, capUsd: number) {
       // guidance rule behind 14 identical-looking repair rounds.
       lintRounds: plan.lintRounds.map((round) => round.map((m) => m.split(":")[0] ?? m)),
       lintProblems: plan.lintRounds.flat(),
+      critic: plan.critic,
     },
     globalProblems: global,
     advisories,

@@ -181,14 +181,19 @@ const TRAVEL_STEP_DEG = 5;
  */
 export function reachableTravel(graph: GraphDoc, def: JointAxisDef): [number, number] {
   const { world, instances } = solvePlan(graph);
-  const [axis] = kinematicJoints([{ ...def, limits: [-180, 180] }], world, instances);
+  // Every axis, so a node placed on several (one wheel node, four axles)
+  // turns here only in the copy this axis claims: the other three copies
+  // swung about the first axle into the rail (real-linear-actuator).
+  const others = (graph.joints ?? []).length ? jointAxes(graph).filter((a) => a.id !== def.id) : [];
+  const axis = kinematicJoints([{ ...def, limits: [-180, 180] }, ...others], world, instances).find((a) => a.id === def.id);
   if (!axis) return [-180, 180];
   const o = axis.origin as Vec3;
   const d = axis.direction as Vec3;
   const part = (id: string) => !FASTENING_HARDWARE.has(graph.nodes[id]?.kind ?? "") && !isJointHardware(graph, id) && !REGISTRY_HARDWARE.has(graph.nodes[id]?.kind ?? "");
   const moving = new Set(def.moving.map((k) => k.split("#")[0]!));
   const prims = (ids: string[]) => ids.filter(part).flatMap((id) => (instances[id] ?? []).flatMap((w) => posedEnvelope(graph, id, w)));
-  const turning = prims([...moving]);
+  const copy = (key: string) => instances[key.split("#")[0]!]?.[Number(key.split("#")[1] ?? 0)];
+  const turning = axis.moving.filter((k) => part(k.split("#")[0]!) && copy(k)).flatMap((k) => posedEnvelope(graph, k.split("#")[0]!, copy(k)!));
   const still = prims(Object.keys(graph.nodes).filter((id) => !moving.has(id)));
   if (turning.length === 0 || still.length === 0) return [-180, 180];
   const offAxis = (c: Vec3) => sub(c, o).map((v, i) => v - dot(sub(c, o), d) * d[i]!) as Vec3;
@@ -349,7 +354,7 @@ function matedOverlap(
 }
 
 /** Recipes that put b on a shaft or pin past a.port, never inside a. */
-const OFF_A_RECIPES = new Set(["bearings", "bushings", "pin", "hub_bearings"]);
+const OFF_A_RECIPES = new Set(["bearings", "bushings", "pin", "hub_bearings", "flanged_bearing"]);
 
 /**
  * A revolute joint's two parts claiming one stretch of its axis. The
@@ -538,21 +543,22 @@ export const cadPlanGeometryLint = {
     // Revolute travel the parts' envelopes cannot make: a rotor that cannot
     // spin a full turn, or stated limits past the stops.
     for (const def of jointAxes(graph)) {
-      const j = graph.joints?.find((x) => x.id === def.id) as { motion?: string; duty?: string; limits?: [number, number]; limitsSource?: string } | undefined;
+      const j = graph.joints?.find((x) => x.id === def.id) as { motion?: string; duty?: string; limits?: [number, number]; limitsSource?: string; travel?: number } | undefined;
       if (def.type !== "revolute" || !j) continue;
       const [lo, hi] = reachableTravel(graph, def);
       const full = lo <= -180 && hi >= 180;
-      const span = statedTravel(graph.brief?.goal ?? "");
+      const span = j.travel ?? statedTravel(graph.brief?.goal ?? "");
       const [jl, jh] = j.limits ?? [lo, hi];
       if (span !== undefined && j.duty !== "continuous" && jh - jl < span - 1e-9) {
-        problems.push(`joint ${def.id}: the brief states ${span}° of travel, but its limits [${jl}, ${jh}]° cover ${jh - jl}°${j.limits && j.limitsSource !== "derived" ? "" : " (derived from where the envelopes meet)"}. Write limits that cover it, in degrees about ${def.node}'s joint port +z from the pose the mates place, and give ${def.moving[0]} room to make them.`);
+        const stated = j.limits && j.limitsSource !== "derived";
+        problems.push(`joint ${def.id}: ${j.travel ? `travel is ${span}°` : `the brief states ${span}° of travel`}, but its limits [${jl}, ${jh}]° cover ${jh - jl}°${stated ? "" : ` (from rest the parts reach [${lo}, ${hi}]° before they meet)`}. ${stated ? `Limits are degrees about a.port's +z (${def.node}'s joint port), right-handed, 0 being the pose the mates place. Write travel: ${span} instead and expansion picks the direction, or w` : "Model b at the closed (rest) pose and w"}rite travel: ${span}, and give ${def.moving[0]} room to turn that far.`);
       }
       if (j.duty === "continuous" && !full) {
         problems.push(`joint ${def.id} is continuous, so ${def.moving.join(", ")} must turn a full circle, but its envelope meets a part that holds still past ${lo}°..${hi}° of travel. Give it room to spin (move or shrink what it sweeps into), or make the joint occasional with limits.`);
       } else if (j.limits && j.limitsSource !== "derived" && (j.limits[0] < lo || j.limits[1] > hi)) {
         const mirror = [-j.limits[1], -j.limits[0]];
         const flip = mirror[0]! >= lo && mirror[1]! <= hi ? ` [${mirror.join(", ")}] is clear: travel is right-handed about the port's +z, so the sign may be flipped.` : "";
-        problems.push(`joint ${def.id} states limits [${j.limits.join(", ")}]°, but the parts' envelopes only reach [${lo}, ${hi}]° before they meet.${flip} State limits within that range, or leave limits out and expansion derives them.`);
+        problems.push(`joint ${def.id} states limits [${j.limits.join(", ")}]°, but the parts' envelopes only reach [${lo}, ${hi}]° before they meet. Limits are degrees about a.port's +z (${def.node}'s joint port), right-handed, 0 being the pose the mates place.${flip} Write travel: <degrees> instead (expansion picks the direction), state limits within that range, or leave both out and expansion derives them.`);
       }
     }
     return problems;

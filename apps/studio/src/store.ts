@@ -9,7 +9,7 @@ export type PlanPhase = Extract<EngineEvent, { type: "plan:phase" }>["phase"];
 export type PlanState =
   | { status: "idle" }
   | { status: "planning"; goal: string; phase: PlanPhase; detail: string; startedAt: number }
-  | { status: "pending"; plan: GraphDoc; rationale: string; usd: number }
+  | { status: "pending"; plan: GraphDoc; rationale: string; usd: number; warnings: string[] }
   | { status: "error"; message: string };
 
 /** What segmentation puts at each cut: real hardware the joint rules pick
@@ -308,6 +308,7 @@ export const useStudio = create<StudioState>((set, get) => ({
         plan?: GraphDoc;
         rationale?: string;
         usage?: { usd: number };
+        warnings?: string[];
         error?: string;
       };
       // Stopped while the architect was still drafting: its answer is moot.
@@ -322,6 +323,7 @@ export const useStudio = create<StudioState>((set, get) => ({
           plan: data.plan,
           rationale: data.rationale ?? "",
           usd: data.usage?.usd ?? 0,
+          warnings: data.warnings ?? [],
         },
       });
     } catch (err) {

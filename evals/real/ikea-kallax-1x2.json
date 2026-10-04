@@ -1,0 +1,147 @@
+{
+  "id": "ikea-kallax-1x2",
+  "name": "IKEA KALLAX shelving unit, 77x42 cm (two cubes side by side; floor or wall)",
+  "category": "flatpack-furniture",
+  "sources": [
+    {
+      "url": "https://www.ikea.com/gb/en/p/kallax-shelving-unit-white-90301555/",
+      "what": "product page (article 903.015.55; W 76.5 x D 39 x H 41 cm, max load 13 kg per shelf / 25 kg on top)"
+    },
+    {
+      "url": "https://www.ikea.com/gb/en/assembly_instructions/kallax-shelving-unit-white__AA-2731182-2-100.pdf",
+      "what": "assembly instructions (AA-2731182-2, 20 pages, 9 numbered steps)"
+    },
+    {
+      "url": "https://www.ikea.com/gb/en/manuals/kallax-shelving-unit-white__AA-2180177-2-2.pdf",
+      "what": "product manual (not read)"
+    }
+  ],
+  "license": "proprietary (facts only)",
+  "overallDimsMm": {
+    "x": 765,
+    "y": 390,
+    "z": 410,
+    "note": "x=width, y=depth, z=height as stood horizontally; from the product page. Same unit can be stood on end as 42x77."
+  },
+  "parts": [
+    {
+      "name": "long panel (top/bottom)",
+      "qty": 2,
+      "source": "made",
+      "material": "board-on-frame (particleboard/fibreboard skins, honeycomb fill), foil/paint finish",
+      "dimsMm": "765x390x~38",
+      "notes": "Thickness ~38-39 mm is the common community figure for KALLAX outer panels (not IKEA-published). One long panel receives the divider's dowels."
+    },
+    {
+      "name": "end panel",
+      "qty": 2,
+      "source": "made",
+      "material": "board-on-frame",
+      "dimsMm": "~335x390x~38",
+      "notes": "Fits between the long panels: 410 - 2x38 ~= 335 mm (derived). Joined end-on with connector screws through the long panels."
+    },
+    {
+      "name": "divider",
+      "qty": 1,
+      "source": "made",
+      "material": "particleboard/board-on-frame",
+      "dimsMm": "~335x~370x~15",
+      "notes": "Thin vertical centre divider, located by 2 long dowels at each edge. Thickness ~15-16 mm from community measurements; opening ~335 mm square derived (765 = 2x38 + 2x~337 + 15)."
+    }
+  ],
+  "hardware": [
+    {
+      "class": "screw",
+      "size": "connector screw, countersunk head with hex socket, coarse thread (IKEA 104321 / 104322), long (~90-100 mm, estimated)",
+      "qty": 8,
+      "notes": "2 per corner: driven through each long panel into the end-panel ends (steps 1, 3, 5). Driven with the included crank key."
+    },
+    {
+      "class": "dowel",
+      "size": "long fluted wood dowel (IKEA 101339), approx 8x~60 mm (estimated)",
+      "qty": 4,
+      "notes": "2 at each edge of the divider (steps 2 and 4)."
+    },
+    {
+      "class": "screw",
+      "size": "short euro/chipboard screw (IKEA 100372), approx 6.3x13 mm (estimated)",
+      "qty": 4,
+      "notes": "Fix the 2 plastic wall brackets inside the unit (step 6)."
+    },
+    {
+      "class": "other",
+      "size": "wall bracket, plastic angle (IKEA 115753)",
+      "qty": 2,
+      "notes": "Inside top corner, wall mounting / anti-tip."
+    },
+    {
+      "class": "other",
+      "size": "keyhole wall plate, metal (IKEA 103693)",
+      "qty": 2,
+      "notes": "Screwed to the wall; brackets hook onto them (step 9). Wall screws and plugs NOT included."
+    },
+    {
+      "class": "other",
+      "size": "bracket cover cap (IKEA 115754 / 118225 / 118673 / 123773 by colour)",
+      "qty": 2,
+      "notes": "Clips over each bracket."
+    },
+    {
+      "class": "other",
+      "size": "crank hex key (IKEA 100001)",
+      "qty": 1,
+      "notes": "Tool, included. Flat and Phillips screwdrivers, pencil and level shown as required tools."
+    }
+  ],
+  "joins": [
+    {
+      "a": "long panel (top/bottom)",
+      "b": "end panel",
+      "method": "screw",
+      "qty": 8,
+      "notes": "Butt joint, 2 connector screws per corner through the face of the long panel into the end panel's end. No cam locks in this edition."
+    },
+    {
+      "a": "divider",
+      "b": "long panel (top/bottom)",
+      "method": "dowel",
+      "qty": 4,
+      "notes": "2 dowels per edge; divider is clamped between the long panels by the corner screws, not separately fastened."
+    }
+  ],
+  "motion": [
+    {
+      "between": [
+        "long panel (top/bottom)",
+        "end panel"
+      ],
+      "type": "fixed",
+      "travel": "none"
+    }
+  ],
+  "assembly": {
+    "steps": 9,
+    "stepsSource": "official instructions AA-2731182-2, numbered steps 1-9 on pages 11-19 (pages 2-7 multilingual tip-over warnings, 8 tools/handling, 9-10 parts list)",
+    "order": [
+      "1: first end panel to the first long panel (2 connector screws)",
+      "2: divider dowels into that long panel, divider pushed on (2 dowels)",
+      "3: second end panel (2 connector screws)",
+      "4: dowels on the divider's free edge (2 dowels)",
+      "5: second long panel onto ends and divider (4 connector screws)",
+      "6: wall brackets inside the unit (2x2 short screws) - optional wall-hung use",
+      "7: hold unit level against the wall, mark bracket holes",
+      "8: fix wall screws (not included)",
+      "9: hook unit onto keyhole plates, adjust, clip covers on"
+    ]
+  },
+  "referenceCad": {
+    "available": false,
+    "url": null,
+    "format": null,
+    "license": null,
+    "partCount": null,
+    "keyDims": {}
+  },
+  "confidence": "high for overall dims (765x390x410), loads, part count (5 panels), hardware classes and counts (8x 104321/104322, 4x 101339 dowels, 4x 100372, 2x 115753, 2x 103693, 2x covers, crank key 100001) and the 9-step order - read from the IKEA page and the instruction drawings. medium for panel thicknesses (~38 outer, ~15 divider; community figures, consistent with the overall width). low for screw/dowel lengths (estimated).",
+  "notes": "This current edition uses long connector screws plus dowels, not cam locks. The 77x42 unit is a 2-cube unit (the 42x77 orientation in the request is the same SKU stood on end). Structural assembly is steps 1-5; steps 6-9 are wall mounting."
+}

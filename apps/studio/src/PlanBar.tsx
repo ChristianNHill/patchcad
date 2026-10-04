@@ -151,6 +151,16 @@ export function PlanOverlay() {
           <>
             <h3>proposed design</h3>
             <p className="modal__rationale">{planState.rationale}</p>
+            {planState.warnings.length > 0 && (
+              <div className="modal__warnings" role="note">
+                <strong>the brief asks for things this plan may not have</strong>
+                <ul>
+                  {planState.warnings.map((w) => (
+                    <li key={w}>{w}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {planState.plan.backend === "cad" && (
               <PlanPreview planKey={`${planState.plan.id}:${Object.keys(planState.plan.nodes).join(",")}`} />
             )}

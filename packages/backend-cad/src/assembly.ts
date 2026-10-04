@@ -154,6 +154,33 @@ function clockTo(placed: Mat4, axis: Mat4, id: string, mates: AssemblyMate[], by
 }
 
 /**
+ * A part held between two others by two of its own ports (a slat between two
+ * side panels) whose second port misses its seat only ALONG the line between
+ * its ports is the wrong length, not misplaced: say so in those words.
+ * Undefined when the miss is not along that line (a wrong pose).
+ */
+function spanConflict(
+  mate: AssemblyMate, portA: Pose, portB: Pose, from: Mat4, to: Mat4,
+  byId: Map<string, AssemblyNode>, placedByPort: Record<string, string>, placer: string | undefined,
+): string | undefined {
+  const own = byId.get(mate.toNode)!.ports[placedByPort[mate.toNode] ?? ""];
+  // Both seats on one part is a hole-spacing mismatch, not a loop.
+  if (!own || !placer || placer === mate.fromNode) return undefined;
+  const p = transformPoint(to, own.origin);
+  const q = transformPoint(to, portB.origin);
+  const seat = transformPoint(from, portA.origin);
+  const line = q.map((v, i) => v - p[i]!);
+  const length = Math.hypot(...line);
+  // Ports a few mm apart (a nut's two faces) say nothing about a span.
+  if (length < 10) return undefined;
+  const u = line.map((v) => v / length);
+  const miss = seat.map((v, i) => v - q[i]!);
+  const along = miss[0]! * u[0]! + miss[1]! * u[1]! + miss[2]! * u[2]!;
+  if (Math.hypot(...miss.map((v, i) => v - along * u[i]!)) > MATE_CONSISTENCY_TOL_MM + 0.01 * Math.abs(along)) return undefined;
+  return `${mate.toNode} spans ${Math.abs(along).toFixed(2)}mm ${along > 0 ? "less" : "more"} than the gap between ${placer} and ${mate.fromNode} (its ${placedByPort[mate.toNode]} on ${placer}, its ${mate.toPort} ${along > 0 ? "short of" : "past"} ${mate.fromNode}.${mate.fromPort}): make it ${along > 0 ? "longer" : "shorter"} by that much, or bind its length to that gap.`;
+}
+
+/**
  * BFS from the root: each mate places the consumer relative to its provider.
  * Returns world matrices per node. A node mated twice keeps its first
  * placement, and the extra mate is CHECKED against it rather than dropped —
@@ -229,6 +256,9 @@ export function solveAssembly(
   // not. Silence there means a bracket bolted through two holes can align on
   // the first and be arbitrarily far out on the second, with the assembly
   // reporting clean. So compute what this mate WOULD have given and compare.
+  const redundant: AssemblyMate[] = [];
+  /** Which node placed each extra copy, beside `instances`. */
+  const copyBy: Record<string, string[]> = {};
   for (const mate of mates) {
     if (used.has(mate)) continue;
     const a = byId.get(mate.fromNode);
@@ -246,14 +276,26 @@ export function solveAssembly(
     // by the check below, which is the case that check was written for.
     if (placedByPort[mate.toNode] === mate.toPort) {
       (instances[mate.toNode] ??= []).push(mul(world[mate.fromNode]!, mateTransform(portA, portB)));
+      (copyBy[mate.toNode] ??= []).push(mate.fromNode);
       origins.set(mate, transformPoint(world[mate.fromNode]!, portA.origin));
       continue;
     }
     if (placedByPort[mate.fromNode] === mate.fromPort) {
       (instances[mate.fromNode] ??= []).push(mul(world[mate.toNode]!, mateTransform(portB, portA)));
+      (copyBy[mate.fromNode] ??= []).push(mate.toNode);
       origins.set(mate, transformPoint(world[mate.toNode]!, portB.origin));
       continue;
     }
+    redundant.push(mate);
+  }
+  // Every copy exists now, so a mate on a different port of an instanced part
+  // is checked against the copy it meets: the crate's four end slats, each
+  // placed by its right end, had their left ends judged against the first
+  // slat at the far end of the crate (472mm "off").
+  const copies = (id: string) => [world[id]!, ...(instances[id] ?? [])];
+  for (const mate of redundant) {
+    const portA = byId.get(mate.fromNode)!.ports[mate.fromPort]!;
+    const portB = byId.get(mate.toNode)!.ports[mate.toPort]!;
     if (mate.axis) {
       // Both port frames in the world, as the mate's two ends sit now.
       const off = axisOffset(mul(world[mate.fromNode]!, poseToMat(portA)), mul(world[mate.toNode]!, poseToMat(portB)));
@@ -266,22 +308,29 @@ export function solveAssembly(
       }
       continue;
     }
-    const expected = mul(world[mate.fromNode]!, mateTransform(portA, portB));
-    const actual = world[mate.toNode]!;
     // Positional disagreement only: it is the number a user can act on, and a
     // pure rotation mismatch still moves the mated features apart. A
     // clock-free mate's part was turned to meet another, so there the two
     // port frames are compared, origin and line, not the part's pose.
-    const [pa, pb] = [mul(world[mate.fromNode]!, poseToMat(portA)), mul(world[mate.toNode]!, poseToMat(portB))];
-    const off = mate.clockFree
-      ? Math.max(axisOffset(pa, pb), Math.hypot(pa[12]! - pb[12]!, pa[13]! - pb[13]!, pa[14]! - pb[14]!))
-      : Math.hypot(expected[12]! - actual[12]!, expected[13]! - actual[13]!, expected[14]! - actual[14]!);
-    if (off > MATE_CONSISTENCY_TOL_MM) {
-      problems.push(
-        `mate ${mate.fromNode}.${mate.fromPort} → ${mate.toNode}.${mate.toPort} disagrees with the placement already solved for ${mate.toNode} by ${off.toFixed(2)}mm. Both parts are positioned by another mate, so this one cannot be satisfied — the two features will not line up.`,
+    let best = { off: Infinity, from: world[mate.fromNode]!, to: world[mate.toNode]!, k: 0 };
+    for (const from of copies(mate.fromNode)) {
+      for (const [k, to] of copies(mate.toNode).entries()) {
+        const expected = mul(from, mateTransform(portA, portB));
+        const [pa, pb] = [mul(from, poseToMat(portA)), mul(to, poseToMat(portB))];
+        const off = mate.clockFree
+          ? Math.max(axisOffset(pa, pb), Math.hypot(pa[12]! - pb[12]!, pa[13]! - pb[13]!, pa[14]! - pb[14]!))
+          : Math.hypot(expected[12]! - to[12]!, expected[13]! - to[13]!, expected[14]! - to[14]!);
+        if (off < best.off) best = { off, from, to, k };
+      }
+    }
+    if (best.off > MATE_CONSISTENCY_TOL_MM) {
+      const by = placedBy[mate.toNode];
+      const placer = best.k ? copyBy[mate.toNode]?.[best.k - 1] : by && (by.fromNode === mate.toNode ? by.toNode : by.fromNode);
+      problems.push(spanConflict(mate, portA, portB, best.from, best.to, byId, placedByPort, placer) ??
+        `mate ${mate.fromNode}.${mate.fromPort} → ${mate.toNode}.${mate.toPort} disagrees with the placement already solved for ${mate.toNode} by ${best.off.toFixed(2)}mm. Both parts are positioned by another mate, so this one cannot be satisfied — the two features will not line up.`,
       );
     } else {
-      origins.set(mate, transformPoint(world[mate.fromNode]!, portA.origin));
+      origins.set(mate, transformPoint(best.from, portA.origin));
     }
   }
 

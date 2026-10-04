@@ -1,0 +1,140 @@
+{
+  "id": "pinewood-derby-car",
+  "name": "BSA / Scouting America Official Pinewood Derby Car Kit (SKU 17006) built to official rules",
+  "category": "toy-car",
+  "sources": [
+    {
+      "url": "https://www.scoutshop.org/official-pinewood-derby-car-kit-17006.html",
+      "what": "product page (kit contents, block ~1.75in W x 7in L)"
+    },
+    {
+      "url": "https://www.scoutshop.org/pwd-rules",
+      "what": "official building rules (max weight/length/width, kit parts only)"
+    },
+    {
+      "url": "https://scoutlife.org/hobbies-projects/pinewood-derby/157283/official-rules/",
+      "what": "official Cub Scout race rules (clearance 3/8in, min 1-3/4in between wheels)"
+    },
+    {
+      "url": "https://en.wikibooks.org/wiki/How_To_Build_a_Pinewood_Derby_Car/Dimensions_and_specifications",
+      "what": "block dims 7.0x1.75x1.25in, stock wheelbase 4.406in, overhangs"
+    },
+    {
+      "url": "https://www.derbydust.com/information/pinewood-derby-wheels/pinewood-derby-wheel-dimensions/",
+      "what": "BSA wheel measured avg dia 1.183in, width 0.375in"
+    },
+    {
+      "url": "https://en.wikibooks.org/wiki/How_To_Build_a_Pinewood_Derby_Car/Axles",
+      "what": "axle nail ~1in long, 0.087in dia"
+    }
+  ],
+  "license": "proprietary (facts only)",
+  "overallDimsMm": {
+    "x": 177.8,
+    "y": 69.85,
+    "z": 31.75,
+    "note": "x=length (rule max 7in), y=max width incl. wheels (rule 2-3/4in), z=raw block height 1.25in (finished height is the builder's choice; body rides on 30mm wheels with >=9.5mm ground clearance)"
+  },
+  "parts": [
+    {
+      "name": "body block",
+      "qty": 1,
+      "source": "made",
+      "material": "pine (precision-cut kit block)",
+      "dimsMm": "177.8x44.45x31.75",
+      "notes": "7in x 1-3/4in x 1-1/4in; two pre-cut axle slots on underside 4-3/8in (111.1mm) apart (wikibooks measures 4.406in = 111.9mm); front overhang 1.781in (45.2mm), rear 0.813in (20.7mm). Shaped by builder."
+    },
+    {
+      "name": "wheel",
+      "qty": 4,
+      "source": "bought",
+      "material": "plastic (kit-supplied)",
+      "dimsMm": "dia 30.05 x 9.53 wide",
+      "notes": "BSA avg 1.183in +-0.003 dia, 0.375in wide, ~2.7g (derbydust measurement)"
+    },
+    {
+      "name": "axle nail",
+      "qty": 4,
+      "source": "bought",
+      "material": "zinc-plated steel nail",
+      "dimsMm": "dia 2.21 x ~25.4 long",
+      "notes": "0.087in dia, ~1in long; driven into body slot, wheel spins on shank"
+    },
+    {
+      "name": "ballast weight",
+      "qty": 1,
+      "source": "bought",
+      "material": "tungsten/lead/steel (not in kit)",
+      "dimsMm": "varies",
+      "notes": "added to bring car to <=5oz (141.7g); not part of kit"
+    }
+  ],
+  "hardware": [
+    {
+      "class": "pin",
+      "size": "axle nail 0.087in (2.21mm) dia x ~1in",
+      "qty": 4,
+      "notes": "kit-supplied; bearings/washers/bushings prohibited by rules"
+    },
+    {
+      "class": "wheel",
+      "size": "1.183in (30.05mm) dia x 0.375in (9.53mm)",
+      "qty": 4,
+      "notes": "kit-supplied"
+    }
+  ],
+  "joins": [
+    {
+      "a": "axle nail",
+      "b": "body block",
+      "method": "press_fit",
+      "qty": 4,
+      "notes": "nail driven into pre-cut slot (often glued after alignment)"
+    },
+    {
+      "a": "wheel",
+      "b": "axle nail",
+      "method": "pin",
+      "qty": 4,
+      "notes": "wheel free-rotating on nail shank, captured by nail head"
+    },
+    {
+      "a": "ballast weight",
+      "b": "body block",
+      "method": "glue",
+      "qty": 1,
+      "notes": "rules forbid loose materials"
+    }
+  ],
+  "motion": [
+    {
+      "between": [
+        "wheel",
+        "axle nail"
+      ],
+      "type": "rotate",
+      "travel": "continuous"
+    }
+  ],
+  "assembly": {
+    "steps": 0,
+    "stepsSource": "no official numbered instructions; kit is a raw block + 4 wheels + 4 nails. Typical order is shape, weight, paint, axle install.",
+    "order": [
+      "shape body",
+      "add ballast to <=5oz",
+      "finish/paint",
+      "insert axle nails through wheels into slots",
+      "align and check free-wheeling"
+    ]
+  },
+  "referenceCad": {
+    "available": false,
+    "url": null,
+    "format": null,
+    "license": null,
+    "partCount": null,
+    "keyDims": {}
+  },
+  "confidence": "high for rules (5oz max, 7in max length, 2-3/4in max width, kit-only parts: Scout Shop) and kit contents (Scout Shop); high for block 7x1.75in; medium for 1.25in height and 4-3/8in/4.406in wheelbase (wikibooks + retailer summaries, not Scout Shop); medium for 3/8in clearance and 1-3/4in between wheels (Cub Scout race rules via scoutlife/pack PDFs); medium for wheel/axle dims (third-party measurements of stock parts).",
+  "notes": "Scout Shop lists packaged product dims 7.4x2.6x1.6in, weight 0.30lb. Local packs may vary rules."
+}

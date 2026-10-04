@@ -1,0 +1,290 @@
+{
+  "id": "openbuilds-linear-actuator",
+  "name": "OpenBuilds V-Slot NEMA17 lead-screw driven linear actuator (20x60 V-Slot, gantry plate, 8mm acme lead screw)",
+  "category": "open-hardware-mechanism",
+  "sources": [
+    {
+      "url": "https://github.com/Botland-com-pl/v-slot-profiles-models/blob/HEAD/STEP/Assemblies/V%20Slot%20Lead%20Screw%20Driven%20Actuator/Nema%2017%20V%20Slot%20Lead%20Screw%20Driven%20Actuator.step",
+      "what": "STEP (mirror of the OpenBuilds STEP Parts Library)"
+    },
+    {
+      "url": "http://web.archive.org/web/20241005053215/https://openbuildspartstore.com/c-beam-linear-actuator-bundle/",
+      "what": "product page (archived; states CC BY-SA 4.0 for OpenBuilds design works)"
+    },
+    {
+      "url": "http://web.archive.org/web/20190422033616/https://openbuilds.com/builds/c-beam%E2%84%A2-linear-actuator-build.1955/",
+      "what": "sibling C-Beam actuator full parts list (archived)"
+    }
+  ],
+  "license": "CC-BY-SA-4.0",
+  "overallDimsMm": {
+    "x": 127.0,
+    "y": 59.4,
+    "z": 594.1,
+    "note": "measured from assembly STEP: x = gantry plate width, y = plate-to-plate depth, z = rail length 500 + end plates + NEMA17 (72mm motor body)"
+  },
+  "parts": [
+    {
+      "name": "V-Slot 20x60 linear rail 500mm",
+      "qty": 1,
+      "source": "bought",
+      "material": "aluminium 6063",
+      "dimsMm": "60x20x500",
+      "notes": "measured"
+    },
+    {
+      "name": "V-Slot gantry plate 20-80mm",
+      "qty": 1,
+      "source": "bought",
+      "material": "aluminium",
+      "dimsMm": "127x88x3",
+      "notes": "measured"
+    },
+    {
+      "name": "threaded rod plate NEMA17 (end plate)",
+      "qty": 2,
+      "source": "bought",
+      "material": "aluminium",
+      "dimsMm": "53x59.3x3",
+      "notes": "measured; one motor end, one idler end"
+    },
+    {
+      "name": "spacer block",
+      "qty": 2,
+      "source": "bought",
+      "material": "aluminium",
+      "dimsMm": "20x12x86.4",
+      "notes": "between gantry plate and nut block level (measured)"
+    },
+    {
+      "name": "8mm acme nut block",
+      "qty": 1,
+      "source": "bought",
+      "material": "delrin",
+      "dimsMm": "",
+      "notes": "STEP; C-Beam bundle uses anti-backlash block 34x12x33"
+    },
+    {
+      "name": "8mm lead screw 520mm",
+      "qty": 1,
+      "source": "bought",
+      "material": "steel",
+      "dimsMm": "8 dia x 520",
+      "notes": "measured"
+    },
+    {
+      "name": "NEMA17 stepper",
+      "qty": 1,
+      "source": "bought",
+      "material": "",
+      "dimsMm": "53x53x72 envelope (measured)",
+      "notes": ""
+    },
+    {
+      "name": "solid V wheel assembly",
+      "qty": 4,
+      "source": "bought",
+      "material": "polycarbonate",
+      "dimsMm": "23.9 OD x ~11",
+      "notes": "2 eccentric + 2 straight; each = wheel + 2x 625 bearings + 2 precision shims + nyloc nut (+ eccentric spacer)"
+    }
+  ],
+  "hardware": [
+    {
+      "class": "motor",
+      "size": "NEMA17 stepper",
+      "qty": 1,
+      "notes": "STEP"
+    },
+    {
+      "class": "rod",
+      "size": "8mm acme lead screw x 520mm",
+      "qty": 1,
+      "notes": ""
+    },
+    {
+      "class": "bearing",
+      "size": "688 (8x16x5)",
+      "qty": 2,
+      "notes": "lead screw ends"
+    },
+    {
+      "class": "bearing",
+      "size": "625 (5x16x5)",
+      "qty": 8,
+      "notes": "2 per V wheel"
+    },
+    {
+      "class": "wheel",
+      "size": "Solid V wheel 24mm",
+      "qty": 4,
+      "notes": ""
+    },
+    {
+      "class": "other",
+      "size": "flexible coupling 5mm x 8mm",
+      "qty": 1,
+      "notes": ""
+    },
+    {
+      "class": "other",
+      "size": "lock collar 8mm",
+      "qty": 2,
+      "notes": ""
+    },
+    {
+      "class": "washer",
+      "size": "8mm shim washer",
+      "qty": 2,
+      "notes": ""
+    },
+    {
+      "class": "washer",
+      "size": "precision shim 10x5x1",
+      "qty": 8,
+      "notes": ""
+    },
+    {
+      "class": "other",
+      "size": "eccentric spacer 6mm",
+      "qty": 2,
+      "notes": ""
+    },
+    {
+      "class": "other",
+      "size": "aluminium spacer 1.5in (38.1mm)",
+      "qty": 3,
+      "notes": "motor standoffs"
+    },
+    {
+      "class": "screw",
+      "size": "M5x40 low profile",
+      "qty": 4,
+      "notes": "wheel axles through plate + spacer block"
+    },
+    {
+      "class": "screw",
+      "size": "M5x15 low profile",
+      "qty": 6,
+      "notes": ""
+    },
+    {
+      "class": "nut",
+      "size": "M5 nyloc",
+      "qty": 6,
+      "notes": "2 loose + 4 in wheel kits"
+    },
+    {
+      "class": "screw",
+      "size": "M3x45 SHCS",
+      "qty": 3,
+      "notes": "motor through standoffs"
+    },
+    {
+      "class": "screw",
+      "size": "self-tapping (rail end tap)",
+      "qty": 4,
+      "notes": "end plates into V-Slot centre bores"
+    }
+  ],
+  "joins": [
+    {
+      "a": "threaded rod plate NEMA17 (end plate)",
+      "b": "V-Slot 20x60 linear rail 500mm",
+      "method": "screw",
+      "qty": 4,
+      "notes": "2 self-tapping screws per end into extrusion bores"
+    },
+    {
+      "a": "NEMA17 stepper",
+      "b": "threaded rod plate NEMA17 (end plate)",
+      "method": "screw",
+      "qty": 3,
+      "notes": "M3x45 through 38.1mm spacers"
+    },
+    {
+      "a": "8mm lead screw 520mm",
+      "b": "NEMA17 stepper",
+      "method": "press_fit",
+      "qty": 1,
+      "notes": "5x8 flexible coupling (set screws)"
+    },
+    {
+      "a": "8mm lead screw 520mm",
+      "b": "threaded rod plate NEMA17 (end plate)",
+      "method": "bearing",
+      "qty": 2,
+      "notes": "688 bearing each end, shim + lock collar"
+    },
+    {
+      "a": "solid V wheel assembly",
+      "b": "V-Slot gantry plate 20-80mm",
+      "method": "screw",
+      "qty": 4,
+      "notes": "M5x40 through plate and spacer block; 2 eccentric for preload"
+    },
+    {
+      "a": "spacer block",
+      "b": "V-Slot gantry plate 20-80mm",
+      "method": "screw",
+      "qty": 4,
+      "notes": "M5x15 (inferred)"
+    },
+    {
+      "a": "8mm acme nut block",
+      "b": "V-Slot gantry plate 20-80mm",
+      "method": "screw",
+      "qty": 2,
+      "notes": "M5x15 + nyloc"
+    }
+  ],
+  "motion": [
+    {
+      "between": [
+        "V-Slot gantry plate 20-80mm",
+        "V-Slot 20x60 linear rail 500mm"
+      ],
+      "type": "slide",
+      "travel": "~400mm (estimate: 500 rail - 88 plate - end clearance; OpenBuilds quotes 400mm for the 500mm C-Beam actuator)"
+    },
+    {
+      "between": [
+        "8mm lead screw 520mm",
+        "threaded rod plate NEMA17 (end plate)"
+      ],
+      "type": "rotate",
+      "travel": "continuous; 8mm lead per rev (OpenBuilds 8mm metric acme, 4-start 2mm pitch)"
+    }
+  ],
+  "assembly": {
+    "steps": 0,
+    "stepsSource": "OpenBuilds build pages/videos offline (openbuilds.com DNS fails 2026-10); no written step list recovered",
+    "order": [
+      "end plates onto rail",
+      "wheel kits + spacer blocks onto gantry plate",
+      "nut block onto plate",
+      "slide carriage onto rail, set eccentrics",
+      "lead screw through nut, 688 bearings + shims + lock collars",
+      "motor on standoffs + coupling"
+    ]
+  },
+  "referenceCad": {
+    "available": true,
+    "url": "https://raw.githubusercontent.com/Botland-com-pl/v-slot-profiles-models/HEAD/STEP/Assemblies/V%20Slot%20Lead%20Screw%20Driven%20Actuator/Nema%2017%20V%20Slot%20Lead%20Screw%20Driven%20Actuator.step",
+    "format": "STEP",
+    "license": "CC-BY-SA-4.0 (OpenBuilds parts library; mirror repo itself has no license file)",
+    "partCount": 42,
+    "keyDims": {
+      "note": "42 top-level instances / 66 solids (each wheel kit = 7 solids)",
+      "bboxMm": "127.0 x 59.4 x 594.1 (measured)",
+      "railMm": "60 x 20 x 500",
+      "gantryPlateMm": "127 x 88 x 3",
+      "endPlateMm": "53 x 59.3 x 3",
+      "leadScrewMm": "8 x 520",
+      "wheelOdMm": "23.9",
+      "cBeamAltParts": "C-Beam gantry plate 77.2x77.2x6, C-Beam end mount 80x50x12, C-Beam rail 40x80x250, AB nut block 34x12x33 (measured from separate library STEPs)"
+    }
+  },
+  "confidence": "medium — hardware list is counted from the labelled OpenBuilds assembly STEP, not a published BOM (bundle page for this variant not archived); C-Beam sibling BOM verified from archive; travel estimated; joins partly inferred",
+  "notes": "C-Beam 250mm bundle BOM (archived, CC BY): M5x25 LP x4, M5x20 LP x10, M5x55 LP x2, Al spacer 6mm x2, 40mm x2, 3mm x2, 1/4in x 8mm coupling x1, eccentric spacer x2, 688Z x2, 8mm shim x2, lock collar 8mm x2, Xtreme mini V wheel kit x4, C-Beam end mount x2, gantry plate x1, anti-backlash nut block x1, C-Beam rail 250 x1, 8mm acme 250 x1, NEMA23 optional. Travel 150/400/900mm for 250/500/1000mm."
+}

@@ -1,0 +1,113 @@
+{
+  "id": "magnet-hinged-box",
+  "name": "Accessory Box with Print-in-Place Hinge and Magnetic Lid by yekta (Printables 1372502)",
+  "category": "consumer-item",
+  "sources": [
+    {
+      "url": "https://www.printables.com/model/1372502-accessory-box-with-print-in-place-hinge-and-magnet",
+      "what": "product page (dims, magnets, license)"
+    },
+    {
+      "url": "https://www.printables.com/model/1372502-accessory-box-with-print-in-place-hinge-and-magnet/files",
+      "what": "STEP + SLDPRT + 3MF"
+    }
+  ],
+  "license": "CC-BY-4.0",
+  "overallDimsMm": {
+    "x": 150,
+    "y": 112,
+    "z": 56.4,
+    "note": "measured from STEP: base and lid are each 150 x 112 x 28.2, printed open flat and joined at the hinge; closed height 56.4 inferred (2 x 28.2). Author states 15 x 10 x 5 cm."
+  },
+  "parts": [
+    {
+      "name": "base",
+      "qty": 1,
+      "source": "printed",
+      "material": "PLA",
+      "dimsMm": "150x112x28.2",
+      "notes": "STEP volume 56.6 cm3; carries 4 hinge knuckles (2 per hinge)"
+    },
+    {
+      "name": "lid",
+      "qty": 1,
+      "source": "printed",
+      "material": "PLA",
+      "dimsMm": "150x112x28.2",
+      "notes": "STEP volume 54.3 cm3; carries 2 hinge knuckles (1 per hinge)"
+    },
+    {
+      "name": "magnet",
+      "qty": 8,
+      "source": "bought",
+      "material": "neodymium disc",
+      "dimsMm": "author: '4 x 2mm' (read as 4mm dia x 2mm)",
+      "notes": "author lists quantity 8; STEP shows 4 partial-cylinder pockets per half at the front edge with r=3.4mm (6.8mm dia), so pocket size vs stated magnet size is unresolved"
+    }
+  ],
+  "hardware": [
+    {
+      "class": "magnet",
+      "size": "4x2mm disc (as stated)",
+      "qty": 8,
+      "notes": "4 in base + 4 in lid, glued (split inferred from 4+4 pockets in STEP)"
+    }
+  ],
+  "joins": [
+    {
+      "a": "base",
+      "b": "lid",
+      "method": "pin",
+      "qty": 2,
+      "notes": "two print-in-place hinges at x=+-35mm, 3 knuckles each (base-lid-base), knuckle dia 6.4 (r=3.2 measured), knuckle lengths ~8.4 base / 8.0 lid, ~1.8mm gaps; integral pin, no loose pin"
+    },
+    {
+      "a": "magnet",
+      "b": "base/lid",
+      "method": "glue",
+      "qty": 8,
+      "notes": ""
+    },
+    {
+      "a": "lid",
+      "b": "base",
+      "method": "magnet",
+      "qty": 4,
+      "notes": "magnet pairs hold the lid closed"
+    }
+  ],
+  "motion": [
+    {
+      "between": [
+        "lid",
+        "base"
+      ],
+      "type": "hinge",
+      "travel": "~180deg (prints flat open; closes onto base)"
+    }
+  ],
+  "assembly": {
+    "steps": 2,
+    "stepsSource": "no numbered instructions; implied by description (print in place, then add magnets)",
+    "order": [
+      "print base+lid as one print-in-place piece",
+      "glue 8 magnets (check polarity)"
+    ]
+  },
+  "referenceCad": {
+    "available": true,
+    "url": "https://www.printables.com/model/1372502-accessory-box-with-print-in-place-hinge-and-magnet/files",
+    "format": "STEP",
+    "license": "CC-BY-4.0",
+    "partCount": 2,
+    "keyDims": {
+      "bboxMm": "150 x 217.6 x 28.2 (measured from STEP, open flat)",
+      "halfMm": "150 x 112 x 28.2 each (measured)",
+      "knuckleDiaMm": "6.4 (r=3.2 measured)",
+      "hingeCount": "2 hinges x 3 knuckles (measured)",
+      "frontPocketsMm": "4 per half, r=3.4 (measured)"
+    }
+  },
+  "confidence": "high: license, dims and magnet quantity from the author; geometry measured from STEP. Medium: magnet pocket interpretation (stated 4x2mm vs measured r3.4 front pockets), closed height inferred, hinge travel estimated.",
+  "notes": "Author also publishes an Onshape link. Filament-pin alternatives: Printables 147854 'Generic box with hinge and magnets' (CC0, 1.75mm filament pin, 3x3mm magnets, STL only) and 58536 (CC-BY-SA, Fusion f3d only, 1.75mm filament pin, parametric magnets). Local STEP copy: (local scratch copy)"
+}

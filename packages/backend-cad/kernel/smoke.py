@@ -1482,6 +1482,35 @@ def swept(client: httpx.Client) -> None:
     check("swept G5: a slider meets a stop inside its stroke, and not one past it",
           len(into) == 1 and into[0]["b"] == "stop" and past == [], f"{into} / {past}")
 
+    # A wheel rolling on a rail (the linear actuator's V-wheels): turned about
+    # its own axis it is its rest pose, so the sweep is skipped and the rest
+    # contact is the static check's alone. A lug makes it not round, and the
+    # lug swings down into the rail.
+    wheel = ("from build123d import *\ndef build(p):\n    _ = p['nonce']\n"
+             "    w = Pos(0, 0, p['z']) * Rot(90, 0, 0) * Cylinder(15, 8)\n"
+             "    return w + Pos(0, 0, p['z'] + 15.5) * Box(4, 8, 3) if p['lug'] else w\n")
+    rail = "from build123d import *\ndef build(p):\n    return Pos(0, 0, -5) * Box(80, 20, 10)\n"
+
+    def roll(z, lug):
+        return client.post("/clash", json={"parts": [
+            {"key": "wheel", "code": wheel, "params": {"nonce": n, "z": z, "lug": lug}, "matrix": []},
+            {"key": "rail", "code": rail, "params": {}, "matrix": []},
+        ], "sweeps": [{"joint": "w1", "type": "revolute", "origin": [0, 0, z], "direction": [0, 1, 0],
+                       "limits": [-180, 180], "moving": ["wheel"]}]}).json()
+
+    on = roll(15.0, False)
+    check("swept G5: a round wheel resting on its rail sweeps nothing and is clean",
+          on["ok"] and on["clash"]["clashes"] == [] and on["clash"].get("swept") == [], str(on.get("clash"))[:300])
+    sunk = roll(14.0, False).get("clash") or {}
+    check("swept G5: a round wheel 1mm into its rail is the static check's finding only (no sweep of it)",
+          [(c["a"], c["b"]) for c in sunk.get("clashes", [])] in ([("wheel", "rail")], [("rail", "wheel")]) and sunk.get("swept") == [],
+          str(sunk)[:300])
+    lug = (roll(15.0, True).get("clash") or {})
+    found = lug.get("swept") or []
+    check("swept G5: the same wheel with a lug still sweeps, and the lug hits the rail",
+          lug.get("clashes") == [] and len(found) == 1 and found[0]["joint"] == "w1" and found[0]["a"] == "wheel",
+          str(lug)[:300])
+
 
 # t4-006 as committed by the benchmark cook: a sphere cavity whose bottom pole
 # exported as an open edge until meshpart.weld dropped the collapsed sliver.

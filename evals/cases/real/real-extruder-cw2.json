@@ -1,0 +1,113 @@
+{
+  "id": "real-extruder-cw2",
+  "facts": "evals/real/voron-clockwork2.json",
+  "prompt": "a compact dual-gear filament extruder for a 3D printer: a 63x25x69mm printed main body and a 59x8x71mm motor plate holding a 36mm round NEMA 14 stepper whose 10-tooth pinion drives a 50-tooth gear (5:1); the drive shaft turns in two MR85 bearings; a printed idler arm on a 3mm pin carries the idler gear and is pressed against the drive gear by a spring and an M3 thumb screw; a printed latch hinges shut over the filament path; printed parts take M3 heat-set inserts and M3 socket-head screws",
+  "why": "GPL-3.0, STEP published (81 solids). 8 printed parts, ~45 bought (17 inserts, ~15 M3 screws, 2 MR85, gears, spring), 24 manual pages.",
+  "expect": {
+    "nodes": {
+      "min": 3,
+      "max": 8
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "globalProblems": 0,
+    "assembly": {
+      "parts": 20,
+      "contacts": 3,
+      "joints": [
+        {
+          "motion": "revolute",
+          "count": 2,
+          "travel": 10
+        }
+      ],
+      "bom": [
+        {
+          "family": "heatset_std|heatset_short",
+          "key": "M3",
+          "minQty": 8
+        },
+        {
+          "family": "shcs|button|csk",
+          "key": "M3",
+          "minQty": 8
+        }
+      ],
+      "bbox": {
+        "value": [
+          69,
+          72,
+          71
+        ],
+        "tol": 0.15,
+        "sorted": true
+      }
+    }
+  },
+  "reference": {
+    "partsMade": 8,
+    "hardware": {
+      "M3 insert": 17,
+      "M3 SHCS": 13,
+      "MR85": 2,
+      "3x20 shaft": 1,
+      "spring": 1,
+      "NEMA14": 1
+    },
+    "steps": 24,
+    "order": [
+      "inserts",
+      "guidler",
+      "motor plate bearing",
+      "main body bearing",
+      "drive gear",
+      "tension arm",
+      "latch",
+      "tension"
+    ],
+    "cad": {
+      "license": "GPL-3.0",
+      "partCount": 81,
+      "bboxMm": [
+        68.9,
+        72.1,
+        70.9
+      ],
+      "mainBody": [
+        62.8,
+        24.7,
+        68.7
+      ],
+      "motorPlate": [
+        59.1,
+        8.2,
+        70.8
+      ]
+    }
+  }
+}

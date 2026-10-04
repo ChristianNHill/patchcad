@@ -1,0 +1,1699 @@
+{
+ "nodes": [
+  {
+   "id": "bottom-panel",
+   "kind": "part",
+   "title": "Bottom panel",
+   "spec": "Flat rectangular plywood bottom of the crate. Its two long edges slide into the grooves cut along the inside of the side panels, and two long wood screws per side are driven through each side panel into its edge.",
+   "contract": {
+    "name": "Bottom panel",
+    "summary": "460 × 292 × 9 plywood floor; its long edges seat on the side-panel groove floors and take two screws each.",
+    "params": [
+     {
+      "type": "number",
+      "name": "length",
+      "description": "how long the floor runs, matching the side panels",
+      "default": 460,
+      "min": 300,
+      "max": 800
+     },
+     {
+      "type": "number",
+      "name": "width",
+      "description": "floor width edge to edge, including the part hidden in the grooves",
+      "default": 292,
+      "min": 150,
+      "max": 500
+     },
+     {
+      "type": "number",
+      "name": "thickness",
+      "description": "thickness of the floor sheet",
+      "default": 9,
+      "min": 6,
+      "max": 18
+     }
+    ],
+    "provides": [
+     {
+      "key": "near_edge",
+      "type": "FLAT_FACE",
+      "description": "long edge that seats in the near side panel's groove"
+     },
+     {
+      "key": "far_edge",
+      "type": "FLAT_FACE",
+      "description": "long edge that seats in the far side panel's groove"
+     }
+    ],
+    "requires": [],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "CNC",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "near_edge",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         "-param(bottom-panel.width) / 2",
+         0
+        ],
+        "zAxis": [
+         0,
+         -1,
+         0
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "size": 7
+       }
+      },
+      {
+       "name": "far_edge",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         "param(bottom-panel.width) / 2",
+         0
+        ],
+        "zAxis": [
+         0,
+         1,
+         0
+        ],
+        "xAxis": [
+         -1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "size": 7
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "box",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "dims": [
+         "param(bottom-panel.length)",
+         "param(bottom-panel.width)",
+         "param(bottom-panel.thickness)"
+        ]
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "length": "expr: param(side-panel.length)",
+      "width": "expr: param(slat-plain.length) - 2 * param(side-panel.thickness) + 2 * param(side-panel.grooveDepth)"
+     },
+     "visualChecks": [
+      "Is the part a single flat rectangular panel?",
+      "Are the screw holes in the two long edges only?"
+     ],
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "x",
+       "min": 459.5,
+       "max": 460.5
+      }
+     ],
+     "sourcing": {
+      "class": "fabricate",
+      "process": "cnc",
+      "material": "birch plywood",
+      "finish": "sanded, edges eased",
+      "allowUndercuts": true
+     }
+    }
+   }
+  },
+  {
+   "id": "side-panel",
+   "kind": "part",
+   "title": "Side panel",
+   "spec": "Solid 460 × 250 plywood long side of the crate, used twice. A groove along the inside face near the bottom edge takes the floor, and both short end edges take the screws of the three end slats.",
+   "contract": {
+    "name": "Side panel",
+    "summary": "460 × 250 × 15 solid side panel; groove for the floor on its inner (+z) face, slat screw seats on both end edges.",
+    "params": [
+     {
+      "type": "number",
+      "name": "length",
+      "description": "overall length of the crate side",
+      "default": 460,
+      "min": 300,
+      "max": 800
+     },
+     {
+      "type": "number",
+      "name": "height",
+      "description": "overall height of the crate side",
+      "default": 250,
+      "min": 150,
+      "max": 400
+     },
+     {
+      "type": "number",
+      "name": "thickness",
+      "description": "thickness of the side panel sheet",
+      "default": 15,
+      "min": 9,
+      "max": 25
+     },
+     {
+      "type": "number",
+      "name": "grooveDepth",
+      "description": "how deep the floor groove cuts into the inside face",
+      "default": 6,
+      "min": 3,
+      "max": 10
+     },
+     {
+      "type": "number",
+      "name": "grooveWidth",
+      "description": "width of the floor groove, a little over the floor thickness",
+      "default": 9.5,
+      "min": 6,
+      "max": 18
+     },
+     {
+      "type": "number",
+      "name": "grooveInset",
+      "description": "distance from the bottom edge to the middle of the floor groove",
+      "default": 12,
+      "min": 8,
+      "max": 40
+     }
+    ],
+    "provides": [
+     {
+      "key": "end_pos_low",
+      "type": "FLAT_FACE",
+      "description": "+x end edge, bottom slat seat"
+     },
+     {
+      "key": "end_pos_mid",
+      "type": "FLAT_FACE",
+      "description": "+x end edge, middle slat seat"
+     },
+     {
+      "key": "end_pos_top",
+      "type": "FLAT_FACE",
+      "description": "+x end edge, hand-hold slat seat"
+     },
+     {
+      "key": "end_neg_low",
+      "type": "FLAT_FACE",
+      "description": "-x end edge, bottom slat seat"
+     },
+     {
+      "key": "end_neg_mid",
+      "type": "FLAT_FACE",
+      "description": "-x end edge, middle slat seat"
+     },
+     {
+      "key": "end_neg_top",
+      "type": "FLAT_FACE",
+      "description": "-x end edge, hand-hold slat seat"
+     }
+    ],
+    "requires": [
+     {
+      "key": "bottom_seat",
+      "type": "FLAT_FACE",
+      "description": "floor of the groove the bottom panel edge sits on"
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "CNC",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "bottom_groove",
+       "type": "GROOVE",
+       "pose": {
+        "origin": [
+         0,
+         "-param(side-panel.height) / 2 + param(side-panel.grooveInset)",
+         "param(side-panel.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "width": "param(side-panel.grooveWidth)",
+        "depth": "param(side-panel.grooveDepth)"
+       }
+      },
+      {
+       "name": "bottom_seat",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         "-param(side-panel.height) / 2 + param(side-panel.grooveInset)",
+         "param(side-panel.thickness) / 2 - param(side-panel.grooveDepth)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         -1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "size": 8
+       }
+      },
+      {
+       "name": "end_pos_low",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(side-panel.length) / 2",
+         "-param(side-panel.height) / 2 + 35",
+         0
+        ],
+        "zAxis": [
+         1,
+         0,
+         0
+        ],
+        "xAxis": [
+         0,
+         1,
+         0
+        ]
+       },
+       "params": {
+        "size": 12
+       }
+      },
+      {
+       "name": "end_pos_mid",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(side-panel.length) / 2",
+         0,
+         0
+        ],
+        "zAxis": [
+         1,
+         0,
+         0
+        ],
+        "xAxis": [
+         0,
+         1,
+         0
+        ]
+       },
+       "params": {
+        "size": 12
+       }
+      },
+      {
+       "name": "end_pos_top",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(side-panel.length) / 2",
+         "param(side-panel.height) / 2 - 35",
+         0
+        ],
+        "zAxis": [
+         1,
+         0,
+         0
+        ],
+        "xAxis": [
+         0,
+         1,
+         0
+        ]
+       },
+       "params": {
+        "size": 12
+       }
+      },
+      {
+       "name": "end_neg_low",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "-param(side-panel.length) / 2",
+         "-param(side-panel.height) / 2 + 35",
+         0
+        ],
+        "zAxis": [
+         -1,
+         0,
+         0
+        ],
+        "xAxis": [
+         0,
+         1,
+         0
+        ]
+       },
+       "params": {
+        "size": 12
+       }
+      },
+      {
+       "name": "end_neg_mid",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "-param(side-panel.length) / 2",
+         0,
+         0
+        ],
+        "zAxis": [
+         -1,
+         0,
+         0
+        ],
+        "xAxis": [
+         0,
+         1,
+         0
+        ]
+       },
+       "params": {
+        "size": 12
+       }
+      },
+      {
+       "name": "end_neg_top",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "-param(side-panel.length) / 2",
+         "param(side-panel.height) / 2 - 35",
+         0
+        ],
+        "zAxis": [
+         -1,
+         0,
+         0
+        ],
+        "xAxis": [
+         0,
+         1,
+         0
+        ]
+       },
+       "params": {
+        "size": 12
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "box",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "dims": [
+         "param(side-panel.length)",
+         "param(side-panel.height)",
+         "param(side-panel.thickness)"
+        ]
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "grooveWidth": "expr: param(bottom-panel.thickness) + 0.5"
+     },
+     "visualChecks": [
+      "Is the part a solid rectangular panel with no openings?",
+      "Is there a single straight groove running the full length of one face near one long edge?",
+      "Are there screw holes in both short end edges?"
+     ],
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "x",
+       "min": 459.5,
+       "max": 460.5
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "y",
+       "min": 249.5,
+       "max": 250.5
+      }
+     ],
+     "sourcing": {
+      "class": "fabricate",
+      "process": "cnc",
+      "material": "birch plywood",
+      "finish": "sanded, edges eased",
+      "allowUndercuts": true
+     }
+    }
+   }
+  },
+  {
+   "id": "slat-plain",
+   "kind": "part",
+   "title": "Plain end slat",
+   "spec": "Plain 310 × 70 × 12 plywood slat closing the short end of the crate, used four times (two per end). It spans the full crate width and is screwed onto the end edges of both side panels with two countersunk screws at each end, heads on the outer (+z) face.",
+   "contract": {
+    "name": "Plain end slat",
+    "summary": "310 × 70 × 12 slat; inner (-z) face seats on the side-panel end edges at each end.",
+    "params": [
+     {
+      "type": "number",
+      "name": "length",
+      "description": "slat length across the crate width",
+      "default": 310,
+      "min": 150,
+      "max": 500
+     },
+     {
+      "type": "number",
+      "name": "width",
+      "description": "slat height on the crate end",
+      "default": 70,
+      "min": 40,
+      "max": 120
+     },
+     {
+      "type": "number",
+      "name": "thickness",
+      "description": "slat board thickness",
+      "default": 12,
+      "min": 9,
+      "max": 20
+     },
+     {
+      "type": "number",
+      "name": "endInset",
+      "description": "distance from each slat end to the middle of the side panel edge it screws into",
+      "default": 7.5,
+      "min": 4,
+      "max": 13
+     }
+    ],
+    "provides": [],
+    "requires": [
+     {
+      "key": "left_end",
+      "type": "FLAT_FACE",
+      "description": "inner face at the -x end, on a side panel end edge"
+     },
+     {
+      "key": "right_end",
+      "type": "FLAT_FACE",
+      "description": "inner face at the +x end, on the other side panel end edge"
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "CNC",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "left_end",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "-param(slat-plain.length) / 2 + param(slat-plain.endInset)",
+         0,
+         "-param(slat-plain.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         0,
+         1,
+         0
+        ]
+       },
+       "params": {
+        "size": 12
+       }
+      },
+      {
+       "name": "right_end",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(slat-plain.length) / 2 - param(slat-plain.endInset)",
+         0,
+         "-param(slat-plain.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         0,
+         1,
+         0
+        ]
+       },
+       "params": {
+        "size": 12
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "box",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "dims": [
+         "param(slat-plain.length)",
+         "param(slat-plain.width)",
+         "param(slat-plain.thickness)"
+        ]
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "endInset": "expr: param(side-panel.thickness) / 2"
+     },
+     "visualChecks": [
+      "Is the slat a plain rectangular board with no cut-out?",
+      "Are there exactly two countersunk holes near each end of the slat?"
+     ],
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "x",
+       "min": 309,
+       "max": 311
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "y",
+       "min": 69,
+       "max": 71
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "z",
+       "min": 11.5,
+       "max": 12.5
+      }
+     ],
+     "sourcing": {
+      "class": "fabricate",
+      "process": "cnc",
+      "material": "birch plywood",
+      "finish": "sanded, edges eased"
+     }
+    }
+   }
+  },
+  {
+   "id": "slat-handle",
+   "kind": "part",
+   "title": "Hand-hold end slat",
+   "spec": "Top slat on each short end, same 310 × 70 × 12 board as the plain slats but with a rounded hand-hold slot cut through its middle. Screwed onto the end edges of both side panels with two countersunk screws at each end, heads on the outer (+z) face.",
+   "contract": {
+    "name": "Hand-hold end slat",
+    "summary": "310 × 70 × 12 slat with a central through hand-hold; inner (-z) face seats on the side-panel end edges.",
+    "params": [
+     {
+      "type": "number",
+      "name": "length",
+      "description": "slat length across the crate width",
+      "default": 310,
+      "min": 150,
+      "max": 500
+     },
+     {
+      "type": "number",
+      "name": "width",
+      "description": "slat height on the crate end",
+      "default": 70,
+      "min": 40,
+      "max": 120
+     },
+     {
+      "type": "number",
+      "name": "thickness",
+      "description": "slat board thickness",
+      "default": 12,
+      "min": 9,
+      "max": 20
+     },
+     {
+      "type": "number",
+      "name": "endInset",
+      "description": "distance from each slat end to the middle of the side panel edge it screws into",
+      "default": 7.5,
+      "min": 4,
+      "max": 13
+     },
+     {
+      "type": "number",
+      "name": "handleLength",
+      "description": "length of the hand-hold opening, room for four fingers",
+      "default": 110,
+      "min": 80,
+      "max": 160
+     },
+     {
+      "type": "number",
+      "name": "handleWidth",
+      "description": "height of the hand-hold opening",
+      "default": 30,
+      "min": 22,
+      "max": 45
+     }
+    ],
+    "provides": [],
+    "requires": [
+     {
+      "key": "left_end",
+      "type": "FLAT_FACE",
+      "description": "inner face at the -x end, on a side panel end edge"
+     },
+     {
+      "key": "right_end",
+      "type": "FLAT_FACE",
+      "description": "inner face at the +x end, on the other side panel end edge"
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "CNC",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "left_end",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "-param(slat-handle.length) / 2 + param(slat-handle.endInset)",
+         0,
+         "-param(slat-handle.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         0,
+         1,
+         0
+        ]
+       },
+       "params": {
+        "size": 12
+       }
+      },
+      {
+       "name": "right_end",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(slat-handle.length) / 2 - param(slat-handle.endInset)",
+         0,
+         "-param(slat-handle.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         0,
+         1,
+         0
+        ]
+       },
+       "params": {
+        "size": 12
+       }
+      },
+      {
+       "name": "hand_hold",
+       "type": "SLOT",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "param(slat-handle.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "width": "param(slat-handle.handleWidth)"
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "box",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "dims": [
+         "param(slat-handle.length)",
+         "param(slat-handle.width)",
+         "param(slat-handle.thickness)"
+        ]
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "endInset": "expr: param(side-panel.thickness) / 2",
+      "length": "expr: param(slat-plain.length)",
+      "width": "expr: param(slat-plain.width)",
+      "thickness": "expr: param(slat-plain.thickness)"
+     },
+     "visualChecks": [
+      "Is there a single rounded-end hand-hold opening centred in the slat?",
+      "Does the hand-hold run lengthwise along the slat?",
+      "Are there exactly two countersunk holes near each end of the slat?"
+     ],
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "x",
+       "min": 309,
+       "max": 311
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "y",
+       "min": 69,
+       "max": 71
+      },
+      {
+       "kind": "line_count",
+       "from": [
+        -160,
+        0,
+        0
+       ],
+       "to": [
+        160,
+        0,
+        0
+       ],
+       "crossings_min": 2,
+       "crossings_max": 2
+      }
+     ],
+     "sourcing": {
+      "class": "fabricate",
+      "process": "cnc",
+      "material": "birch plywood",
+      "finish": "sanded, hand-hold edges rounded"
+     }
+    }
+   }
+  },
+  {
+   "id": "side-panel-far",
+   "kind": "part",
+   "title": "Far side panel",
+   "spec": "Second solid 460 × 250 plywood long side of the crate, identical to the near side panel. A groove along the inside face near the bottom edge takes the floor's far edge, and both short end edges take the screws of the three end slats on each end.",
+   "contract": {
+    "name": "Far side panel",
+    "summary": "460 × 250 × 15 solid side panel matching the near one; floor groove on its inner (+z) face, slat screw seats on both end edges.",
+    "params": [
+     {
+      "type": "number",
+      "name": "length",
+      "description": "overall length of the crate side",
+      "default": 460,
+      "min": 300,
+      "max": 800
+     },
+     {
+      "type": "number",
+      "name": "height",
+      "description": "overall height of the crate side",
+      "default": 250,
+      "min": 150,
+      "max": 400
+     },
+     {
+      "type": "number",
+      "name": "thickness",
+      "description": "thickness of the side panel sheet",
+      "default": 15,
+      "min": 9,
+      "max": 25
+     },
+     {
+      "type": "number",
+      "name": "grooveDepth",
+      "description": "how deep the floor groove cuts into the inside face",
+      "default": 6,
+      "min": 3,
+      "max": 10
+     },
+     {
+      "type": "number",
+      "name": "grooveWidth",
+      "description": "width of the floor groove, a little over the floor thickness",
+      "default": 9.5,
+      "min": 6,
+      "max": 18
+     },
+     {
+      "type": "number",
+      "name": "grooveInset",
+      "description": "distance from the bottom edge to the middle of the floor groove",
+      "default": 12,
+      "min": 8,
+      "max": 40
+     }
+    ],
+    "provides": [
+     {
+      "key": "end_pos_low",
+      "type": "FLAT_FACE",
+      "description": "+x end edge, bottom slat seat"
+     },
+     {
+      "key": "end_pos_mid",
+      "type": "FLAT_FACE",
+      "description": "+x end edge, middle slat seat"
+     },
+     {
+      "key": "end_pos_top",
+      "type": "FLAT_FACE",
+      "description": "+x end edge, hand-hold slat seat"
+     },
+     {
+      "key": "end_neg_low",
+      "type": "FLAT_FACE",
+      "description": "-x end edge, bottom slat seat"
+     },
+     {
+      "key": "end_neg_mid",
+      "type": "FLAT_FACE",
+      "description": "-x end edge, middle slat seat"
+     },
+     {
+      "key": "end_neg_top",
+      "type": "FLAT_FACE",
+      "description": "-x end edge, hand-hold slat seat"
+     }
+    ],
+    "requires": [
+     {
+      "key": "bottom_seat",
+      "type": "FLAT_FACE",
+      "description": "floor of the groove the bottom panel's far edge sits on"
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "CNC",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "bottom_groove",
+       "type": "GROOVE",
+       "pose": {
+        "origin": [
+         0,
+         "-param(side-panel-far.height) / 2 + param(side-panel-far.grooveInset)",
+         "param(side-panel-far.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "width": "param(side-panel-far.grooveWidth)",
+        "depth": "param(side-panel-far.grooveDepth)"
+       }
+      },
+      {
+       "name": "bottom_seat",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         "-param(side-panel-far.height) / 2 + param(side-panel-far.grooveInset)",
+         "param(side-panel-far.thickness) / 2 - param(side-panel-far.grooveDepth)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         -1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "size": 8
+       }
+      },
+      {
+       "name": "end_pos_low",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(side-panel-far.length) / 2",
+         "-param(side-panel-far.height) / 2 + 35",
+         0
+        ],
+        "zAxis": [
+         1,
+         0,
+         0
+        ],
+        "xAxis": [
+         0,
+         1,
+         0
+        ]
+       },
+       "params": {
+        "size": 12
+       }
+      },
+      {
+       "name": "end_pos_mid",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(side-panel-far.length) / 2",
+         0,
+         0
+        ],
+        "zAxis": [
+         1,
+         0,
+         0
+        ],
+        "xAxis": [
+         0,
+         1,
+         0
+        ]
+       },
+       "params": {
+        "size": 12
+       }
+      },
+      {
+       "name": "end_pos_top",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(side-panel-far.length) / 2",
+         "param(side-panel-far.height) / 2 - 35",
+         0
+        ],
+        "zAxis": [
+         1,
+         0,
+         0
+        ],
+        "xAxis": [
+         0,
+         1,
+         0
+        ]
+       },
+       "params": {
+        "size": 12
+       }
+      },
+      {
+       "name": "end_neg_low",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "-param(side-panel-far.length) / 2",
+         "-param(side-panel-far.height) / 2 + 35",
+         0
+        ],
+        "zAxis": [
+         -1,
+         0,
+         0
+        ],
+        "xAxis": [
+         0,
+         1,
+         0
+        ]
+       },
+       "params": {
+        "size": 12
+       }
+      },
+      {
+       "name": "end_neg_mid",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "-param(side-panel-far.length) / 2",
+         0,
+         0
+        ],
+        "zAxis": [
+         -1,
+         0,
+         0
+        ],
+        "xAxis": [
+         0,
+         1,
+         0
+        ]
+       },
+       "params": {
+        "size": 12
+       }
+      },
+      {
+       "name": "end_neg_top",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "-param(side-panel-far.length) / 2",
+         "param(side-panel-far.height) / 2 - 35",
+         0
+        ],
+        "zAxis": [
+         -1,
+         0,
+         0
+        ],
+        "xAxis": [
+         0,
+         1,
+         0
+        ]
+       },
+       "params": {
+        "size": 12
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "box",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "dims": [
+         "param(side-panel-far.length)",
+         "param(side-panel-far.height)",
+         "param(side-panel-far.thickness)"
+        ]
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "length": "expr: param(side-panel.length)",
+      "height": "expr: param(side-panel.height)",
+      "thickness": "expr: param(side-panel.thickness)",
+      "grooveDepth": "expr: param(side-panel.grooveDepth)",
+      "grooveInset": "expr: param(side-panel.grooveInset)",
+      "grooveWidth": "expr: param(bottom-panel.thickness) + 0.5"
+     },
+     "visualChecks": [
+      "Is the part a solid rectangular panel with no openings?",
+      "Is there a single straight groove running the full length of one face near one long edge?",
+      "Are there screw holes in both short end edges?"
+     ],
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "x",
+       "min": 459.5,
+       "max": 460.5
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "y",
+       "min": 249.5,
+       "max": 250.5
+      }
+     ],
+     "sourcing": {
+      "class": "fabricate",
+      "process": "cnc",
+      "material": "birch plywood",
+      "finish": "sanded, edges eased",
+      "allowUndercuts": true
+     }
+    }
+   }
+  }
+ ],
+ "edges": [
+  {
+   "from": "bottom-panel",
+   "fromPort": "near_edge",
+   "to": "side-panel",
+   "toPort": "bottom_seat"
+  },
+  {
+   "from": "bottom-panel",
+   "fromPort": "far_edge",
+   "to": "side-panel-far",
+   "toPort": "bottom_seat"
+  },
+  {
+   "from": "side-panel",
+   "fromPort": "end_pos_low",
+   "to": "slat-plain",
+   "toPort": "right_end"
+  },
+  {
+   "from": "side-panel-far",
+   "fromPort": "end_neg_low",
+   "to": "slat-plain",
+   "toPort": "left_end"
+  },
+  {
+   "from": "side-panel-far",
+   "fromPort": "end_pos_low",
+   "to": "slat-plain",
+   "toPort": "right_end"
+  },
+  {
+   "from": "side-panel",
+   "fromPort": "end_neg_low",
+   "to": "slat-plain",
+   "toPort": "left_end"
+  },
+  {
+   "from": "side-panel",
+   "fromPort": "end_pos_mid",
+   "to": "slat-plain",
+   "toPort": "right_end"
+  },
+  {
+   "from": "side-panel-far",
+   "fromPort": "end_neg_mid",
+   "to": "slat-plain",
+   "toPort": "left_end"
+  },
+  {
+   "from": "side-panel-far",
+   "fromPort": "end_pos_mid",
+   "to": "slat-plain",
+   "toPort": "right_end"
+  },
+  {
+   "from": "side-panel",
+   "fromPort": "end_neg_mid",
+   "to": "slat-plain",
+   "toPort": "left_end"
+  },
+  {
+   "from": "side-panel",
+   "fromPort": "end_pos_top",
+   "to": "slat-handle",
+   "toPort": "right_end"
+  },
+  {
+   "from": "side-panel-far",
+   "fromPort": "end_neg_top",
+   "to": "slat-handle",
+   "toPort": "left_end"
+  },
+  {
+   "from": "side-panel-far",
+   "fromPort": "end_pos_top",
+   "to": "slat-handle",
+   "toPort": "right_end"
+  },
+  {
+   "from": "side-panel",
+   "fromPort": "end_neg_top",
+   "to": "slat-handle",
+   "toPort": "left_end"
+  }
+ ],
+ "entryNodeId": "bottom-panel",
+ "rationale": "A flat-pack crate is separate boards by definition and its 460 mm panels are far past any print bed, so it splits into four CNC-routed plywood designs: one side panel placed twice (mirrored by rotation), the floor, a plain slat placed four times and a hand-hold slat placed twice. Each slat joint carries two screws per end, so the 12 declared joints across two panel copies mint the 24 countersunk slat screws, and the two floor joints mint the four long screws.",
+ "design": "Honest flat-pack woodwork: square-cut plywood boards with lightly eased (about 1 mm round-over) outside edges, no decoration, proportions that read as a sturdy utility crate. Countersunk heads sit flush on the outside faces; the hand-hold is a generously rounded stadium with fully rounded edges for comfort.",
+ "joints": [
+  {
+   "id": "floor-near",
+   "a": {
+    "node": "bottom-panel",
+    "port": "near_edge"
+   },
+   "b": {
+    "node": "side-panel",
+    "port": "bottom_seat"
+   },
+   "intent": "permanent",
+   "motion": "fixed",
+   "duty": "occasional",
+   "load": "light",
+   "access": "one_side",
+   "count": 2,
+   "pitch": 300,
+   "wallA": 20,
+   "wallB": "param(side-panel.thickness) - param(side-panel.grooveDepth)",
+   "threadHint": "M4",
+   "note": "long wood screws through the side panel into the floor's edge"
+  },
+  {
+   "id": "floor-far",
+   "a": {
+    "node": "bottom-panel",
+    "port": "far_edge"
+   },
+   "b": {
+    "node": "side-panel-far",
+    "port": "bottom_seat"
+   },
+   "intent": "permanent",
+   "motion": "fixed",
+   "duty": "occasional",
+   "load": "light",
+   "access": "one_side",
+   "count": 2,
+   "pitch": 300,
+   "wallA": 20,
+   "wallB": "param(side-panel-far.thickness) - param(side-panel-far.grooveDepth)",
+   "threadHint": "M4",
+   "note": "long wood screws through the side panel into the floor's edge"
+  },
+  {
+   "id": "slat-pl-n",
+   "a": {
+    "node": "side-panel",
+    "port": "end_pos_low"
+   },
+   "b": {
+    "node": "slat-plain",
+    "port": "right_end"
+   },
+   "intent": "permanent",
+   "motion": "fixed",
+   "duty": "occasional",
+   "load": "light",
+   "access": "one_side",
+   "count": 2,
+   "pitch": 30,
+   "wallA": 20,
+   "wallB": "param(slat-plain.thickness)",
+   "flush": true,
+   "threadHint": "M4"
+  },
+  {
+   "id": "slat-pl-f",
+   "a": {
+    "node": "side-panel-far",
+    "port": "end_neg_low"
+   },
+   "b": {
+    "node": "slat-plain",
+    "port": "left_end"
+   },
+   "intent": "permanent",
+   "motion": "fixed",
+   "duty": "occasional",
+   "load": "light",
+   "access": "one_side",
+   "count": 2,
+   "pitch": 30,
+   "wallA": 20,
+   "wallB": "param(slat-plain.thickness)",
+   "flush": true,
+   "threadHint": "M4"
+  },
+  {
+   "id": "slat-nl-f",
+   "a": {
+    "node": "side-panel-far",
+    "port": "end_pos_low"
+   },
+   "b": {
+    "node": "slat-plain",
+    "port": "right_end"
+   },
+   "intent": "permanent",
+   "motion": "fixed",
+   "duty": "occasional",
+   "load": "light",
+   "access": "one_side",
+   "count": 2,
+   "pitch": 30,
+   "wallA": 20,
+   "wallB": "param(slat-plain.thickness)",
+   "flush": true,
+   "threadHint": "M4"
+  },
+  {
+   "id": "slat-nl-n",
+   "a": {
+    "node": "side-panel",
+    "port": "end_neg_low"
+   },
+   "b": {
+    "node": "slat-plain",
+    "port": "left_end"
+   },
+   "intent": "permanent",
+   "motion": "fixed",
+   "duty": "occasional",
+   "load": "light",
+   "access": "one_side",
+   "count": 2,
+   "pitch": 30,
+   "wallA": 20,
+   "wallB": "param(slat-plain.thickness)",
+   "flush": true,
+   "threadHint": "M4"
+  },
+  {
+   "id": "slat-pm-n",
+   "a": {
+    "node": "side-panel",
+    "port": "end_pos_mid"
+   },
+   "b": {
+    "node": "slat-plain",
+    "port": "right_end"
+   },
+   "intent": "permanent",
+   "motion": "fixed",
+   "duty": "occasional",
+   "load": "light",
+   "access": "one_side",
+   "count": 2,
+   "pitch": 30,
+   "wallA": 20,
+   "wallB": "param(slat-plain.thickness)",
+   "flush": true,
+   "threadHint": "M4"
+  },
+  {
+   "id": "slat-pm-f",
+   "a": {
+    "node": "side-panel-far",
+    "port": "end_neg_mid"
+   },
+   "b": {
+    "node": "slat-plain",
+    "port": "left_end"
+   },
+   "intent": "permanent",
+   "motion": "fixed",
+   "duty": "occasional",
+   "load": "light",
+   "access": "one_side",
+   "count": 2,
+   "pitch": 30,
+   "wallA": 20,
+   "wallB": "param(slat-plain.thickness)",
+   "flush": true,
+   "threadHint": "M4"
+  },
+  {
+   "id": "slat-nm-f",
+   "a": {
+    "node": "side-panel-far",
+    "port": "end_pos_mid"
+   },
+   "b": {
+    "node": "slat-plain",
+    "port": "right_end"
+   },
+   "intent": "permanent",
+   "motion": "fixed",
+   "duty": "occasional",
+   "load": "light",
+   "access": "one_side",
+   "count": 2,
+   "pitch": 30,
+   "wallA": 20,
+   "wallB": "param(slat-plain.thickness)",
+   "flush": true,
+   "threadHint": "M4"
+  },
+  {
+   "id": "slat-nm-n",
+   "a": {
+    "node": "side-panel",
+    "port": "end_neg_mid"
+   },
+   "b": {
+    "node": "slat-plain",
+    "port": "left_end"
+   },
+   "intent": "permanent",
+   "motion": "fixed",
+   "duty": "occasional",
+   "load": "light",
+   "access": "one_side",
+   "count": 2,
+   "pitch": 30,
+   "wallA": 20,
+   "wallB": "param(slat-plain.thickness)",
+   "flush": true,
+   "threadHint": "M4"
+  },
+  {
+   "id": "slat-pt-n",
+   "a": {
+    "node": "side-panel",
+    "port": "end_pos_top"
+   },
+   "b": {
+    "node": "slat-handle",
+    "port": "right_end"
+   },
+   "intent": "permanent",
+   "motion": "fixed",
+   "duty": "occasional",
+   "load": "light",
+   "access": "one_side",
+   "count": 2,
+   "pitch": 30,
+   "wallA": 20,
+   "wallB": "param(slat-handle.thickness)",
+   "flush": true,
+   "threadHint": "M4"
+  },
+  {
+   "id": "slat-pt-f",
+   "a": {
+    "node": "side-panel-far",
+    "port": "end_neg_top"
+   },
+   "b": {
+    "node": "slat-handle",
+    "port": "left_end"
+   },
+   "intent": "permanent",
+   "motion": "fixed",
+   "duty": "occasional",
+   "load": "light",
+   "access": "one_side",
+   "count": 2,
+   "pitch": 30,
+   "wallA": 20,
+   "wallB": "param(slat-handle.thickness)",
+   "flush": true,
+   "threadHint": "M4"
+  },
+  {
+   "id": "slat-nt-f",
+   "a": {
+    "node": "side-panel-far",
+    "port": "end_pos_top"
+   },
+   "b": {
+    "node": "slat-handle",
+    "port": "right_end"
+   },
+   "intent": "permanent",
+   "motion": "fixed",
+   "duty": "occasional",
+   "load": "light",
+   "access": "one_side",
+   "count": 2,
+   "pitch": 30,
+   "wallA": 20,
+   "wallB": "param(slat-handle.thickness)",
+   "flush": true,
+   "threadHint": "M4"
+  },
+  {
+   "id": "slat-nt-n",
+   "a": {
+    "node": "side-panel",
+    "port": "end_neg_top"
+   },
+   "b": {
+    "node": "slat-handle",
+    "port": "left_end"
+   },
+   "intent": "permanent",
+   "motion": "fixed",
+   "duty": "occasional",
+   "load": "light",
+   "access": "one_side",
+   "count": 2,
+   "pitch": 30,
+   "wallA": 20,
+   "wallB": "param(slat-handle.thickness)",
+   "flush": true,
+   "threadHint": "M4"
+  }
+ ]
+}

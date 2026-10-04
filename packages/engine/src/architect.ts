@@ -10,6 +10,7 @@ import {
 import type { DomainBackend } from "./backend.js";
 import { LlmCallError, type LlmImage, type LlmProvider, type LlmUsage } from "./llm.js";
 import { contractHash } from "./graph/diff.js";
+import { critiquePlan } from "./plan-critic.js";
 
 /**
  * The architect pass: one call, whole graph — nodes and contracts emitted
@@ -513,6 +514,8 @@ export interface PlanResult {
   lintRounds: string[][];
   /** What the domain's `autoFix` changed on its own, one line per fix. */
   autoFixes: string[];
+  /** The coverage critic's verdict; null when it did not run. */
+  critic: PlanCritic | null;
 }
 
 export async function planGraph(opts: {
@@ -530,6 +533,8 @@ export async function planGraph(opts: {
   /** Target overall height, mm: dimensions are scaled from it. */
   sizeMm?: number;
   symmetric?: boolean;
+  /** false skips the coverage critic a backend with `planning.critic` runs. */
+  critic?: boolean;
 }): Promise<PlanResult> {
   const kinds = opts.backend.planning.nodeKinds.map((k) => k.kind);
   const { jointSchema } = opts.backend.planning;
@@ -617,17 +622,22 @@ ${JSON.stringify(zodToJsonSchema(z.array(jointSchema), { target: "jsonSchema7", 
     return lint(out);
   };
 
-  opts.onPhase?.("checking", `${out.nodes.length} parts drafted`);
-  let problems = check();
-  // 3 rounds: weaker local models need more than one shot at the lints.
-  const maxRepairs = 3;
-  for (let round = 1; problems.length > 0 && round <= maxRepairs; round++) {
-    repaired = true;
-    opts.onPhase?.("repairing", `round ${round} of ${maxRepairs} — ${problems.length} issue(s)`);
-    lintRounds.push([...problems]);
+  // Every call billed, so every throw carries the running total.
+  const bill = (u: LlmUsage) => {
+    usage.inputTokens += u.inputTokens;
+    usage.outputTokens += u.outputTokens;
+    usage.usd += u.usd;
+  };
+  const billThrow = (err: unknown): never => {
+    if (err instanceof LlmCallError && err.usage) bill(err.usage);
+    throw new LlmCallError((err as Error).message, { ...usage }, { cause: err });
+  };
+
+  /** One architect repair: the model's draft, the problems, and how to answer. */
+  const repairOnce = async (label: string, intro: string[], found: string[]) => {
     const fix = (patch: boolean) => ({
       role: "architect" as const,
-      label: `architect-repair-${round}:${opts.projectId}`,
+      label: `${label}:${opts.projectId}`,
       system,
       messages: [
         goalMessage,
@@ -635,8 +645,8 @@ ${JSON.stringify(zodToJsonSchema(z.array(jointSchema), { target: "jsonSchema7", 
         {
           role: "user" as const,
           content: [
-            `Your graph failed validation:`,
-            ...problems.map((p) => `- ${p}`),
+            ...intro,
+            ...found.map((p) => `- ${p}`),
             "",
             patch
               ? "Fix ONLY these problems. Reply with a PATCH, not the graph: `nodes` holds only the nodes you change or add, each written out in full; `edges` / `joints` only when one changes, then the complete corrected list. Everything you leave out stays as drafted."
@@ -651,16 +661,6 @@ ${JSON.stringify(zodToJsonSchema(z.array(jointSchema), { target: "jsonSchema7", 
       effort: ARCHITECT_REPAIR_EFFORT,
       signal: opts.signal,
     });
-    // Every call billed, so every throw carries the running total.
-    const bill = (u: LlmUsage) => {
-      usage.inputTokens += u.inputTokens;
-      usage.outputTokens += u.outputTokens;
-      usage.usd += u.usd;
-    };
-    const billThrow = (err: unknown): never => {
-      if (err instanceof LlmCallError && err.usage) bill(err.usage);
-      throw new LlmCallError((err as Error).message, { ...usage }, { cause: err });
-    };
     let next: ArchitectOutput;
     try {
       const repair = await opts.provider.complete<ArchitectPatch>({ ...fix(true), schema: patchSchema, wireSchema: patchWire });
@@ -676,14 +676,34 @@ ${JSON.stringify(zodToJsonSchema(z.array(jointSchema), { target: "jsonSchema7", 
     }
     drafted = normalizeArchitectOutput(next, { enforceShell });
     out = expand(drafted);
-    problems = check();
-  }
+  };
+
+  /** Lint-repair rounds until clean or `rounds` are spent, each recorded in `log`. */
+  const repairLints = async (problems: string[], rounds: number, log: string[][], tag = "") => {
+    for (let round = 1; problems.length > 0 && round <= rounds; round++) {
+      repaired = true;
+      opts.onPhase?.("repairing", `round ${round} of ${rounds}${tag} — ${problems.length} issue(s)`);
+      log.push([...problems]);
+      await repairOnce(`architect-repair-${round}${tag ? "-critic" : ""}`, ["Your graph failed validation:"], problems);
+      problems = check();
+    }
+    return problems;
+  };
+
+  opts.onPhase?.("checking", `${out.nodes.length} parts drafted`);
+  // 3 rounds: weaker local models need more than one shot at the lints.
+  const maxRepairs = 3;
+  const problems = await repairLints(check(), maxRepairs, lintRounds);
   if (problems.length > 0) {
     // Every round billed. A bare Error recorded a failed plan as $0 when it had
     // spent about $1.15, so the summed usage rides the throw.
     // The last draft rides along so a failed plan can be replayed offline.
     throw Object.assign(new LlmCallError(`architect graph failed lints after ${maxRepairs} repairs:\n${problems.join("\n")}`, usage), { draft: out });
   }
+
+  const critic = opts.critic === false ? undefined : opts.backend.planning.critic;
+  const review = critic ? await reviewCoverage(critic) : null;
+
   return {
     graph: architectOutputToGraph(out, opts.projectId, opts.backend.id, opts.goal, opts.backend.planning.paramUnit),
     rationale: [out.rationale, ...autoFixes].join("\n"),
@@ -691,5 +711,94 @@ ${JSON.stringify(zodToJsonSchema(z.array(jointSchema), { target: "jsonSchema7", 
     repaired,
     lintRounds,
     autoFixes,
+    critic: review,
   };
+
+  /**
+   * The coverage critic, on a plan that already passed its lints. Findings buy
+   * ONE architect repair, then the lint rounds that repair needs; a recheck
+   * says what is still missing. A repaired plan that will not lint clean is
+   * thrown away for the one that did, findings attached. The critic is a
+   * judgement, so nothing here can fail the plan: a critic call that throws is
+   * billed and treated as no critic.
+   */
+  async function reviewCoverage(c: NonNullable<DomainBackend<unknown>["planning"]["critic"]>): Promise<PlanCritic> {
+    const start = usage.usd;
+    const result: PlanCritic = { found: [], warnings: [], repaired: false, lintRounds: [], calls: 0, usd: 0 };
+    const done = (warnings: string[]) => Object.assign(result, { warnings, usd: usage.usd - start });
+    const critique = async (label: string): Promise<string[] | null> => {
+      result.calls++;
+      try {
+        const graph = architectOutputToGraph(out, opts.projectId, opts.backend.id, opts.goal, opts.backend.planning.paramUnit);
+        const r = await critiquePlan({
+          provider: opts.provider,
+          brief: goalMessage.content,
+          summary: c.summarize(graph),
+          images: opts.references?.map((x) => x.image),
+          label: `${label}:${opts.projectId}`,
+          signal: opts.signal,
+        });
+        bill(r.usage);
+        return r.problems;
+      } catch (err) {
+        if (opts.signal?.aborted) billThrow(err);
+        if (err instanceof LlmCallError && err.usage) bill(err.usage);
+        return null;
+      }
+    };
+
+    opts.onPhase?.("checking", "comparing the plan with the brief");
+    const found = await critique("plan-critic");
+    if (!found?.length) return done([]);
+    result.found = found;
+
+    const saved = { drafted, out, repaired };
+    let left: string[];
+    try {
+      opts.onPhase?.("repairing", `the plan misses ${found.length} thing(s) the brief asks for`);
+      repaired = true;
+      result.calls++;
+      await repairOnce(
+        "architect-critic",
+        [
+          "A reviewer compared your graph with the brief and found things the brief EXPLICITLY asks for that the graph lacks or gets wrong.",
+          ...(c.repairHint ? [c.repairHint] : []),
+          "Keep every other node, edge and joint as drafted. If one of these is already in the graph under another name, leave it alone.",
+          "",
+        ],
+        found,
+      );
+      left = await repairLints(check(), 2, result.lintRounds, " (after review)");
+      result.calls += result.lintRounds.length;
+    } catch (err) {
+      if (opts.signal?.aborted) throw err;
+      left = ["repair failed"];
+    }
+    if (left.length > 0) {
+      // The reviewed repair broke the plan: keep the one that linted clean.
+      ({ drafted, out, repaired } = saved);
+      return done(found);
+    }
+    result.repaired = true;
+    // An unanswered recheck cannot say the repair worked.
+    return done((await critique("plan-critic-recheck")) ?? found);
+  }
+}
+
+/** What the coverage critic found and what is left of it. */
+export interface PlanCritic {
+  /** Findings on the plan as first linted clean, one line each. */
+  found: string[];
+  /** What the approval shows: findings the repair did not fix (or every
+   *  finding, when the repair was thrown away). Empty = covered. */
+  warnings: string[];
+  /** The critic's repair was kept. */
+  repaired: boolean;
+  /** Lint rounds the critic's repair needed, kept or not (never in
+   *  PlanResult.lintRounds, which describes the plan's own emission). */
+  lintRounds: string[][];
+  /** Every call the review made: critic, recheck, repair and its lint rounds. */
+  calls: number;
+  /** Critic calls plus its repair rounds; already inside PlanResult.usage. */
+  usd: number;
 }

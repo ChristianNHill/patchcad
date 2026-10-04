@@ -304,6 +304,17 @@ export interface DomainBackend<P = unknown> {
      *  graph (reexpandGraph) `live` carries each node's current param values,
      *  so a decision reads the walls the user actually has. */
     expandPlan?(out: ArchitectOutput, live?: Record<string, Record<string, ParamValue>>): ArchitectOutput;
+    /** The plan coverage critic (plan-critic.ts). Present = on: after the
+     *  plan passes its lints, one cheap classifier call compares the BRIEF with
+     *  `summarize(graph)` — a compact, code-free account of the plan (parts and
+     *  copies, joints with motion and hardware, a hardware list, key
+     *  dimensions) — and what it names buys one architect repair round.
+     *  `repairHint` tells the architect, in this domain's terms, how a missing
+     *  item is added. */
+    critic?: {
+      summarize(graph: GraphDoc): string;
+      repairHint?: string;
+    };
     /** Plan time only: given a draft and the problems its lints found, return
      *  a corrected draft and one note per change, or null to leave it to the
      *  architect. `check` lints a candidate draft (expanded first). */

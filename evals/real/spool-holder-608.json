@@ -1,0 +1,212 @@
+{
+  "id": "spool-holder-608",
+  "name": "Adjustable spool holder (testudor) — rack-and-pinion linked sidewalls, 4 rollers on 608 bearings",
+  "category": "open-hardware-mechanism",
+  "sources": [
+    {
+      "url": "https://github.com/testudor/adjustable-spool-holder",
+      "what": "repo (MIT) with Assembly.step"
+    },
+    {
+      "url": "https://www.thingiverse.com/thing:4105234",
+      "what": "product page with printed-part list + hardware (CC-BY-4.0)"
+    },
+    {
+      "url": "https://www.prusaprinters.org/prints/17674-adjustable-spool-holder",
+      "what": "product page mirror (not fetched)"
+    }
+  ],
+  "license": "MIT (STEP repo) / CC-BY-4.0 (Thingiverse)",
+  "overallDimsMm": {
+    "x": 140.0,
+    "y": 204.7,
+    "z": 42.0,
+    "note": "measured from STEP at max width: x = plate length, y = sidewall-to-sidewall along adjustment axis, z = height to top of rollers; spools 40-180mm wide"
+  },
+  "parts": [
+    {
+      "name": "bottom plate",
+      "qty": 1,
+      "source": "printed",
+      "material": "not stated",
+      "dimsMm": "140x32x18",
+      "notes": "measured; screwed to enclosure top"
+    },
+    {
+      "name": "top plate",
+      "qty": 1,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "140x32x11",
+      "notes": "measured; sandwiches racks/gears"
+    },
+    {
+      "name": "side plate (sidewall)",
+      "qty": 2,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "140x35.1x15",
+      "notes": "measured; carries 2 rollers each"
+    },
+    {
+      "name": "rack",
+      "qty": 4,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "120x22.7x7",
+      "notes": "measured; 2 per sidewall"
+    },
+    {
+      "name": "roller",
+      "qty": 4,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "28 OD x 7",
+      "notes": "tyre over a 608 bearing"
+    },
+    {
+      "name": "gear thick",
+      "qty": 2,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "30.5 OD x 14",
+      "notes": "measured; holds 2x 608 each"
+    },
+    {
+      "name": "gear thin",
+      "qty": 1,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "30.5 OD x 7",
+      "notes": "measured; centre idler, holds 1x 608"
+    }
+  ],
+  "hardware": [
+    {
+      "class": "bearing",
+      "size": "608 (608ZZ or open; author warns sealed may not work)",
+      "qty": 9,
+      "notes": "4 rollers + 2x2 thick gears + 1 thin gear; STEP models only the 5 gear bearings"
+    },
+    {
+      "class": "screw",
+      "size": "M5x16 socket head",
+      "qty": 4,
+      "notes": "with nuts"
+    },
+    {
+      "class": "nut",
+      "size": "M5",
+      "qty": 4,
+      "notes": ""
+    },
+    {
+      "class": "screw",
+      "size": "4mm countersunk wood screw",
+      "qty": 2,
+      "notes": "mount to enclosure"
+    }
+  ],
+  "joins": [
+    {
+      "a": "top plate",
+      "b": "bottom plate",
+      "method": "screw",
+      "qty": 4,
+      "notes": "M5x16 + nuts (inferred placement)"
+    },
+    {
+      "a": "bottom plate",
+      "b": "enclosure top",
+      "method": "screw",
+      "qty": 2,
+      "notes": "4mm countersunk wood screws"
+    },
+    {
+      "a": "rack",
+      "b": "side plate (sidewall)",
+      "method": "press_fit",
+      "qty": 4,
+      "notes": "join method not stated"
+    },
+    {
+      "a": "roller",
+      "b": "side plate (sidewall)",
+      "method": "bearing",
+      "qty": 4,
+      "notes": "608 in roller on sidewall peg"
+    },
+    {
+      "a": "gear thick",
+      "b": "bottom plate",
+      "method": "bearing",
+      "qty": 2,
+      "notes": "2x 608 each on printed axle"
+    },
+    {
+      "a": "gear thin",
+      "b": "bottom plate",
+      "method": "bearing",
+      "qty": 1,
+      "notes": ""
+    }
+  ],
+  "motion": [
+    {
+      "between": [
+        "rack",
+        "bottom plate"
+      ],
+      "type": "slide",
+      "travel": "~70mm per side (spool width 40-180mm); both sides move together through the gear train"
+    },
+    {
+      "between": [
+        "gear thick",
+        "bottom plate"
+      ],
+      "type": "rotate",
+      "travel": "pinion meshing racks; thin centre gear reverses direction so sidewalls move symmetrically"
+    },
+    {
+      "between": [
+        "roller",
+        "side plate (sidewall)"
+      ],
+      "type": "rotate",
+      "travel": "continuous"
+    }
+  ],
+  "assembly": {
+    "steps": 0,
+    "stepsSource": "no written guide on Thingiverse; only part + hardware list",
+    "order": [
+      "press 608s into gears and rollers",
+      "gears onto bottom plate",
+      "racks through plate, meshing gears",
+      "top plate + M5x16",
+      "rollers onto sidewalls, sidewalls onto racks",
+      "screw to enclosure"
+    ]
+  },
+  "referenceCad": {
+    "available": true,
+    "url": "https://raw.githubusercontent.com/testudor/adjustable-spool-holder/HEAD/files/Assembly.step",
+    "format": "STEP",
+    "license": "MIT",
+    "partCount": 15,
+    "keyDims": {
+      "note": "15 printed-part instances (95 solids: each modelled 608 = 16 solids)",
+      "bboxMm": "140.0 x 42.0 x 204.7 (measured; y-up in file)",
+      "plateFootprintMm": "140 x 32",
+      "sidewallInnerSpanMm": "174.8 at max (measured)",
+      "gearOdMm": "30.5",
+      "gearPitchMm": "28.2 centre spacing (gears at x=0, +/-28.2)",
+      "rackMm": "120 x 22.7 x 7",
+      "rollerOdMm": "28 x 7",
+      "rollerCentreSpacingMm": "100 (x=+/-50)"
+    }
+  },
+  "confidence": "high for parts/hardware list (verbatim) and STEP dims; medium for joins and travel (inferred from STEP layout; no guide)",
+  "notes": "Picked over CheeseRoller (OpenSCAD, CC-BY, 4x 608ZZ, 17 photo steps) because it has a STEP assembly and a gear-linked mechanism. CheeseRoller: github.com/cweilguny/cheeseroller."
+}

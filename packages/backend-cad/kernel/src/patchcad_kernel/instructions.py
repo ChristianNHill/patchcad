@@ -69,9 +69,11 @@ def _unit(v: Any) -> np.ndarray:
 
 def insertion_report(meshes: list[tuple[str, Any]], checks: list[dict[str, Any]],
                      allow: list[dict[str, Any]]) -> dict[str, Any]:
-    """Per check {id, moving, still, direction, clear_mm?}: sweep `moving` from
-    its pose out against `direction` (the way it travels IN) until it is free,
-    and report each still part it passes through."""
+    """Per check {id, moving, still, direction, clear_mm?, travel_mm?}: sweep
+    `moving` from its pose out against `direction` (the way it travels IN)
+    until it is free, or exactly `travel_mm`, and report each still part it
+    passes through. Asked with the direction reversed and 1 mm, the answer is
+    what the part comes to rest against."""
     from .gates import _manifold, _node_of, _shared, g5_swept
 
     by_key = dict(meshes)
@@ -87,7 +89,8 @@ def insertion_report(meshes: list[tuple[str, Any]], checks: list[dict[str, Any]]
         out = -_unit(check["direction"])
         own = (max(float((by_key[k].vertices @ out).max()) for k in moving)
                - min(float((by_key[k].vertices @ out).min()) for k in moving))
-        travel = float(check.get("clear_mm") or 0.0) + own + max(5.0, 0.5 * own)
+        travel = (float(check["travel_mm"]) if check.get("travel_mm") else
+                  float(check.get("clear_mm") or 0.0) + own + max(5.0, 0.5 * own))
         local = dict(allowance)
         for km in moving:
             for ks in still:

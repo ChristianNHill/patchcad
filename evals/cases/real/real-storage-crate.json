@@ -1,0 +1,85 @@
+{
+  "id": "real-storage-crate",
+  "facts": "evals/real/ikea-knagglig-box.json",
+  "prompt": "a flat-pack wooden storage crate 460mm long, 310mm wide and 250mm tall: two solid long side panels 460x250mm, a bottom panel slotted between them and fixed with four long wood screws, and on each short end two plain slats plus one slat with a hand-hold cut-out, every slat about 310x70x12mm and fixed with four short countersunk screws (24 in all)",
+  "why": "Real BOM: 2 sides, 1 bottom, 4 plain end slats, 2 handle slats = 9 made parts; 4 long + 24 short wood screws; 8 steps.",
+  "expect": {
+    "nodes": {
+      "min": 3,
+      "max": 6
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "globalProblems": 0,
+    "assembly": {
+      "parts": 25,
+      "contacts": 4,
+      "joints": [
+        {
+          "motion": "fixed",
+          "hardware": [
+            "shcs|button|csk"
+          ],
+          "count": 2
+        }
+      ],
+      "bom": [
+        {
+          "family": "shcs|button|csk",
+          "minQty": 24
+        }
+      ],
+      "bbox": {
+        "value": [
+          460,
+          310,
+          250
+        ],
+        "tol": 0.15,
+        "sorted": true
+      }
+    }
+  },
+  "reference": {
+    "partsMade": 9,
+    "hardware": {
+      "wood screw ~4x50": 4,
+      "wood screw ~3.5x25": 24
+    },
+    "steps": 8,
+    "order": [
+      "bottom into side 1",
+      "2 long screws",
+      "side 2",
+      "2 long screws",
+      "end slats + handle slat end 1",
+      "end 2"
+    ],
+    "cad": null
+  }
+}

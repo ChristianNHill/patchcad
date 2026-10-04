@@ -1,0 +1,104 @@
+{
+  "id": "real-pan-tilt-head",
+  "facts": "evals/real/pan-tilt-mount.json",
+  "prompt": "a motorised camera pan-tilt head: a 152mm round printed base carrying a 144-tooth gear ring, a 182mm pan platform turning on a large thin-section bearing (127mm bore, 146mm OD) driven by a NEMA 17 stepper through a 17-tooth pinion, two 116mm-tall side supports on the platform, and a tilt U-cradle about 140mm wide turning between them on two F623 flanged bearings, driven by a second NEMA 17 through a 21-tooth pinion and a 64-tooth gear; parts joined with M3 screws and nuts",
+  "why": "MIT, STEP published (74 solids, head only). Two driven revolute axes with real ratios 144:17 and 64:21; a bearing the catalog does not stock.",
+  "expect": {
+    "nodes": {
+      "min": 5,
+      "max": 10
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "globalProblems": 0,
+    "assembly": {
+      "parts": 20,
+      "contacts": 4,
+      "joints": [
+        {
+          "motion": "revolute",
+          "count": 2,
+          "travel": 180
+        }
+      ],
+      "bom": [
+        {
+          "family": "nema17",
+          "qty": 2
+        },
+        {
+          "family": "bearing_flanged",
+          "key": "F623",
+          "minQty": 2
+        },
+        {
+          "family": "shcs|button|csk",
+          "minQty": 10
+        }
+      ],
+      "bbox": {
+        "value": [
+          182,
+          203,
+          190
+        ],
+        "tol": 0.15,
+        "sorted": true
+      }
+    }
+  },
+  "reference": {
+    "partsMade": 12,
+    "hardware": {
+      "NEMA17": 2,
+      "thin-section bearing": 1,
+      "F623": 2,
+      "M3 screws": 32,
+      "M3 nuts": 24,
+      "magnets": 6
+    },
+    "steps": null,
+    "cad": {
+      "license": "MIT",
+      "partCount": 74,
+      "bboxMm": [
+        182.3,
+        202.7,
+        190.3
+      ],
+      "panBearing": [
+        146,
+        12.8
+      ],
+      "gears": {
+        "base": "144T 152 OD",
+        "tilt": "64T 57.5 OD"
+      }
+    }
+  }
+}

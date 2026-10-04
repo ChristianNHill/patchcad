@@ -286,7 +286,7 @@ export interface ExportResult {
 export interface InsertionResult {
   ok: boolean;
   insertions?: {
-    checks: { id: string; blocked: { part: string; by: string; depth_mm: number; volume_mm3: number; travel_mm: number }[] }[];
+    checks: { id: string; blocked: { part: string; by: string; depth_mm: number; volume_mm3: number; travel_mm: number; at: number[] }[] }[];
     errors: string[];
   };
   stage?: string;
@@ -510,7 +510,7 @@ export class KernelClient {
    *  past the parts already placed? `direction` is the way they travel IN. */
   async insertions(
     parts: { key: string; code: string; params: Record<string, unknown>; matrix: number[] }[],
-    checks: { id: string; moving: string[]; still: string[]; direction: number[]; clear_mm?: number }[],
+    checks: { id: string; moving: string[]; still: string[]; direction: number[]; clear_mm?: number; travel_mm?: number }[],
     opts: { importDir?: string; allow?: { a: string; b: string; volume_mm3: number }[] } = {},
   ): Promise<InsertionResult> {
     await this.ready();

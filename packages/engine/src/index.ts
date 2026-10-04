@@ -13,3 +13,4 @@ export * from "./similarity.js";
 export * from "./inspect.js";
 export * from "./reexpand.js";
 export * from "./json-repair.js";
+export * from "./plan-critic.js";

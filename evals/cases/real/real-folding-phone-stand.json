@@ -1,0 +1,80 @@
+{
+  "id": "real-folding-phone-stand",
+  "facts": "evals/real/folding-phone-stand.json",
+  "prompt": "a 3D-printed folding phone stand: two 70x66x6mm plates joined along one edge by a knuckle hinge (6mm knuckles) turning on a 1.75mm pin 55mm long, so it folds flat to 12mm thick and opens into an A-frame that holds a phone",
+  "why": "CC-BY-4.0, STEP published: 2 printed halves + 1 filament pin, 3 steps. One revolute joint on a pin.",
+  "expect": {
+    "nodes": {
+      "min": 2,
+      "max": 3
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "globalProblems": 0,
+    "assembly": {
+      "parts": 3,
+      "contacts": 1,
+      "joints": [
+        {
+          "motion": "revolute",
+          "hardware": [
+            "dowel|shaft"
+          ],
+          "travel": 60
+        }
+      ],
+      "bbox": {
+        "value": [
+          70,
+          66,
+          12
+        ],
+        "tol": 0.15,
+        "sorted": true
+      }
+    }
+  },
+  "reference": {
+    "partsMade": 2,
+    "hardware": {
+      "pin 1.75x55": 1
+    },
+    "steps": 3,
+    "cad": {
+      "license": "CC-BY-4.0",
+      "partCount": 2,
+      "halfMm": [
+        70.1,
+        65.7,
+        6.0
+      ],
+      "knuckleOd": 6.0,
+      "pinBore": 2.5
+    }
+  }
+}

@@ -596,11 +596,15 @@ export function standoffCode(thread: string, defaultLength: number): string {
  * with a tooth on +x, and builds any tooth count (bd_warehouse refused z >= 42
  * at 20 degrees). `phase` turns the teeth (not the bore) by that many
  * degrees, so a meshing pair can put a gap opposite a tooth; `flat` makes the
- * bore a D, the flat that far from the axis along +x, like a D-shaft's.
+ * bore a D, the flat that far from the axis along +x, like a D-shaft's, or
+ * turned `clock` degrees about z to face the hub port's xAxis (the probe reads
+ * the flat on +xAxis and fits the circle on the -x half, so a flat cut on +x
+ * under an xAxis of -x read as Ø8.28 on a Ø7.95 press bore: hand-winch).
  * `fit` is added to the bore Ø (see boreFit).
  */
-export function gearCode(fit = 0, flat = `p.get("flat", 0)`, nominal = "p.bore"): string {
+export function gearCode(fit = 0, flat = `p.get("flat", 0)`, nominal = "p.bore", clock = 0): string {
   const bore = fit ? `(nominal ${fit < 0 ? "-" : "+"} ${Math.abs(fit)})` : "nominal";
+  const turn = clock ? `Rot(0, 0, ${clock}) * ` : "";
   return `from build123d import *
 
 def build(p):
@@ -610,7 +614,7 @@ def build(p):
     if nominal > 0:
         hole = Cylinder(${bore} / 2, p.thickness * 2)
         if flat > 0:
-            hole = hole - Pos(flat + nominal / 2, 0, 0) * Box(nominal, nominal * 2, p.thickness * 4)
+            hole = hole - ${turn}Pos(flat + nominal / 2, 0, 0) * Box(nominal, nominal * 2, p.thickness * 4)
         gear = gear - hole
     return gear
 `;
@@ -708,6 +712,15 @@ function hubFlat(node: NodeRecord): string | undefined {
   return hubParam(node, "flat", "0");
 }
 
+/** Degrees about z from the gear's +x to its own HUB_BORE's xAxis: the side
+ *  the probe (and the D-shaft's flat, mated through that port) expects. */
+function hubClock(node: NodeRecord): number {
+  const ports = (node.contract.payload as { ports?: { type: string; pose?: { xAxis?: unknown[] } }[] } | undefined)?.ports;
+  const x = ports?.find((p) => p.type === "HUB_BORE")?.pose?.xAxis;
+  if (!x || typeof x[0] !== "number" || typeof x[1] !== "number" || Math.hypot(x[0], x[1]) < 1e-6) return 0;
+  return Math.round((Math.atan2(x[1], x[0]) * 180) / Math.PI * 1e4) / 1e4;
+}
+
 /** A param of a gear's own HUB_BORE, as Python. Its Ø is the joint's shaft
  *  and wins over the gear's `bore` (hand-winch: bore 8.3 on a Ø8 press hub
  *  measured 8.28 at G3). */
@@ -764,7 +777,7 @@ function bySku(node: NodeRecord): string | null {
 const REGISTRY: Record<string, (node: NodeRecord) => string | null> = {
   ...Object.fromEntries(Object.values(CATALOG.families).map((f) => [f.kind, bySku])),
   // Param-driven: the code text is constant, see gearCode.
-  gear: (node) => gearCode(boreFit(node), hubFlat(node), hubParam(node, "diameter", "p.bore")),
+  gear: (node) => gearCode(boreFit(node), hubFlat(node), hubParam(node, "diameter", "p.bore"), hubClock(node)),
 };
 
 /** Kinds resolved from REGISTRY. Exported because the gates and lints need to

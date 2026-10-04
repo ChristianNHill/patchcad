@@ -1,0 +1,2803 @@
+{
+ "schemaVersion": 1,
+ "id": "eval-asm-hand-winch",
+ "backend": "cad",
+ "brief": {
+  "goal": "a hand-cranked winch: a printed 120x80x6mm base with two 60mm-tall, 6mm-thick side plates; a crank shaft carrying a 15-tooth module-1.5 spur gear that drives a 45-tooth module-1.5 spur gear on a 30mm-diameter rope drum shaft (3:1 reduction); both shafts turn in 608 bearings in the side plates; a 60mm crank arm with a handle",
+  "design": "Sturdy utility hardware: generous 1 mm chamfers on outside edges, 1.5\u20132 mm fillets where plates and bosses meet the base, and solid, thick-feeling walls rather than minimal ones. Round parts (drum, hub, crank) get softened edges so rope and hands are not cut. The whole assembly should read as one plain, functional machine.",
+  "refs": []
+ },
+ "nodes": {
+  "frame": {
+   "id": "frame",
+   "kind": "part",
+   "title": "Winch frame",
+   "spec": "One printed piece: a flat 120x80x6 base with two 60 mm tall side plates standing along its long edges, one at each y end. Each plate is 6 mm thick, with round bearing bosses thickened to bossThickness at the drum and crank axes. The drum is carried by two 608 bearings in the -y plate boss. The crank shaft is carried by two 608 bearings in the +y plate boss, with the pinion hub sitting against the inner face of the -y plate at the crank axis.",
+   "contract": {
+    "name": "Winch frame",
+    "summary": "Base plus two side plates in one print. The plates are y-normal at the base's \u00b1y edges. The drum axis is at x = -gearCenter/2 and the crank axis at x = +gearCenter/2, both running along y at axisHeight above the base top.",
+    "params": [
+     {
+      "type": "number",
+      "name": "width",
+      "description": "base length along x",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 120,
+      "min": 100,
+      "max": 200
+     },
+     {
+      "type": "number",
+      "name": "depth",
+      "description": "base width along y, outer face to outer face of the side plates",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 80,
+      "min": 70,
+      "max": 150
+     },
+     {
+      "type": "number",
+      "name": "baseThickness",
+      "description": "how thick the base plate prints",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 6,
+      "min": 4,
+      "max": 12
+     },
+     {
+      "type": "number",
+      "name": "plateHeight",
+      "description": "how tall the side plates stand above the base",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 60,
+      "min": 55,
+      "max": 100
+     },
+     {
+      "type": "number",
+      "name": "plateThickness",
+      "description": "wall thickness of the side plates away from the bearing bosses",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 6,
+      "min": 4,
+      "max": 12
+     },
+     {
+      "type": "number",
+      "name": "bossThickness",
+      "description": "plate thickness at a bearing boss, enough for two 608 bearings and a shoulder",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 16,
+      "min": 16,
+      "max": 24
+     },
+     {
+      "type": "number",
+      "name": "bossDiameter",
+      "description": "diameter of the raised round boss around each bearing",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 34,
+      "min": 28,
+      "max": 40
+     },
+     {
+      "type": "number",
+      "name": "axisHeight",
+      "description": "height of both shaft axes above the base top; must clear the big gear",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 40,
+      "min": 38,
+      "max": 50
+     },
+     {
+      "type": "number",
+      "name": "gearCenter",
+      "description": "distance between drum and crank axes, set by the gear mesh",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 45,
+      "min": 30,
+      "max": 80
+     },
+     {
+      "type": "number",
+      "name": "j_drum_seat_od",
+      "description": "bearing OD for j-drum",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 22
+     },
+     {
+      "type": "number",
+      "name": "j_drum_seat_w",
+      "description": "seat depth for j-drum",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 7
+     },
+     {
+      "type": "number",
+      "name": "j_crank_seat_od",
+      "description": "bearing OD for j-crank",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 22
+     },
+     {
+      "type": "number",
+      "name": "j_crank_seat_w",
+      "description": "seat depth for j-crank",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 7
+     }
+    ],
+    "provides": [
+     {
+      "key": "crank_l",
+      "type": "FLAT_FACE",
+      "description": "inner face of the -y plate at the crank axis, where the pinion hub sits"
+     },
+     {
+      "key": "j_drum_seat_a",
+      "type": "BEARING_SEAT",
+      "description": ""
+     },
+     {
+      "key": "j_drum_seat_b",
+      "type": "BEARING_SEAT",
+      "description": ""
+     },
+     {
+      "key": "j_crank_seat_a",
+      "type": "BEARING_SEAT",
+      "description": ""
+     },
+     {
+      "key": "j_crank_seat_b",
+      "type": "BEARING_SEAT",
+      "description": ""
+     }
+    ],
+    "requires": [],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "drum_l",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "-param(frame.gearCenter) / 2",
+         "-(param(frame.depth) / 2 - param(frame.bossThickness))",
+         "param(frame.baseThickness) / 2 + param(frame.axisHeight)"
+        ],
+        "zAxis": [
+         0,
+         1,
+         0
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": "(param(frame.j_drum_seat_od)) + 2.4"
+       }
+      },
+      {
+       "name": "crank_l",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(frame.gearCenter) / 2",
+         "-(param(frame.depth) / 2 - param(frame.bossThickness))",
+         "param(frame.baseThickness) / 2 + param(frame.axisHeight)"
+        ],
+        "zAxis": [
+         0,
+         1,
+         0
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 28
+       }
+      },
+      {
+       "name": "crank_out",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(frame.gearCenter) / 2",
+         "param(frame.depth) / 2",
+         "param(frame.baseThickness) / 2 + param(frame.axisHeight)"
+        ],
+        "zAxis": [
+         0,
+         1,
+         0
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": "(param(frame.j_crank_seat_od)) + 2.4"
+       }
+      },
+      {
+       "name": "j_drum_seat_a",
+       "type": "BEARING_SEAT",
+       "pose": {
+        "origin": [
+         "(-param(frame.gearCenter) / 2)",
+         "(-(param(frame.depth) / 2 - param(frame.bossThickness)))",
+         "(param(frame.baseThickness) / 2 + param(frame.axisHeight))"
+        ],
+        "zAxis": [
+         0,
+         1,
+         0
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "od": "param(frame.j_drum_seat_od)",
+        "width": "param(frame.j_drum_seat_w)",
+        "fit": "press"
+       }
+      },
+      {
+       "name": "j_drum_seat_b",
+       "type": "BEARING_SEAT",
+       "pose": {
+        "origin": [
+         "(-param(frame.gearCenter) / 2)",
+         "(-(param(frame.depth) / 2 - param(frame.bossThickness))) + (-(param(frame.bossThickness)))",
+         "(param(frame.baseThickness) / 2 + param(frame.axisHeight))"
+        ],
+        "zAxis": [
+         0,
+         -1,
+         0
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "od": "param(frame.j_drum_seat_od)",
+        "width": "param(frame.j_drum_seat_w)",
+        "fit": "press"
+       }
+      },
+      {
+       "name": "j_crank_seat_a",
+       "type": "BEARING_SEAT",
+       "pose": {
+        "origin": [
+         "(param(frame.gearCenter) / 2)",
+         "(param(frame.depth) / 2)",
+         "(param(frame.baseThickness) / 2 + param(frame.axisHeight))"
+        ],
+        "zAxis": [
+         0,
+         1,
+         0
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "od": "param(frame.j_crank_seat_od)",
+        "width": "param(frame.j_crank_seat_w)",
+        "fit": "press"
+       }
+      },
+      {
+       "name": "j_crank_seat_b",
+       "type": "BEARING_SEAT",
+       "pose": {
+        "origin": [
+         "(param(frame.gearCenter) / 2)",
+         "(param(frame.depth) / 2) + (-(param(frame.bossThickness)))",
+         "(param(frame.baseThickness) / 2 + param(frame.axisHeight))"
+        ],
+        "zAxis": [
+         0,
+         -1,
+         0
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "od": "param(frame.j_crank_seat_od)",
+        "width": "param(frame.j_crank_seat_w)",
+        "fit": "press"
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "box",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "dims": [
+         "param(frame.width)",
+         "param(frame.depth)",
+         "param(frame.baseThickness)"
+        ]
+       },
+       {
+        "kind": "box",
+        "pose": {
+         "origin": [
+          0,
+          "-(param(frame.depth) / 2 - param(frame.bossThickness) / 2)",
+          "param(frame.baseThickness) / 2 + param(frame.plateHeight) / 2"
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "dims": [
+         "param(frame.width)",
+         "param(frame.bossThickness)",
+         "param(frame.plateHeight)"
+        ]
+       },
+       {
+        "kind": "box",
+        "pose": {
+         "origin": [
+          0,
+          "param(frame.depth) / 2 - param(frame.bossThickness) / 2",
+          "param(frame.baseThickness) / 2 + param(frame.plateHeight) / 2"
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "dims": [
+         "param(frame.width)",
+         "param(frame.bossThickness)",
+         "param(frame.plateHeight)"
+        ]
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "gearCenter": "expr: param(gear-drum.module) * (param(gear-drum.teeth) + param(gear-pinion.teeth)) / 2",
+      "j_drum_seat_od": "hw:bearingSeatD:param:j-drum_bearing_a.sku",
+      "j_drum_seat_w": "hw:bearingWidth:param:j-drum_bearing_a.sku",
+      "j_crank_seat_od": "hw:bearingSeatD:param:j-crank_bearing_a.sku",
+      "j_crank_seat_w": "hw:bearingWidth:param:j-crank_bearing_a.sku"
+     },
+     "visualChecks": [
+      "Is the part a flat base with two upright side plates, one along each long edge?",
+      "Does each side plate have round thickened bosses at two shaft positions at the same height?"
+     ],
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "x",
+       "min": 119.5,
+       "max": 120.5
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "y",
+       "min": 79.5,
+       "max": 80.5
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "z",
+       "min": 65.5,
+       "max": 66.5
+      }
+     ]
+    },
+    "hash": "c1938cc59e716409"
+   },
+   "params": {},
+   "hidden": false,
+   "thread": [],
+   "status": "ready",
+   "version": 1,
+   "cost": {
+    "calls": 3,
+    "inputTokens": 18675,
+    "outputTokens": 7659,
+    "usd": 0.1808994
+   }
+  },
+  "drum": {
+   "id": "drum",
+   "kind": "part",
+   "title": "Rope drum",
+   "spec": "A 30 mm diameter rope drum on local z, centred on the origin, turning between the frame plates. At the -z end a short spigot carries the 45-tooth gear, followed by a flange, the plain \u00d830 rope barrel, and a second flange at +z. Put a small radial rope-anchor hole through the barrel near the +z flange. The joint rules cut the shaft hub bore along the axis.",
+   "contract": {
+    "name": "Rope drum",
+    "summary": "Drum on local z. The -z end is the spigot tip, which faces the -y plate. The 45T gear sits on the spigot against the flange face (gear_seat). The drum is short enough to leave room for the axle's retaining collar or clip at each plate.",
+    "params": [
+     {
+      "type": "number",
+      "name": "length",
+      "description": "overall drum length between the plate bosses, leaving room for the axle retainers",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 35,
+      "min": 25,
+      "max": 120
+     },
+     {
+      "type": "number",
+      "name": "drumDiameter",
+      "description": "diameter of the rope barrel",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 30,
+      "min": 20,
+      "max": 50
+     },
+     {
+      "type": "number",
+      "name": "flangeDiameter",
+      "description": "diameter of the end flanges that keep the rope on",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 44,
+      "min": 34,
+      "max": 60
+     },
+     {
+      "type": "number",
+      "name": "flangeThickness",
+      "description": "thickness of each flange",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 3,
+      "min": 2,
+      "max": 6
+     },
+     {
+      "type": "number",
+      "name": "spigotDiameter",
+      "description": "diameter of the spigot the gear sits on",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 15.7,
+      "min": 10,
+      "max": 30
+     },
+     {
+      "type": "number",
+      "name": "spigotLength",
+      "description": "how far the gear spigot stands out from the flange",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 9,
+      "min": 5,
+      "max": 20
+     },
+     {
+      "type": "number",
+      "name": "j_drum_shaft_d",
+      "description": "shaft \u00d8 for j-drum",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 8
+     },
+     {
+      "type": "number",
+      "name": "j_drum_flat",
+      "description": "D-flat distance from the axis for j-drum",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 3
+     }
+    ],
+    "provides": [
+     {
+      "key": "gear_seat",
+      "type": "FLAT_FACE",
+      "description": "flange face around the spigot that the 45T gear sits against"
+     }
+    ],
+    "requires": [
+     {
+      "key": "j_drum_hub",
+      "type": "HUB_BORE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "frame_end_l",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "-param(drum.length) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": "(param(drum.j_drum_shaft_d)) + 2.4"
+       }
+      },
+      {
+       "name": "gear_seat",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "-param(drum.length) / 2 + param(drum.spigotLength)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 24
+       }
+      },
+      {
+       "name": "gear_spigot",
+       "type": "SHAFT",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "-param(drum.length) / 2 + param(drum.spigotLength)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(drum.spigotDiameter)",
+        "length": "param(drum.spigotLength)"
+       }
+      },
+      {
+       "name": "j_drum_hub",
+       "type": "HUB_BORE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "(-param(drum.length) / 2)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(drum.j_drum_shaft_d)",
+        "flat": "param(drum.j_drum_flat)"
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": "param(drum.flangeDiameter)",
+        "h": "param(drum.length)"
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "length": "expr: param(frame.depth) - 2 * param(frame.bossThickness) - 13",
+      "spigotDiameter": "expr: param(gear-drum.bore) - 0.3",
+      "spigotLength": "expr: param(gear-drum.thickness) + 1",
+      "j_drum_shaft_d": "hw:shaftD:param:j-drum_shaft.sku",
+      "j_drum_flat": "hw:hubFlat:param:j-drum_shaft.sku"
+     },
+     "visualChecks": [
+      "Is there a flange at each end of the rope barrel?",
+      "Does a narrower spigot stand out beyond the flange at one end only?",
+      "Is there a small rope-anchor hole through the barrel near one flange?"
+     ],
+     "assertions": [
+      {
+       "kind": "line_count",
+       "from": [
+        -16,
+        0,
+        5
+       ],
+       "to": [
+        -14,
+        0,
+        5
+       ],
+       "crossings_min": 1,
+       "crossings_max": 1
+      },
+      {
+       "kind": "line_count",
+       "from": [
+        -17,
+        0,
+        5
+       ],
+       "to": [
+        -15.6,
+        0,
+        5
+       ],
+       "crossings_min": 0,
+       "crossings_max": 0
+      }
+     ]
+    },
+    "hash": "8b9300b6416ebc5f"
+   },
+   "params": {},
+   "hidden": false,
+   "thread": [],
+   "status": "ready",
+   "version": 1,
+   "cost": {
+    "calls": 3,
+    "inputTokens": 15381,
+    "outputTokens": 5536,
+    "usd": 0.1292162
+   }
+  },
+  "gear-drum": {
+   "id": "gear-drum",
+   "kind": "gear",
+   "title": "45-tooth drum gear",
+   "spec": "Registry involute spur gear: module 1.5, 45 teeth. It is bonded onto the drum's spigot and driven by the 15-tooth pinion for a 3:1 reduction.",
+   "contract": {
+    "name": "45T gear",
+    "summary": "m1.5 45T spur gear, 8 thick, with a \u00d816 bore that fits over the drum spigot.",
+    "params": [
+     {
+      "type": "number",
+      "name": "module",
+      "description": "gear tooth size",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 1.5,
+      "min": 1,
+      "max": 3
+     },
+     {
+      "type": "number",
+      "name": "teeth",
+      "description": "tooth count",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 45,
+      "min": 30,
+      "max": 80
+     },
+     {
+      "type": "number",
+      "name": "pressure_angle",
+      "description": "tooth pressure angle in degrees",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 20,
+      "min": 14.5,
+      "max": 25
+     },
+     {
+      "type": "number",
+      "name": "thickness",
+      "description": "gear face width",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 8,
+      "min": 4,
+      "max": 15
+     },
+     {
+      "type": "number",
+      "name": "bore",
+      "description": "centre bore that fits over the drum spigot",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 16,
+      "min": 8,
+      "max": 30
+     }
+    ],
+    "provides": [],
+    "requires": [
+     {
+      "key": "seat",
+      "type": "FLAT_FACE",
+      "description": "gear face that sits against the drum flange"
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "seat",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         -4
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 24
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 70.5,
+        "h": 8
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {}
+    },
+    "hash": "5883a9b914a59dc1"
+   },
+   "params": {},
+   "hidden": false,
+   "thread": [],
+   "status": "ready",
+   "version": 1,
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   }
+  },
+  "crank-hub": {
+   "id": "crank-hub",
+   "kind": "part",
+   "title": "Pinion hub",
+   "spec": "A short sleeve on the crank shaft just inside the -y plate. It carries the 15-tooth pinion on a spigot at its -z end, with a wider collar behind the pinion. It has a \u00d88 press bore through its axis for the crank shaft.",
+   "contract": {
+    "name": "Pinion hub",
+    "summary": "Sleeve on local z, centred on the origin. The -z end sits against the -y plate. The pinion sits on the spigot against the collar face (gear_seat).",
+    "params": [
+     {
+      "type": "number",
+      "name": "length",
+      "description": "overall hub length",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 15,
+      "min": 10,
+      "max": 30
+     },
+     {
+      "type": "number",
+      "name": "collarDiameter",
+      "description": "diameter of the collar behind the pinion",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 20,
+      "min": 14,
+      "max": 30
+     },
+     {
+      "type": "number",
+      "name": "spigotDiameter",
+      "description": "diameter of the spigot the pinion sits on",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 11.7,
+      "min": 10,
+      "max": 16
+     },
+     {
+      "type": "number",
+      "name": "spigotLength",
+      "description": "how far the pinion spigot stands out from the collar",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 9,
+      "min": 5,
+      "max": 20
+     }
+    ],
+    "provides": [
+     {
+      "key": "gear_seat",
+      "type": "FLAT_FACE",
+      "description": "collar face the pinion sits against"
+     }
+    ],
+    "requires": [
+     {
+      "key": "frame_end",
+      "type": "FLAT_FACE",
+      "description": "spigot tip against the -y plate at the crank axis"
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "frame_end",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "-param(crank-hub.length) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 10
+       }
+      },
+      {
+       "name": "gear_seat",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "-param(crank-hub.length) / 2 + param(crank-hub.spigotLength)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 16
+       }
+      },
+      {
+       "name": "gear_spigot",
+       "type": "SHAFT",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "-param(crank-hub.length) / 2 + param(crank-hub.spigotLength)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(crank-hub.spigotDiameter)",
+        "length": "param(crank-hub.spigotLength)"
+       }
+      },
+      {
+       "name": "shaft_bore",
+       "type": "HUB_BORE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "param(crank-hub.length) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": 8
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": "param(crank-hub.collarDiameter)",
+        "h": "param(crank-hub.length)"
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "spigotDiameter": "expr: param(gear-pinion.bore) - 0.3",
+      "spigotLength": "expr: param(gear-pinion.thickness) + 1"
+     },
+     "visualChecks": [
+      "Is the part a short round sleeve with a narrower spigot at one end and a wider collar at the other?",
+      "Is there a hole straight through the centre along the axis?"
+     ]
+    },
+    "hash": "88503f9393a516fe"
+   },
+   "params": {},
+   "hidden": false,
+   "thread": [],
+   "status": "error_contract",
+   "version": 1,
+   "cost": {
+    "calls": 3,
+    "inputTokens": 14127,
+    "outputTokens": 3303,
+    "usd": 0.081045
+   }
+  },
+  "gear-pinion": {
+   "id": "gear-pinion",
+   "kind": "gear",
+   "title": "15-tooth pinion",
+   "spec": "Registry involute spur gear: module 1.5, 15 teeth. It is bonded onto the pinion hub's spigot and drives the 45-tooth drum gear.",
+   "contract": {
+    "name": "15T pinion",
+    "summary": "m1.5 15T spur gear, 8 thick, with a \u00d812 bore that fits over the hub spigot.",
+    "params": [
+     {
+      "type": "number",
+      "name": "module",
+      "description": "gear tooth size",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 1.5,
+      "min": 1,
+      "max": 3
+     },
+     {
+      "type": "number",
+      "name": "teeth",
+      "description": "tooth count",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 15,
+      "min": 10,
+      "max": 30
+     },
+     {
+      "type": "number",
+      "name": "pressure_angle",
+      "description": "tooth pressure angle in degrees",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 20,
+      "min": 14.5,
+      "max": 25
+     },
+     {
+      "type": "number",
+      "name": "thickness",
+      "description": "gear face width",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 8,
+      "min": 4,
+      "max": 15
+     },
+     {
+      "type": "number",
+      "name": "bore",
+      "description": "centre bore that fits over the hub spigot",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 12,
+      "min": 8,
+      "max": 16
+     }
+    ],
+    "provides": [],
+    "requires": [
+     {
+      "key": "seat",
+      "type": "FLAT_FACE",
+      "description": "gear face that sits against the hub collar"
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "seat",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         -4
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 16
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 25.5,
+        "h": 8
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {}
+    },
+    "hash": "aa4c5f6017f81d21"
+   },
+   "params": {},
+   "hidden": false,
+   "thread": [],
+   "status": "ready",
+   "version": 1,
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   }
+  },
+  "crank-arm": {
+   "id": "crank-arm",
+   "kind": "part",
+   "title": "Crank arm with handle",
+   "spec": "A flat crank arm pressed onto the outer end of the crank shaft, outside the +y plate. A round hub sits at the origin on local z and stands proud toward the frame. A straight bar runs 60 mm along +x to an integral cylindrical grip handle, which stands up along +z, away from the frame. The joint rules cut the press-fit shaft bore through the hub.",
+   "contract": {
+    "name": "Crank arm",
+    "summary": "The hub axis is local z at the origin, and the hub's -z face sits against the frame. The arm runs along +x, and the handle axis is parallel to z at x = armLength, rising along +z.",
+    "params": [
+     {
+      "type": "number",
+      "name": "armLength",
+      "description": "distance from the shaft centre to the handle centre",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 60,
+      "min": 40,
+      "max": 120
+     },
+     {
+      "type": "number",
+      "name": "armWidth",
+      "description": "width of the arm bar",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 16,
+      "min": 10,
+      "max": 30
+     },
+     {
+      "type": "number",
+      "name": "armThickness",
+      "description": "how thick the arm bar prints",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 8,
+      "min": 5,
+      "max": 15
+     },
+     {
+      "type": "number",
+      "name": "hubDiameter",
+      "description": "diameter of the hub on the shaft",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 22,
+      "min": 16,
+      "max": 32
+     },
+     {
+      "type": "number",
+      "name": "hubLength",
+      "description": "length of the hub along the shaft, including the part standing proud toward the frame",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 14,
+      "min": 8,
+      "max": 25
+     },
+     {
+      "type": "number",
+      "name": "handleDiameter",
+      "description": "diameter of the grip handle",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 22,
+      "min": 15,
+      "max": 32
+     },
+     {
+      "type": "number",
+      "name": "handleLength",
+      "description": "how far the grip handle stands out from the arm",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 60,
+      "min": 40,
+      "max": 110
+     },
+     {
+      "type": "number",
+      "name": "j_crank_shaft_d",
+      "description": "shaft \u00d8 for j-crank",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 8
+     },
+     {
+      "type": "number",
+      "name": "j_crank_flat",
+      "description": "D-flat distance from the axis for j-crank",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 3
+     }
+    ],
+    "provides": [],
+    "requires": [
+     {
+      "key": "j_crank_hub",
+      "type": "HUB_BORE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "frame_face",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "param(crank-arm.armThickness) - param(crank-arm.hubLength)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": "(param(crank-arm.j_crank_shaft_d)) + 2.4"
+       }
+      },
+      {
+       "name": "j_crank_hub",
+       "type": "HUB_BORE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "(param(crank-arm.armThickness) - param(crank-arm.hubLength))"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(crank-arm.j_crank_shaft_d)",
+        "flat": "param(crank-arm.j_crank_flat)",
+        "fit": "press",
+        "depth": "param(crank-arm.hubLength)"
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "box",
+        "pose": {
+         "origin": [
+          "param(crank-arm.armLength) / 2",
+          0,
+          "param(crank-arm.armThickness) / 2"
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "dims": [
+         "param(crank-arm.armLength) + param(crank-arm.hubDiameter)",
+         "param(crank-arm.hubDiameter)",
+         "param(crank-arm.armThickness)"
+        ]
+       },
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          "param(crank-arm.armThickness) - param(crank-arm.hubLength) / 2"
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": "param(crank-arm.hubDiameter)",
+        "h": "param(crank-arm.hubLength)"
+       },
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          "param(crank-arm.armLength)",
+          0,
+          "param(crank-arm.armThickness) + param(crank-arm.handleLength) / 2"
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": "param(crank-arm.handleDiameter)",
+        "h": "param(crank-arm.handleLength)"
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "j_crank_shaft_d": "hw:shaftD:param:j-crank_shaft.sku",
+      "j_crank_flat": "hw:hubFlat:param:j-crank_shaft.sku"
+     },
+     "visualChecks": [
+      "Is there a round hub at one end of a straight arm?",
+      "Does a cylindrical handle stand up from the far end of the arm, on the opposite side from the hub's protruding face?",
+      "Is the handle parallel to the hub axis?"
+     ],
+     "assertions": [
+      {
+       "kind": "line_count",
+       "from": [
+        60,
+        -20,
+        40
+       ],
+       "to": [
+        60,
+        20,
+        40
+       ],
+       "crossings_min": 1,
+       "crossings_max": 1
+      }
+     ]
+    },
+    "hash": "7be48c1832b4642b"
+   },
+   "params": {},
+   "hidden": false,
+   "thread": [],
+   "status": "ready",
+   "version": 1,
+   "cost": {
+    "calls": 3,
+    "inputTokens": 15084,
+    "outputTokens": 4132,
+    "usd": 0.11492959999999999
+   }
+  },
+  "j-drum_bearing_a": {
+   "id": "j-drum_bearing_a",
+   "kind": "bearing",
+   "title": "j-drum bearing a",
+   "spec": "\u00d88 shaft on 2\u00d7608 bearings. Catalog ISO 15 boundary dimensions (deep groove 6xx, 68xx, 69xx) 608, built by the registry, never generated.",
+   "contract": {
+    "name": "j-drum_bearing_a",
+    "summary": "BRG-608",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "BRG-608"
+     }
+    ],
+    "provides": [
+     {
+      "key": "bore",
+      "type": "FLAT_FACE",
+      "description": ""
+     }
+    ],
+    "requires": [
+     {
+      "key": "seat",
+      "type": "BEARING_SEAT",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "seat",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 21
+       }
+      },
+      {
+       "name": "bore",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 9
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 26.4,
+        "h": 14
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {}
+    },
+    "hash": "d04d0f2082b969d8"
+   },
+   "params": {},
+   "hidden": false,
+   "thread": [],
+   "status": "ready",
+   "version": 1,
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   }
+  },
+  "j-drum_bearing_b": {
+   "id": "j-drum_bearing_b",
+   "kind": "bearing",
+   "title": "j-drum bearing b",
+   "spec": "\u00d88 shaft on 2\u00d7608 bearings. Catalog ISO 15 boundary dimensions (deep groove 6xx, 68xx, 69xx) 608, built by the registry, never generated.",
+   "contract": {
+    "name": "j-drum_bearing_b",
+    "summary": "BRG-608",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "BRG-608"
+     }
+    ],
+    "provides": [
+     {
+      "key": "bore",
+      "type": "FLAT_FACE",
+      "description": ""
+     }
+    ],
+    "requires": [
+     {
+      "key": "seat",
+      "type": "BEARING_SEAT",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "seat",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 21
+       }
+      },
+      {
+       "name": "bore",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 9
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 26.4,
+        "h": 14
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {}
+    },
+    "hash": "bc5989d61bf5d81b"
+   },
+   "params": {},
+   "hidden": false,
+   "thread": [],
+   "status": "ready",
+   "version": 1,
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   }
+  },
+  "j-drum_collar": {
+   "id": "j-drum_collar",
+   "kind": "collar",
+   "title": "j-drum collar",
+   "spec": "\u00d88 shaft on 2\u00d7608 bearings. Catalog part 8, built by the registry, never generated.",
+   "contract": {
+    "name": "j-drum_collar",
+    "summary": "COLLAR-8",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "COLLAR-8"
+     }
+    ],
+    "provides": [],
+    "requires": [
+     {
+      "key": "seat",
+      "type": "FLAT_FACE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "seat",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 9
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 19.2,
+        "h": 16
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {}
+    },
+    "hash": "0ec0cf10b57b77e2"
+   },
+   "params": {},
+   "hidden": false,
+   "thread": [],
+   "status": "ready",
+   "version": 1,
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   }
+  },
+  "j-drum_shaft": {
+   "id": "j-drum_shaft",
+   "kind": "shaft",
+   "title": "j-drum shaft",
+   "spec": "\u00d88 shaft on 2\u00d7608 bearings. Catalog part 8, built by the registry, never generated.",
+   "contract": {
+    "name": "j-drum_shaft",
+    "summary": "DSHAFT-8",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "DSHAFT-8"
+     },
+     {
+      "type": "number",
+      "name": "length",
+      "description": "length, mm",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 67
+     }
+    ],
+    "provides": [
+     {
+      "key": "hub",
+      "type": "HUB_BORE",
+      "description": ""
+     }
+    ],
+    "requires": [
+     {
+      "key": "end",
+      "type": "FLAT_FACE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "end",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         8
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 4
+       }
+      },
+      {
+       "name": "hub",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "(param(frame.bossThickness)) + 16"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 4
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 9.6,
+        "h": 2
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "length": "expr: ((param(frame.bossThickness)) + 16) + (param(drum.length))"
+     }
+    },
+    "hash": "5029a689262bbca3"
+   },
+   "params": {},
+   "hidden": false,
+   "thread": [],
+   "status": "ready",
+   "version": 1,
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   }
+  },
+  "j-crank_bearing_a": {
+   "id": "j-crank_bearing_a",
+   "kind": "bearing",
+   "title": "j-crank bearing a",
+   "spec": "\u00d88 shaft on 2\u00d7608 bearings. Catalog ISO 15 boundary dimensions (deep groove 6xx, 68xx, 69xx) 608, built by the registry, never generated.",
+   "contract": {
+    "name": "j-crank_bearing_a",
+    "summary": "BRG-608",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "BRG-608"
+     }
+    ],
+    "provides": [
+     {
+      "key": "bore",
+      "type": "FLAT_FACE",
+      "description": ""
+     }
+    ],
+    "requires": [
+     {
+      "key": "seat",
+      "type": "BEARING_SEAT",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "seat",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 21
+       }
+      },
+      {
+       "name": "bore",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 9
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 26.4,
+        "h": 14
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {}
+    },
+    "hash": "8a2e804e1206522d"
+   },
+   "params": {},
+   "hidden": false,
+   "thread": [],
+   "status": "ready",
+   "version": 1,
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   }
+  },
+  "j-crank_bearing_b": {
+   "id": "j-crank_bearing_b",
+   "kind": "bearing",
+   "title": "j-crank bearing b",
+   "spec": "\u00d88 shaft on 2\u00d7608 bearings. Catalog ISO 15 boundary dimensions (deep groove 6xx, 68xx, 69xx) 608, built by the registry, never generated.",
+   "contract": {
+    "name": "j-crank_bearing_b",
+    "summary": "BRG-608",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "BRG-608"
+     }
+    ],
+    "provides": [
+     {
+      "key": "bore",
+      "type": "FLAT_FACE",
+      "description": ""
+     }
+    ],
+    "requires": [
+     {
+      "key": "seat",
+      "type": "BEARING_SEAT",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "seat",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 21
+       }
+      },
+      {
+       "name": "bore",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 9
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 26.4,
+        "h": 14
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {}
+    },
+    "hash": "5ac948cd6eee1826"
+   },
+   "params": {},
+   "hidden": false,
+   "thread": [],
+   "status": "ready",
+   "version": 1,
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   }
+  },
+  "j-crank_collar": {
+   "id": "j-crank_collar",
+   "kind": "collar",
+   "title": "j-crank collar",
+   "spec": "\u00d88 shaft on 2\u00d7608 bearings. Catalog part 8, built by the registry, never generated.",
+   "contract": {
+    "name": "j-crank_collar",
+    "summary": "COLLAR-8",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "COLLAR-8"
+     }
+    ],
+    "provides": [],
+    "requires": [
+     {
+      "key": "seat",
+      "type": "FLAT_FACE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "seat",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 9
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 19.2,
+        "h": 16
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {}
+    },
+    "hash": "ac45d92a22a6ad31"
+   },
+   "params": {},
+   "hidden": false,
+   "thread": [],
+   "status": "ready",
+   "version": 1,
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   }
+  },
+  "j-crank_shaft": {
+   "id": "j-crank_shaft",
+   "kind": "shaft",
+   "title": "j-crank shaft",
+   "spec": "\u00d88 shaft on 2\u00d7608 bearings. Catalog part 8, built by the registry, never generated.",
+   "contract": {
+    "name": "j-crank_shaft",
+    "summary": "DSHAFT-8",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "DSHAFT-8"
+     },
+     {
+      "type": "number",
+      "name": "length",
+      "description": "length, mm",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 46
+     }
+    ],
+    "provides": [
+     {
+      "key": "hub",
+      "type": "HUB_BORE",
+      "description": ""
+     }
+    ],
+    "requires": [
+     {
+      "key": "end",
+      "type": "FLAT_FACE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "end",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         8
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 4
+       }
+      },
+      {
+       "name": "hub",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "(param(frame.bossThickness)) + 16"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 4
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 9.6,
+        "h": 2
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "length": "expr: ((param(frame.bossThickness)) + 16) + (param(crank-arm.hubLength))"
+     }
+    },
+    "hash": "2f132f73ca61154c"
+   },
+   "params": {},
+   "hidden": false,
+   "thread": [],
+   "status": "ready",
+   "version": 1,
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   }
+  }
+ },
+ "edges": [
+  {
+   "id": "e0-frame-crank-hub",
+   "from": "frame",
+   "fromPort": "crank_l",
+   "to": "crank-hub",
+   "toPort": "frame_end"
+  },
+  {
+   "id": "e1-drum-gear-drum",
+   "from": "drum",
+   "fromPort": "gear_seat",
+   "to": "gear-drum",
+   "toPort": "seat"
+  },
+  {
+   "id": "e2-crank-hub-gear-pinion",
+   "from": "crank-hub",
+   "fromPort": "gear_seat",
+   "to": "gear-pinion",
+   "toPort": "seat"
+  },
+  {
+   "id": "e3-frame-j-drum_bearing_a",
+   "from": "frame",
+   "fromPort": "j_drum_seat_a",
+   "to": "j-drum_bearing_a",
+   "toPort": "seat"
+  },
+  {
+   "id": "e4-frame-j-drum_bearing_b",
+   "from": "frame",
+   "fromPort": "j_drum_seat_b",
+   "to": "j-drum_bearing_b",
+   "toPort": "seat"
+  },
+  {
+   "id": "e5-j-drum_bearing_a-j-drum_collar",
+   "from": "j-drum_bearing_a",
+   "fromPort": "bore",
+   "to": "j-drum_collar",
+   "toPort": "seat"
+  },
+  {
+   "id": "e6-j-drum_bearing_b-j-drum_collar",
+   "from": "j-drum_bearing_b",
+   "fromPort": "bore",
+   "to": "j-drum_collar",
+   "toPort": "seat"
+  },
+  {
+   "id": "e7-j-drum_bearing_b-j-drum_shaft",
+   "from": "j-drum_bearing_b",
+   "fromPort": "bore",
+   "to": "j-drum_shaft",
+   "toPort": "end"
+  },
+  {
+   "id": "e8-j-drum_shaft-drum",
+   "from": "j-drum_shaft",
+   "fromPort": "hub",
+   "to": "drum",
+   "toPort": "j_drum_hub"
+  },
+  {
+   "id": "e9-frame-j-crank_bearing_a",
+   "from": "frame",
+   "fromPort": "j_crank_seat_a",
+   "to": "j-crank_bearing_a",
+   "toPort": "seat"
+  },
+  {
+   "id": "e10-frame-j-crank_bearing_b",
+   "from": "frame",
+   "fromPort": "j_crank_seat_b",
+   "to": "j-crank_bearing_b",
+   "toPort": "seat"
+  },
+  {
+   "id": "e11-j-crank_bearing_a-j-crank_collar",
+   "from": "j-crank_bearing_a",
+   "fromPort": "bore",
+   "to": "j-crank_collar",
+   "toPort": "seat"
+  },
+  {
+   "id": "e12-j-crank_bearing_b-j-crank_collar",
+   "from": "j-crank_bearing_b",
+   "fromPort": "bore",
+   "to": "j-crank_collar",
+   "toPort": "seat"
+  },
+  {
+   "id": "e13-j-crank_bearing_b-j-crank_shaft",
+   "from": "j-crank_bearing_b",
+   "fromPort": "bore",
+   "to": "j-crank_shaft",
+   "toPort": "end"
+  },
+  {
+   "id": "e14-j-crank_shaft-crank-arm",
+   "from": "j-crank_shaft",
+   "fromPort": "hub",
+   "to": "crank-arm",
+   "toPort": "j_crank_hub"
+  }
+ ],
+ "assembly": {
+  "entryNodeId": "frame"
+ },
+ "joints": [
+  {
+   "id": "j-drum",
+   "a": {
+    "node": "frame",
+    "port": "drum_l"
+   },
+   "b": {
+    "node": "drum",
+    "port": "frame_end_l"
+   },
+   "intent": "serviceable",
+   "motion": "revolute",
+   "duty": "occasional",
+   "load": "medium",
+   "access": "both_sides",
+   "count": 1,
+   "wallA": "param(frame.bossThickness)",
+   "wallB": "param(drum.length)",
+   "shaftHint": 8,
+   "prefer": {
+    "family": "bearing",
+    "key": "608"
+   },
+   "note": "Drum axle on two 608 bearings in the -y plate boss.",
+   "expanded": "M1|bearing_a=bearing:608|bearing_b=bearing:608|shaft=d_shaft:8|collar=collar:8",
+   "minted": [
+    "j_drum_seat_od",
+    "j_drum_seat_w",
+    "j_drum_seat_a",
+    "j_drum_seat_b",
+    "j_drum_shaft_d",
+    "j_drum_flat",
+    "j_drum_hub"
+   ],
+   "limits": [
+    -180,
+    180
+   ],
+   "limitsSource": "derived"
+  },
+  {
+   "id": "j-crank",
+   "a": {
+    "node": "frame",
+    "port": "crank_out"
+   },
+   "b": {
+    "node": "crank-arm",
+    "port": "frame_face"
+   },
+   "intent": "serviceable",
+   "motion": "revolute",
+   "duty": "occasional",
+   "load": "medium",
+   "access": "both_sides",
+   "count": 1,
+   "wallA": "param(frame.bossThickness)",
+   "wallB": "param(crank-arm.hubLength)",
+   "shaftHint": 8,
+   "prefer": {
+    "family": "bearing",
+    "key": "608"
+   },
+   "hubFit": "press",
+   "note": "Crank shaft on two 608 bearings in the +y plate boss. The crank arm is pressed on outside the plate, and the shaft continues inward through the pinion hub's press bore.",
+   "expanded": "M1|bearing_a=bearing:608|bearing_b=bearing:608|shaft=d_shaft:8|collar=collar:8",
+   "minted": [
+    "j_crank_seat_od",
+    "j_crank_seat_w",
+    "j_crank_seat_a",
+    "j_crank_seat_b",
+    "j_crank_shaft_d",
+    "j_crank_flat",
+    "j_crank_hub"
+   ],
+   "limits": [
+    -180,
+    180
+   ],
+   "limitsSource": "derived"
+  }
+ ],
+ "rev": 101
+}

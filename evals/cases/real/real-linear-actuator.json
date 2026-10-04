@@ -1,0 +1,120 @@
+{
+  "id": "real-linear-actuator",
+  "facts": "evals/real/openbuilds-linear-actuator.json",
+  "prompt": "a lead-screw linear actuator on a 500mm-long 20x60mm aluminium V-slot extrusion: a 127x88x3mm gantry plate rides the slot on four 24mm V-wheels, each wheel on two 625 bearings with M5 bolts; an 8mm T8 lead screw runs the length between two 3mm end plates, supported in bearings at the far end and driven by a NEMA 17 stepper through a 5x8mm coupler; an acme lead nut block fixed under the gantry plate carries it about 400mm",
+  "why": "CC-BY-SA, STEP published (42 instances). Real BOM: rail, gantry plate, 2 end plates, 2 spacer blocks, nut block, lead screw, NEMA17, 4 V-wheels (8x 625), 2x 688, coupler, ~23 M5/M3 screws.",
+  "expect": {
+    "nodes": {
+      "min": 3,
+      "max": 7
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "globalProblems": 0,
+    "assembly": {
+      "parts": 20,
+      "contacts": 3,
+      "joints": [
+        {
+          "motion": "prismatic",
+          "hardware": [
+            "lead_screw",
+            "lead_nut"
+          ],
+          "travel": 350
+        }
+      ],
+      "bom": [
+        {
+          "family": "nema17",
+          "qty": 1
+        },
+        {
+          "family": "lead_screw",
+          "qty": 1
+        },
+        {
+          "family": "lead_nut",
+          "qty": 1
+        },
+        {
+          "family": "coupler",
+          "qty": 1
+        },
+        {
+          "family": "bearing|bearing_flanged",
+          "minQty": 8
+        },
+        {
+          "family": "shcs|button|csk",
+          "minQty": 10
+        }
+      ],
+      "bbox": {
+        "value": [
+          127,
+          60,
+          594
+        ],
+        "tol": 0.15,
+        "sorted": true
+      }
+    }
+  },
+  "reference": {
+    "partsMade": 0,
+    "hardware": {
+      "625": 8,
+      "688": 2,
+      "V-wheel": 4,
+      "M5 screws": 10,
+      "M5 nyloc": 6,
+      "M3x45": 3
+    },
+    "steps": null,
+    "cad": {
+      "license": "CC-BY-SA-4.0",
+      "partCount": 42,
+      "bboxMm": [
+        127.0,
+        59.4,
+        594.1
+      ],
+      "gantryPlate": [
+        127,
+        88,
+        3
+      ],
+      "rail": [
+        60,
+        20,
+        500
+      ]
+    }
+  }
+}

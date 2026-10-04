@@ -1,0 +1,1481 @@
+{
+ "schemaVersion": 1,
+ "id": "eval-asm-two-link-arm",
+ "backend": "cad",
+ "brief": {
+  "goal": "a planar two-link arm: a printed 60x60x10mm base, a 100mm upper arm and an 80mm forearm, each link 20mm wide and 6mm thick, joined by two pin joints (base to upper arm, upper arm to forearm) on 4mm steel pins, each joint swinging at least 120 degrees",
+  "design": "Clean functional mechanism: flat stacked links with fully rounded ends concentric with their pins, small 0.5 mm chamfers on outside edges, no decoration. Parts should read as one sturdy set \u2014 consistent flat slabs with crisp edges, not skeletal.",
+  "refs": []
+ },
+ "nodes": {
+  "base": {
+   "id": "base",
+   "kind": "part",
+   "title": "Base",
+   "spec": "Square 60x60x10 mm printed base plate that carries the shoulder pin of the arm at its centre. The upper arm pivots on its top face about a vertical axis through the plate centre; the joint rules cut the 4 mm pin socket there.",
+   "contract": {
+    "name": "Base",
+    "summary": "60x60x10 plate; the upper arm's shoulder pivots on the centre of its top face about +z.",
+    "params": [
+     {
+      "type": "number",
+      "name": "width",
+      "description": "base length along x",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 60,
+      "min": 40,
+      "max": 120
+     },
+     {
+      "type": "number",
+      "name": "depth",
+      "description": "base width along y",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 60,
+      "min": 40,
+      "max": 120
+     },
+     {
+      "type": "number",
+      "name": "thickness",
+      "description": "how thick the base prints; also how deep the shoulder pin is held",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 10,
+      "min": 8,
+      "max": 20
+     },
+     {
+      "type": "number",
+      "name": "shoulder_seat_od",
+      "description": "bushing OD for shoulder",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 8
+     },
+     {
+      "type": "number",
+      "name": "shoulder_seat_w",
+      "description": "seat depth for shoulder",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 4
+     }
+    ],
+    "provides": [
+     {
+      "key": "arm_face",
+      "type": "FLAT_FACE",
+      "description": "top-face pivot land the upper arm's shoulder end rotates on, pin axis along +z"
+     },
+     {
+      "key": "shoulder_seat_a",
+      "type": "BUSHING_BORE",
+      "description": ""
+     },
+     {
+      "key": "shoulder_seat_b",
+      "type": "BUSHING_BORE",
+      "description": ""
+     }
+    ],
+    "requires": [],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "arm_face",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "param(base.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": "(param(base.shoulder_seat_od)) + 2.4"
+       }
+      },
+      {
+       "name": "shoulder_seat_a",
+       "type": "BUSHING_BORE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "(param(base.thickness) / 2)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "od": "param(base.shoulder_seat_od)",
+        "length": "param(base.shoulder_seat_w)"
+       }
+      },
+      {
+       "name": "shoulder_seat_b",
+       "type": "BUSHING_BORE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "(param(base.thickness) / 2) + (-(param(base.thickness)))"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "od": "param(base.shoulder_seat_od)",
+        "length": "param(base.shoulder_seat_w)"
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "box",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "dims": [
+         "param(base.width)",
+         "param(base.depth)",
+         "param(base.thickness)"
+        ]
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "shoulder_seat_od": "hw:bearingSeatD:param:shoulder_bushing_a.sku",
+      "shoulder_seat_w": "param:shoulder_bushing_a.length"
+     },
+     "visualChecks": [
+      "Is the base a flat square plate?",
+      "Is the pivot hole at the centre of the top face?"
+     ],
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "x",
+       "min": 59.5,
+       "max": 60.5
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "y",
+       "min": 59.5,
+       "max": 60.5
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "z",
+       "min": 9.5,
+       "max": 10.5
+      }
+     ]
+    },
+    "hash": "4c7da9e69f29b7e3"
+   },
+   "params": {},
+   "hidden": false,
+   "thread": [],
+   "status": "error_contract",
+   "version": 1,
+   "cost": {
+    "calls": 3,
+    "inputTokens": 14346,
+    "outputTokens": 2058,
+    "usd": 0.0567582
+   }
+  },
+  "upper-arm": {
+   "id": "upper-arm",
+   "kind": "part",
+   "title": "Upper arm",
+   "spec": "Flat link 20 mm wide and 6 mm thick with fully rounded ends, its two pin centres 100 mm apart along x (overall 120 mm). The shoulder end's underside pivots on the base; the elbow end's top face carries the forearm. The joint rules cut both 4 mm pin holes.",
+   "contract": {
+    "name": "Upper arm",
+    "summary": "Flat 20x6 link, pin centres 100 mm apart along x at x=\u00b150; shoulder pivot on the underside at -x, elbow pivot on the top face at +x.",
+    "params": [
+     {
+      "type": "number",
+      "name": "pin_spacing",
+      "description": "distance between the shoulder and elbow pin centres (the link length)",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 100,
+      "min": 50,
+      "max": 180
+     },
+     {
+      "type": "number",
+      "name": "width",
+      "description": "how wide the link is; the rounded ends use half this as radius",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 20,
+      "min": 14,
+      "max": 40
+     },
+     {
+      "type": "number",
+      "name": "thickness",
+      "description": "how thick the link prints",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 6,
+      "min": 5,
+      "max": 12
+     },
+     {
+      "type": "number",
+      "name": "shoulder_shaft_d",
+      "description": "shaft \u00d8 for shoulder",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 4
+     },
+     {
+      "type": "number",
+      "name": "shoulder_flat",
+      "description": "D-flat distance from the axis for shoulder",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 1.5
+     },
+     {
+      "type": "number",
+      "name": "elbow_pin_d",
+      "description": "pin \u00d8 for elbow",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 4
+     }
+    ],
+    "provides": [
+     {
+      "key": "forearm_face",
+      "type": "FLAT_FACE",
+      "description": "top-face elbow pivot land the forearm rotates on, pin axis along +z"
+     },
+     {
+      "key": "elbow_pin_a",
+      "type": "DOWEL_HOLE",
+      "description": ""
+     }
+    ],
+    "requires": [
+     {
+      "key": "shoulder_hub",
+      "type": "HUB_BORE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "base_face",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "-param(upper-arm.pin_spacing) / 2",
+         0,
+         "-param(upper-arm.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": "(param(upper-arm.shoulder_shaft_d)) + 2.4"
+       }
+      },
+      {
+       "name": "forearm_face",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(upper-arm.pin_spacing) / 2",
+         0,
+         "param(upper-arm.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": "(param(upper-arm.elbow_pin_d)) + 2.4"
+       }
+      },
+      {
+       "name": "shoulder_hub",
+       "type": "HUB_BORE",
+       "pose": {
+        "origin": [
+         "(-param(upper-arm.pin_spacing) / 2)",
+         0,
+         "(-param(upper-arm.thickness) / 2)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(upper-arm.shoulder_shaft_d)",
+        "flat": "param(upper-arm.shoulder_flat)"
+       }
+      },
+      {
+       "name": "elbow_pin_a",
+       "type": "DOWEL_HOLE",
+       "pose": {
+        "origin": [
+         "(param(upper-arm.pin_spacing) / 2)",
+         0,
+         "(param(upper-arm.thickness) / 2)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(upper-arm.elbow_pin_d)",
+        "depth": 6,
+        "fit": "press"
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "box",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "dims": [
+         "param(upper-arm.pin_spacing) + param(upper-arm.width)",
+         "param(upper-arm.width)",
+         "param(upper-arm.thickness)"
+        ]
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "shoulder_shaft_d": "hw:shaftD:param:shoulder_shaft.sku",
+      "shoulder_flat": "hw:hubFlat:param:shoulder_shaft.sku",
+      "elbow_pin_d": "hw:dowelHole:param:elbow_pin.sku"
+     },
+     "visualChecks": [
+      "Is the link a flat bar with both ends fully rounded?",
+      "Is there a pin hole near each end of the link, two in total?"
+     ],
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "x",
+       "min": 119,
+       "max": 121
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "y",
+       "min": 19.5,
+       "max": 20.5
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "z",
+       "min": 5.7,
+       "max": 6.3
+      }
+     ]
+    },
+    "hash": "21e6b7a7494d9a2f"
+   },
+   "params": {},
+   "hidden": false,
+   "thread": [],
+   "status": "ready",
+   "version": 1,
+   "cost": {
+    "calls": 3,
+    "inputTokens": 15150,
+    "outputTokens": 3129,
+    "usd": 0.08042940000000001
+   }
+  },
+  "forearm": {
+   "id": "forearm",
+   "kind": "part",
+   "title": "Forearm",
+   "spec": "Flat link 20 mm wide and 6 mm thick with fully rounded ends; its elbow pin centre sits 80 mm from the far end's centre along x (overall 100 mm). Only the elbow end pivots: its underside rides on the upper arm's top face and the joint rules cut the 4 mm pin hole.",
+   "contract": {
+    "name": "Forearm",
+    "summary": "Flat 20x6 link, 80 mm from elbow pin centre to tip centre along x; elbow pivot on the underside at x=-40.",
+    "params": [
+     {
+      "type": "number",
+      "name": "length",
+      "description": "distance from the elbow pin centre to the centre of the rounded tip (the link length)",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 80,
+      "min": 40,
+      "max": 160
+     },
+     {
+      "type": "number",
+      "name": "width",
+      "description": "how wide the link is; the rounded ends use half this as radius",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 20,
+      "min": 14,
+      "max": 40
+     },
+     {
+      "type": "number",
+      "name": "thickness",
+      "description": "how thick the link prints",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 6,
+      "min": 5,
+      "max": 12
+     },
+     {
+      "type": "number",
+      "name": "elbow_pin_d",
+      "description": "pin \u00d8 for elbow",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 4
+     }
+    ],
+    "provides": [
+     {
+      "key": "elbow_pin_b",
+      "type": "DOWEL_HOLE",
+      "description": ""
+     }
+    ],
+    "requires": [
+     {
+      "key": "upper_face",
+      "type": "FLAT_FACE",
+      "description": "joint elbow"
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "upper_face",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "-param(forearm.length) / 2",
+         0,
+         "-param(forearm.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": "(param(forearm.elbow_pin_d)) + 2.4"
+       }
+      },
+      {
+       "name": "elbow_pin_b",
+       "type": "DOWEL_HOLE",
+       "pose": {
+        "origin": [
+         "(-param(forearm.length) / 2)",
+         0,
+         "(-param(forearm.thickness) / 2)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(forearm.elbow_pin_d)",
+        "depth": 6,
+        "fit": "slip"
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "box",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "dims": [
+         "param(forearm.length) + param(forearm.width)",
+         "param(forearm.width)",
+         "param(forearm.thickness)"
+        ]
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "elbow_pin_d": "hw:dowelHole:param:elbow_pin.sku"
+     },
+     "visualChecks": [
+      "Is the link a flat bar with both ends fully rounded?",
+      "Is the pin hole at only one end of the link?"
+     ],
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "x",
+       "min": 99,
+       "max": 101
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "y",
+       "min": 19.5,
+       "max": 20.5
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "z",
+       "min": 5.7,
+       "max": 6.3
+      }
+     ]
+    },
+    "hash": "0af766a2fd26cd84"
+   },
+   "params": {},
+   "hidden": false,
+   "thread": [],
+   "status": "ready",
+   "version": 1,
+   "cost": {
+    "calls": 3,
+    "inputTokens": 14046,
+    "outputTokens": 2586,
+    "usd": 0.0664782
+   }
+  },
+  "shoulder_bushing_a": {
+   "id": "shoulder_bushing_a",
+   "kind": "bushing",
+   "title": "shoulder bushing a",
+   "spec": "\u00d84 shaft in 2\u00d74x8\u00d74 bushings. Catalog part 4x8, built by the registry, never generated.",
+   "contract": {
+    "name": "shoulder_bushing_a",
+    "summary": "BUSH-4x8 \u00d7 4",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "BUSH-4x8"
+     },
+     {
+      "type": "number",
+      "name": "length",
+      "description": "length, mm",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 4
+     }
+    ],
+    "provides": [
+     {
+      "key": "bore",
+      "type": "FLAT_FACE",
+      "description": ""
+     }
+    ],
+    "requires": [
+     {
+      "key": "seat",
+      "type": "BUSHING_BORE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "seat",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 7
+       }
+      },
+      {
+       "name": "bore",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 5
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 9.6,
+        "h": 8
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {}
+    },
+    "hash": "91e4c5b5991b50b5"
+   },
+   "params": {},
+   "hidden": false,
+   "thread": [],
+   "status": "ready",
+   "version": 1,
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   }
+  },
+  "shoulder_bushing_b": {
+   "id": "shoulder_bushing_b",
+   "kind": "bushing",
+   "title": "shoulder bushing b",
+   "spec": "\u00d84 shaft in 2\u00d74x8\u00d74 bushings. Catalog part 4x8, built by the registry, never generated.",
+   "contract": {
+    "name": "shoulder_bushing_b",
+    "summary": "BUSH-4x8 \u00d7 4",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "BUSH-4x8"
+     },
+     {
+      "type": "number",
+      "name": "length",
+      "description": "length, mm",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 4
+     }
+    ],
+    "provides": [
+     {
+      "key": "bore",
+      "type": "FLAT_FACE",
+      "description": ""
+     }
+    ],
+    "requires": [
+     {
+      "key": "seat",
+      "type": "BUSHING_BORE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "seat",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 7
+       }
+      },
+      {
+       "name": "bore",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 5
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 9.6,
+        "h": 8
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {}
+    },
+    "hash": "c79f56a2d8a8fab4"
+   },
+   "params": {},
+   "hidden": false,
+   "thread": [],
+   "status": "ready",
+   "version": 1,
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   }
+  },
+  "shoulder_collar": {
+   "id": "shoulder_collar",
+   "kind": "collar",
+   "title": "shoulder collar",
+   "spec": "\u00d84 shaft in 2\u00d74x8\u00d74 bushings. Catalog part 4, built by the registry, never generated.",
+   "contract": {
+    "name": "shoulder_collar",
+    "summary": "COLLAR-4",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "COLLAR-4"
+     }
+    ],
+    "provides": [],
+    "requires": [
+     {
+      "key": "seat",
+      "type": "FLAT_FACE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "seat",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 5
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 12,
+        "h": 12
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {}
+    },
+    "hash": "7a0d74665f7340f2"
+   },
+   "params": {},
+   "hidden": false,
+   "thread": [],
+   "status": "ready",
+   "version": 1,
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   }
+  },
+  "shoulder_shaft": {
+   "id": "shoulder_shaft",
+   "kind": "shaft",
+   "title": "shoulder shaft",
+   "spec": "\u00d84 shaft in 2\u00d74x8\u00d74 bushings. Catalog part 4, built by the registry, never generated.",
+   "contract": {
+    "name": "shoulder_shaft",
+    "summary": "DSHAFT-4",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "DSHAFT-4"
+     },
+     {
+      "type": "number",
+      "name": "length",
+      "description": "length, mm",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 28
+     }
+    ],
+    "provides": [
+     {
+      "key": "hub",
+      "type": "HUB_BORE",
+      "description": ""
+     }
+    ],
+    "requires": [
+     {
+      "key": "end",
+      "type": "FLAT_FACE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "end",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         6
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 2
+       }
+      },
+      {
+       "name": "hub",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "(param(base.thickness)) + 12"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 2
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 4.8,
+        "h": 2
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "length": "expr: ((param(base.thickness)) + 12) + (param(upper-arm.thickness))"
+     }
+    },
+    "hash": "3b9db496045cfaa3"
+   },
+   "params": {},
+   "hidden": false,
+   "thread": [],
+   "status": "ready",
+   "version": 1,
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   }
+  },
+  "elbow_pin": {
+   "id": "elbow_pin",
+   "kind": "dowel",
+   "title": "elbow pin",
+   "spec": "\u00d84\u00d712 pin pressed in a, turning in b. Catalog ISO 2338 m6 (key is the nominal \u00d8) 4, built by the registry, never generated.",
+   "contract": {
+    "name": "elbow_pin",
+    "summary": "ISO2338-4 \u00d7 12",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "ISO2338-4"
+     },
+     {
+      "type": "number",
+      "name": "length",
+      "description": "length, mm",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 12
+     }
+    ],
+    "provides": [],
+    "requires": [
+     {
+      "key": "center",
+      "type": "DOWEL_HOLE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "center",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 2
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 4.8,
+        "h": 24
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {}
+    },
+    "hash": "592b9f75c6c752f1"
+   },
+   "params": {},
+   "hidden": false,
+   "thread": [],
+   "status": "ready",
+   "version": 1,
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   }
+  }
+ },
+ "edges": [
+  {
+   "id": "e0-upper-arm-forearm",
+   "from": "upper-arm",
+   "fromPort": "forearm_face",
+   "to": "forearm",
+   "toPort": "upper_face"
+  },
+  {
+   "id": "e1-base-shoulder_bushing_a",
+   "from": "base",
+   "fromPort": "shoulder_seat_a",
+   "to": "shoulder_bushing_a",
+   "toPort": "seat"
+  },
+  {
+   "id": "e2-base-shoulder_bushing_b",
+   "from": "base",
+   "fromPort": "shoulder_seat_b",
+   "to": "shoulder_bushing_b",
+   "toPort": "seat"
+  },
+  {
+   "id": "e3-shoulder_bushing_a-shoulder_collar",
+   "from": "shoulder_bushing_a",
+   "fromPort": "bore",
+   "to": "shoulder_collar",
+   "toPort": "seat"
+  },
+  {
+   "id": "e4-shoulder_bushing_b-shoulder_collar",
+   "from": "shoulder_bushing_b",
+   "fromPort": "bore",
+   "to": "shoulder_collar",
+   "toPort": "seat"
+  },
+  {
+   "id": "e5-shoulder_bushing_b-shoulder_shaft",
+   "from": "shoulder_bushing_b",
+   "fromPort": "bore",
+   "to": "shoulder_shaft",
+   "toPort": "end"
+  },
+  {
+   "id": "e6-shoulder_shaft-upper-arm",
+   "from": "shoulder_shaft",
+   "fromPort": "hub",
+   "to": "upper-arm",
+   "toPort": "shoulder_hub"
+  },
+  {
+   "id": "e7-upper-arm-elbow_pin",
+   "from": "upper-arm",
+   "fromPort": "elbow_pin_a",
+   "to": "elbow_pin",
+   "toPort": "center"
+  }
+ ],
+ "assembly": {
+  "entryNodeId": "base"
+ },
+ "joints": [
+  {
+   "id": "shoulder",
+   "a": {
+    "node": "base",
+    "port": "arm_face"
+   },
+   "b": {
+    "node": "upper-arm",
+    "port": "base_face"
+   },
+   "intent": "removable",
+   "motion": "revolute",
+   "duty": "occasional",
+   "load": "light",
+   "access": "both_sides",
+   "count": 1,
+   "wallA": "param(base.thickness)",
+   "wallB": "param(upper-arm.thickness)",
+   "shaftHint": 4,
+   "prefer": {
+    "family": "shaft",
+    "key": "4"
+   },
+   "limits": [
+    -90,
+    90
+   ],
+   "note": "4 mm steel pin, vertical axis at base centre; arm swings at least 120\u00b0 in the plane above the base.",
+   "expanded": "M2|bushing_a=bushing:4x8|bushing_b=bushing:4x8|shaft=d_shaft:4|collar=collar:4",
+   "minted": [
+    "shoulder_seat_od",
+    "shoulder_seat_w",
+    "shoulder_seat_a",
+    "shoulder_seat_b",
+    "shoulder_shaft_d",
+    "shoulder_flat",
+    "shoulder_hub"
+   ]
+  },
+  {
+   "id": "elbow",
+   "a": {
+    "node": "upper-arm",
+    "port": "forearm_face"
+   },
+   "b": {
+    "node": "forearm",
+    "port": "upper_face"
+   },
+   "intent": "removable",
+   "motion": "revolute",
+   "duty": "occasional",
+   "load": "light",
+   "access": "both_sides",
+   "count": 1,
+   "wallA": "param(upper-arm.thickness)",
+   "wallB": "param(forearm.thickness)",
+   "shaftHint": 4,
+   "prefer": {
+    "family": "shaft",
+    "key": "4"
+   },
+   "limits": [
+    -90,
+    90
+   ],
+   "note": "4 mm steel pin at the upper arm's distal end; forearm stacks on top and swings at least 120\u00b0.",
+   "expanded": "M2d|pin=dowel:4",
+   "minted": [
+    "elbow_pin_d",
+    "elbow_pin_a",
+    "elbow_pin_b"
+   ]
+  }
+ ],
+ "rev": 61
+}

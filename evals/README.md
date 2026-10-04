@@ -280,3 +280,18 @@ The runner itself lives at `apps/server/src/eval.ts` rather than here, because i
 needs the engine, the CAD backend and `resolveProvider`, and `apps/server`
 already has all three plus a tsconfig. It follows `cad-acceptance.ts` and
 `verify-smoke.ts`, which are dev scripts in the same place.
+
+## Plan coverage critic
+
+```sh
+pnpm exec tsx src/plan-critic-eval.ts --build                  # stored plans → fixture, 0 LLM
+pnpm exec tsx src/plan-critic-eval.ts [--only real-pinewood-car,...]   # the critic, live
+pnpm exec tsx src/plan-critic-eval.ts --plan real-extruder-cw2 [--critic]  # plan one case
+```
+
+The critic reads the brief beside a compact plan summary and names what the brief
+explicitly asks for that the plan lacks. The fixture
+(`packages/backend-cad/src/fixtures/plan-critic-cases.json`) freezes each real
+brief with the summary of its newest stored plan, plus what the critic must flag
+(the pinewood car's axle nails, the extruder's gears) and how many findings a good
+plan may draw.

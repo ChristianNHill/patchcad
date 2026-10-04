@@ -1,0 +1,97 @@
+{
+  "id": "real-planetary-gearbox",
+  "facts": "evals/real/planetary-gearbox-nema17.json",
+  "prompt": "a one-stage 3D-printed planetary gearbox on a NEMA 17 stepper: a 41x41mm square printed housing with an internal 27-tooth ring gear, a 9-tooth sun pinion pressed on the motor shaft, three 9-tooth planets on a printed carrier that is the output (module 1.2, 4:1), all clamped to the motor by four M3 threaded rods with nuts",
+  "why": "AGPL/GPL, CAD published. Sun 9T + 3 planets 9T + ring 27T at m1.2 is 4:1 per stage; housing 41x41, body 19mm.",
+  "expect": {
+    "nodes": {
+      "min": 3,
+      "max": 6
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "globalProblems": 0,
+    "assembly": {
+      "parts": 11,
+      "contacts": 2,
+      "joints": [
+        {
+          "motion": "revolute",
+          "count": 2,
+          "travel": 360
+        }
+      ],
+      "bom": [
+        {
+          "family": "nema17",
+          "qty": 1
+        },
+        {
+          "family": "threaded_rod",
+          "key": "M3",
+          "minQty": 4
+        },
+        {
+          "family": "hex_nut",
+          "key": "M3",
+          "minQty": 4
+        }
+      ],
+      "bbox": {
+        "value": [
+          42,
+          42,
+          80
+        ],
+        "tol": 0.15,
+        "sorted": true
+      }
+    }
+  },
+  "reference": {
+    "partsMade": 6,
+    "hardware": {
+      "NEMA17": 1,
+      "M3x80 rod": 4,
+      "M3 nut": 7,
+      "self-tap 2x6": 15
+    },
+    "steps": null,
+    "cad": {
+      "license": "AGPL-3.0",
+      "housing": [
+        41,
+        41
+      ],
+      "bodyI": 19,
+      "planetOd": 13,
+      "carrierOd": 31,
+      "gear": "9/9/27 m1.2"
+    }
+  }
+}

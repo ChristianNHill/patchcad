@@ -61,7 +61,7 @@ const HW_FIELDS: Record<string, { families: string[]; value: (r: DimsRow) => num
   cboreDepth: { families: ["shcs", "button"], value: (r) => dim(r, "headH") + 0.4 },
   cskD: { families: ["csk"], value: (r) => dim(r, "headD") },
   washerOd: { families: ["washer"], value: (r) => dim(r, "od") },
-  dowelHole: { families: ["dowel", "wood_dowel"], value: (r) => dim(r, "d") },
+  dowelHole: { families: ["dowel", "wood_dowel", "filament_pin"], value: (r) => dim(r, "d") },
   bearingSeatD: { families: ["bearing", "bearing_flanged", "lm_uu", "bushing"], value: (r) => dim(r, "od") },
   bearingWidth: { families: ["bearing", "bearing_flanged"], value: (r) => dim(r, "width") },
   // The shaft a part takes: a rod's own Ø, or the bore of whatever rides on it.

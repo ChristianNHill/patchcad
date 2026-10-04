@@ -1,0 +1,346 @@
+{
+  "id": "voron-clockwork2",
+  "name": "Voron ClockWork2 extruder (Stealthburner), BMG-gear direct-drive extruder with NEMA14 round motor",
+  "category": "open-hardware-mechanism",
+  "sources": [
+    {
+      "url": "https://github.com/VoronDesign/Voron-Stealthburner",
+      "what": "repo (GPL-3.0): STLs, CAD, manual"
+    },
+    {
+      "url": "https://github.com/VoronDesign/Voron-Stealthburner/blob/main/Manual/Assembly_Manual_SB.pdf",
+      "what": "assembly instructions (CW2 section pp.10-34)"
+    },
+    {
+      "url": "https://github.com/VoronDesign/Voron-Stealthburner/blob/main/CAD/Stealthburner_CW2_Assembly.step",
+      "what": "STEP"
+    }
+  ],
+  "license": "GPL-3.0",
+  "overallDimsMm": {
+    "x": 68.9,
+    "y": 72.1,
+    "z": 70.9,
+    "note": "CW2_Assembly subtree bbox measured from STEP (incl. motor, alternate chain anchors overlap)"
+  },
+  "parts": [
+    {
+      "name": "main_body",
+      "qty": 1,
+      "source": "printed",
+      "material": "ABS",
+      "dimsMm": "62.8x24.7x68.7",
+      "notes": "measured"
+    },
+    {
+      "name": "motor_plate",
+      "qty": 1,
+      "source": "printed",
+      "material": "ABS",
+      "dimsMm": "59.1x8.2x70.8",
+      "notes": "measured"
+    },
+    {
+      "name": "guidler_a",
+      "qty": 1,
+      "source": "printed",
+      "material": "ABS accent",
+      "dimsMm": "19.5x16.2x45",
+      "notes": "idler arm half"
+    },
+    {
+      "name": "guidler_b",
+      "qty": 1,
+      "source": "printed",
+      "material": "ABS accent",
+      "dimsMm": "19.2x10.8x31.4",
+      "notes": ""
+    },
+    {
+      "name": "latch",
+      "qty": 1,
+      "source": "printed",
+      "material": "ABS accent",
+      "dimsMm": "41.5x10.4x25.8",
+      "notes": ""
+    },
+    {
+      "name": "latch_shuttle",
+      "qty": 1,
+      "source": "printed",
+      "material": "ABS accent",
+      "dimsMm": "23.6x10.4x12.5",
+      "notes": ""
+    },
+    {
+      "name": "cable_door (or cable_door_for_pcb)",
+      "qty": 1,
+      "source": "printed",
+      "material": "ABS",
+      "dimsMm": "49.5x42.2x69.4",
+      "notes": ""
+    },
+    {
+      "name": "chain_anchor (1 of 4 variants)",
+      "qty": 1,
+      "source": "printed",
+      "material": "ABS",
+      "dimsMm": "51.2x36.8x22.9",
+      "notes": "2/3-hole, V2/Trident or SwitchWire"
+    },
+    {
+      "name": "pcb_spacer",
+      "qty": 1,
+      "source": "printed",
+      "material": "ABS accent",
+      "dimsMm": "3.8x18x18.8",
+      "notes": "optional, toolhead PCB only"
+    },
+    {
+      "name": "LDO-36STH20 NEMA14 round stepper",
+      "qty": 1,
+      "source": "bought",
+      "material": "",
+      "dimsMm": "36 dia x 20",
+      "notes": "37.1x26x38.8 measured incl. pinion"
+    }
+  ],
+  "hardware": [
+    {
+      "class": "motor",
+      "size": "NEMA14 36mm round (LDO-36STH20), 10T pinion",
+      "qty": 1,
+      "notes": ""
+    },
+    {
+      "class": "insert",
+      "size": "M3 heat-set",
+      "qty": 17,
+      "notes": "STEP CW2_hardware"
+    },
+    {
+      "class": "bearing",
+      "size": "MR85 (5x8x2.5; STEP label MR825 5x8x2)",
+      "qty": 2,
+      "notes": "drive shaft, one in motor plate, one in main body"
+    },
+    {
+      "class": "bearing",
+      "size": "needle bearing (idler)",
+      "qty": 2,
+      "notes": "BMG idler assembly"
+    },
+    {
+      "class": "shaft",
+      "size": "3x20mm",
+      "qty": 1,
+      "notes": "idler shaft"
+    },
+    {
+      "class": "other",
+      "size": "BMG 50T drive gear + drive shaft gear + idler gear",
+      "qty": 3,
+      "notes": "Bondtech BMG clone set"
+    },
+    {
+      "class": "spring",
+      "size": "BMG spring ~12mm long, 6mm OD, 1mm wire",
+      "qty": 1,
+      "notes": "manual p.18"
+    },
+    {
+      "class": "screw",
+      "size": "M3 thumb screw + nylon washer",
+      "qty": 1,
+      "notes": "tension"
+    },
+    {
+      "class": "screw",
+      "size": "M3x2 set screw (DIN 913)",
+      "qty": 1,
+      "notes": "drive gear"
+    },
+    {
+      "class": "screw",
+      "size": "M3x25 SHCS",
+      "qty": 4,
+      "notes": ""
+    },
+    {
+      "class": "screw",
+      "size": "M3x8 SHCS",
+      "qty": 2,
+      "notes": ""
+    },
+    {
+      "class": "screw",
+      "size": "M3x10 SHCS",
+      "qty": 2,
+      "notes": ""
+    },
+    {
+      "class": "screw",
+      "size": "M3x16 SHCS",
+      "qty": 2,
+      "notes": ""
+    },
+    {
+      "class": "screw",
+      "size": "M3x20 SHCS",
+      "qty": 1,
+      "notes": "chain anchor"
+    },
+    {
+      "class": "screw",
+      "size": "M3x30 SHCS",
+      "qty": 1,
+      "notes": "motor"
+    },
+    {
+      "class": "screw",
+      "size": "M3x6 FHCS",
+      "qty": 1,
+      "notes": "threadlocked, main body"
+    },
+    {
+      "class": "screw",
+      "size": "M3x6 BHCS",
+      "qty": 1,
+      "notes": "cable cover, into plastic"
+    },
+    {
+      "class": "washer",
+      "size": "M3",
+      "qty": 1,
+      "notes": "motor bolt"
+    }
+  ],
+  "joins": [
+    {
+      "a": "guidler_a",
+      "b": "guidler_b",
+      "method": "screw",
+      "qty": 1,
+      "notes": "M3x16 SHCS, captures BMG idler assembly"
+    },
+    {
+      "a": "motor_plate",
+      "b": "main_body",
+      "method": "screw",
+      "qty": 0,
+      "notes": "M3x25 SHCS through heat-set inserts (count per page not stated)"
+    },
+    {
+      "a": "guidler_a",
+      "b": "main_body",
+      "method": "pin",
+      "qty": 1,
+      "notes": "M3x25 pivot bolt left loose (tension arm must move freely)"
+    },
+    {
+      "a": "latch",
+      "b": "main_body",
+      "method": "screw",
+      "qty": 1,
+      "notes": "M3x25 pivot"
+    },
+    {
+      "a": "LDO-36STH20 NEMA14 round stepper",
+      "b": "motor_plate",
+      "method": "screw",
+      "qty": 2,
+      "notes": "M3x30 + M3x8 with washer; slotted for gear mesh adjust"
+    },
+    {
+      "a": "chain_anchor (1 of 4 variants)",
+      "b": "main_body",
+      "method": "screw",
+      "qty": 1,
+      "notes": "M3x20"
+    },
+    {
+      "a": "cable_door (or cable_door_for_pcb)",
+      "b": "main_body",
+      "method": "screw",
+      "qty": 2,
+      "notes": "M3x16 SHCS + M3x6 BHCS (into plastic)"
+    },
+    {
+      "a": "MR85 bearing",
+      "b": "main_body",
+      "method": "press_fit",
+      "qty": 2,
+      "notes": "one in motor plate, one in main body"
+    }
+  ],
+  "motion": [
+    {
+      "between": [
+        "BMG 50T drive gear",
+        "main_body"
+      ],
+      "type": "rotate",
+      "travel": "continuous; 50:10 = 5:1 reduction from motor pinion"
+    },
+    {
+      "between": [
+        "guidler_a",
+        "main_body"
+      ],
+      "type": "hinge",
+      "travel": "few degrees; spring-loaded idler, thumb-screw tension, adjustable anti-squish stop"
+    },
+    {
+      "between": [
+        "latch",
+        "main_body"
+      ],
+      "type": "hinge",
+      "travel": "open/closed filament latch (angle not stated)"
+    },
+    {
+      "between": [
+        "LDO-36STH20 NEMA14 round stepper",
+        "motor_plate"
+      ],
+      "type": "slide",
+      "travel": "small slot adjustment to set gear mesh, then locked"
+    }
+  ],
+  "assembly": {
+    "steps": 24,
+    "stepsSource": "manual pages 11-34 (one illustrated step per page) in CW2 section; 10 sub-sections",
+    "order": [
+      "heat-set inserts",
+      "guidler arm (BMG idler + spring + thumbscrew)",
+      "motor plate bearing",
+      "main body bearing + FHCS",
+      "drive gear + drive assembly + alignment check",
+      "tension arm",
+      "latch",
+      "tension mechanism",
+      "stepper motor + gear mesh",
+      "chain anchor",
+      "cable bridge",
+      "cable cover"
+    ]
+  },
+  "referenceCad": {
+    "available": true,
+    "url": "https://github.com/VoronDesign/Voron-Stealthburner/raw/main/CAD/Stealthburner_CW2_Assembly.step",
+    "format": "STEP",
+    "license": "GPL-3.0",
+    "partCount": 81,
+    "keyDims": {
+      "note": "file is the whole Stealthburner toolhead (198 solids); CW2_Assembly subtree = 81 solids: 13 printed (incl. 4 chain-anchor + 2 cable-cover variants), 32 hardware, 34 BMG-hardware solids, motor 2",
+      "cw2BboxMm": "68.9 x 72.1 x 70.9 (measured)",
+      "fullToolheadBboxMm": "76.1 x 103.5 x 132.0 (measured)",
+      "mainBodyMm": "62.8 x 24.7 x 68.7",
+      "motorPlateMm": "59.1 x 8.2 x 70.8",
+      "driveGear50TMm": "26 OD",
+      "motorMm": "LDO-36STH20, 36 dia"
+    }
+  },
+  "confidence": "high for printed part list, STEP counts/dims, manual page structure and screw sizes per step; medium for per-join quantities (manual pages show screws but not counts in text) and gear ratio (50T measured, 10T pinion from Voron standard config)",
+  "notes": "Part counts for a real build: 8 printed (9 with PCB spacer), ~45 bought items. Galileo Clockwork (JaredC01/Galileo, GPL-3.0, STEP) is a planetary drop-in replacement for this module."
+}

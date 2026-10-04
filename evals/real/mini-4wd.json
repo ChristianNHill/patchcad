@@ -1,0 +1,133 @@
+{
+  "id": "mini-4wd",
+  "name": "Tamiya Mini 4WD (MA chassis example) built to Tamiya official race regulations",
+  "category": "toy-car",
+  "sources": [
+    {
+      "url": "https://www.tamiya.com/english/mini4wd/regulation.htm",
+      "what": "official race regulations"
+    },
+    {
+      "url": "https://www.tamiyausa.com/media/files/mini-4wd-tusa-rules-2026-1522-f342.pdf",
+      "what": "Tamiya USA regulations PDF (not fetched)"
+    },
+    {
+      "url": "https://monkeemods.com/blog/tamiya-mini-4wd-ma-chassis-kits",
+      "what": "MA chassis specs (community)"
+    }
+  ],
+  "license": "proprietary (facts only)",
+  "overallDimsMm": {
+    "x": 156,
+    "y": 97,
+    "z": null,
+    "note": "MA chassis length/width per community guide; regulation max 165 L x 105 W x 70 H"
+  },
+  "parts": [
+    {
+      "name": "MA monocoque chassis (6 integrated rollers, rear skid bar)",
+      "qty": 1,
+      "source": "bought",
+      "material": "plastic",
+      "dimsMm": "",
+      "notes": "~78g as moulded (community)"
+    },
+    {
+      "name": "body shell (multi-piece)",
+      "qty": 1,
+      "source": "bought",
+      "material": "plastic",
+      "dimsMm": "",
+      "notes": ""
+    },
+    {
+      "name": "wheel + tyre",
+      "qty": 4,
+      "source": "bought",
+      "material": "plastic / rubber",
+      "dimsMm": "regulation dia 22-35, width 8-26",
+      "notes": "large-dia spoked wheels, low-profile tyres in a typical MA kit"
+    },
+    {
+      "name": "double-shaft motor",
+      "qty": 1,
+      "source": "bought",
+      "material": "",
+      "dimsMm": "",
+      "notes": "midship, drives both axles directly, no propeller shaft"
+    },
+    {
+      "name": "AA battery",
+      "qty": 2,
+      "source": "bought",
+      "material": "",
+      "dimsMm": "",
+      "notes": "Tamiya-branded R6/AA only for racing"
+    }
+  ],
+  "hardware": [
+    {
+      "class": "motor",
+      "size": "Tamiya double-shaft PRO motor",
+      "qty": 1,
+      "notes": ""
+    },
+    {
+      "class": "wheel",
+      "size": "22-35mm dia (regulation)",
+      "qty": 4,
+      "notes": ""
+    },
+    {
+      "class": "shaft",
+      "size": "axle shaft",
+      "qty": 2,
+      "notes": "front + rear, assumed for 4WD"
+    },
+    {
+      "class": "screw",
+      "size": "unknown",
+      "qty": 0,
+      "notes": "screw counts not found without the instruction sheet"
+    }
+  ],
+  "joins": [],
+  "motion": [
+    {
+      "between": [
+        "wheel",
+        "chassis"
+      ],
+      "type": "rotate",
+      "travel": "continuous"
+    },
+    {
+      "between": [
+        "motor shaft",
+        "gears"
+      ],
+      "type": "rotate",
+      "travel": "continuous"
+    }
+  ],
+  "assembly": {
+    "steps": 0,
+    "stepsSource": "not verified (instruction sheet not consulted)",
+    "order": []
+  },
+  "referenceCad": {
+    "available": false,
+    "url": null,
+    "format": null,
+    "license": null,
+    "partCount": null,
+    "keyDims": {
+      "wheelbaseMm": "80 (MA, community)",
+      "groundClearanceMm": "2.2 (MA, community); regulation min 1",
+      "completeWeightG": "125.9 (community); regulation min 90 incl. batteries+motor",
+      "gearRatio": "4:1 stock typical (community)"
+    }
+  },
+  "confidence": "high for regulation limits (tamiya.com); medium for MA chassis wheelbase/length/width/weight (community blog); none for screw counts and step counts (not found).",
+  "notes": "Optional item; partial facts only."
+}

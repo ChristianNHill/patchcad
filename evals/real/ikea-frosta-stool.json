@@ -1,0 +1,41 @@
+{
+  "id": "ikea-frosta-stool",
+  "name": "IKEA FROSTA stool, birch plywood",
+  "category": "flatpack-furniture",
+  "sources": [
+    { "url": "https://m2.ikea.com/us/en/p/frosta-stool-birch-plywood-24286205/", "what": "product page (article 242.862.05; seat dia 13 3/4 in, W/D 16 1/2 in, seat height 17 3/4 in, tested for 220 lb) - read via search snippet; main ikea.com page now redirects (product appears discontinued in US)" },
+    { "url": "https://www.ikea.com/ca/en/assembly_instructions/frosta-stool__AA-1131405-1.pdf", "what": "assembly instructions (AA-1131405-1, 2008; 4 printed pages on 2 PDF spreads, 1 numbered step)" },
+    { "url": "https://www.amazon.de/Ikea-Stapelhocker-Holz-Hocker-Birkensperrholz-Sitzdurchmesser-cm-Sitzh%C3%B6he/dp/B005IDR2NW", "what": "secondary listing (seat dia 35 cm, seat height 45 cm, 100 kg)" }
+  ],
+  "license": "proprietary (facts only)",
+  "overallDimsMm": { "x": 420, "y": 420, "z": 450, "note": "x=width, y=depth across the splayed leg feet, z=seat height; seat diameter 350. From product page (16 1/2 in = 419 mm, 17 3/4 in = 451 mm)." },
+  "parts": [
+    { "name": "seat", "qty": 1, "source": "made", "material": "birch plywood, clear acrylic lacquer", "dimsMm": "dia 350 x ~25 thick", "notes": "Round; 12 pre-drilled holes on the underside in 4 groups of 3 (one radial group per leg). Thickness estimated." },
+    { "name": "leg", "qty": 4, "source": "made", "material": "bent birch plywood (L-shape), clear lacquer", "dimsMm": "~40 wide x ~20 thick; vertical ~425, horizontal foot under seat ~130", "notes": "Each leg is an L: the short horizontal arm lies flat under the seat along a radius and takes 3 screws; the long arm runs down at the seat rim. Sizes estimated from drawings and overall dims." }
+  ],
+  "hardware": [
+    { "class": "bolt", "size": "countersunk machine screw, hex socket, approx M6x30 (estimated)", "qty": 12, "notes": "3 per leg, driven up through the leg's horizontal arm into the seat; seat presumably has pre-fitted threaded inserts (not stated). Product page advises re-tightening after two weeks." },
+    { "class": "other", "size": "allen key (IKEA 100006)", "qty": 1, "notes": "Tool, included." }
+  ],
+  "joins": [
+    { "a": "leg", "b": "seat", "method": "screw", "qty": 4, "notes": "Each leg: 3 countersunk machine screws in a radial row. Legs at 90 deg spacing; the four horizontal arms point inward toward the centre." }
+  ],
+  "motion": [
+    { "between": ["leg", "seat"], "type": "fixed", "travel": "none" }
+  ],
+  "assembly": {
+    "steps": 1,
+    "stepsSource": "official instructions AA-1131405-1: one numbered step ('1', repeated x4 legs, x3 screws each); other panels are parts list and work-surface advice",
+    "order": ["seat upside down", "for each of 4 legs: place the horizontal arm on its hole group and drive 3 screws", "turn upright"]
+  },
+  "referenceCad": {
+    "available": false,
+    "url": null,
+    "format": null,
+    "license": null,
+    "partCount": null,
+    "keyDims": {}
+  },
+  "confidence": "high for part count (1 seat + 4 legs), hardware (12 countersunk hex-socket screws, key 100006) and the single step - read from the official instructions. medium for overall dims (US page via search snippet plus a secondary listing; both agree: seat dia 350, W/D 420, H 450, 100 kg). low for leg section, seat thickness and screw size (estimated).",
+  "notes": "Alvar Aalto Stool 60 style; stacks. Note the US product page is no longer live; instructions are the 2008 edition."
+}

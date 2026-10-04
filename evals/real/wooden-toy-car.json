@@ -1,0 +1,119 @@
+{
+  "id": "wooden-toy-car",
+  "name": "Simple wooden push-toy car (Ana White plan as published by The Project Lady): pine body, dowel axles, slab wheels",
+  "category": "toy-car",
+  "sources": [
+    {
+      "url": "https://theprojectlady.com/diy-wooden-toy-vehicles-car-truck-helicopter/",
+      "what": "assembly instructions + materials list (car)"
+    },
+    {
+      "url": "https://www.ana-white.com/woodworking-projects/build-your-own-wooden-push-toys-car-truck-helicopter",
+      "what": "original plan (fetch returned 402)"
+    },
+    {
+      "url": "https://www.bearwood.com/wooden-toy-wheels-one-and-half-inch.html",
+      "what": "typical 1-1/2in x 1/2in slab wheel with 1/4in hole"
+    },
+    {
+      "url": "https://sdfwa.org/wp-content/uploads/2020/06/Toy-Build-Companion-2.pdf",
+      "what": "SDFWA toy-making reference: 9/32in hole for a rotating 1/4in dowel axle; 7/32in axle-peg tenon glues into 15/64in"
+    }
+  ],
+  "license": "proprietary (facts only)",
+  "overallDimsMm": {
+    "x": null,
+    "y": 76.2,
+    "z": null,
+    "note": "x=length, y=width across wheels: 2-1/2in (63.5mm) dowel + ~1/2in wheels => ~76mm estimated if wheels sit flush on dowel ends; body outline is a template whose dims are not in the page text"
+  },
+  "parts": [
+    {
+      "name": "body",
+      "qty": 1,
+      "source": "made",
+      "material": "select pine board, 4in wide x 3/4in thick",
+      "dimsMm": "? x 88.9(max, 3.5in actual) x 19.05",
+      "notes": "profile traced from template; length not stated. Body lies flat: its 3/4in thickness is across the car, between the wheels."
+    },
+    {
+      "name": "wheel",
+      "qty": 4,
+      "source": "bought",
+      "material": "wood (birch slab wheel)",
+      "dimsMm": "dia 31.75-38.1 x ~12.7",
+      "notes": "1-1/4in to 1-1/2in dia with 1/4in center hole; 1/2in thickness from typical supplier"
+    },
+    {
+      "name": "axle dowel",
+      "qty": 2,
+      "source": "made",
+      "material": "1/4in hardwood dowel",
+      "dimsMm": "dia 6.35 x 63.5",
+      "notes": "cut 2 pieces at 2-1/2in"
+    }
+  ],
+  "hardware": [
+    {
+      "class": "dowel",
+      "size": "1/4in (6.35mm) x 2-1/2in (63.5mm)",
+      "qty": 2,
+      "notes": "axles; wheels glued to ends"
+    },
+    {
+      "class": "wheel",
+      "size": "1-1/2in dia x 1/2in, 1/4in bore",
+      "qty": 4,
+      "notes": "or 1-1/4in dia"
+    }
+  ],
+  "joins": [
+    {
+      "a": "wheel",
+      "b": "axle dowel",
+      "method": "glue",
+      "qty": 4,
+      "notes": "one wheel glued to each dowel first; the second wheel glued after the dowel passes through the body"
+    },
+    {
+      "a": "axle dowel",
+      "b": "body",
+      "method": "pin",
+      "qty": 2,
+      "notes": "dowel spins in a body hole drilled slightly larger than 1/4in (SDFWA uses 9/32in = 7.14mm)"
+    }
+  ],
+  "motion": [
+    {
+      "between": [
+        "axle dowel",
+        "body"
+      ],
+      "type": "rotate",
+      "travel": "continuous"
+    }
+  ],
+  "assembly": {
+    "steps": 7,
+    "stepsSource": "approximate count of primary steps on The Project Lady page (template, cut, round/sand, drill, paint, wheel sub-assemblies, final wheel attach)",
+    "order": [
+      "trace template on pine",
+      "cut body",
+      "round over / sand",
+      "drill axle holes slightly >1/4in",
+      "paint",
+      "glue one wheel on each dowel",
+      "pass dowel through body, glue second wheel"
+    ]
+  },
+  "referenceCad": {
+    "available": false,
+    "url": null,
+    "format": null,
+    "license": null,
+    "partCount": null,
+    "keyDims": {}
+  },
+  "confidence": "medium: wheel dia, dowel dia/length, glue-wheel-to-spinning-axle method and 4in x 3/4in stock are quoted from the page; body length/height and axle hole positions NOT available (template only); step count is approximate; 9/32in clearance hole is from SDFWA, not this plan.",
+  "notes": "Classic pattern: rotating dowel axle in an oversized body bore, wheels glued to axle. The common alternative is a fixed axle peg (7/32in tenon) glued into the body with the wheel spinning on the peg."
+}

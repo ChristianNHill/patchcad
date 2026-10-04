@@ -1,7 +1,7 @@
 {
   "id": "asm-lead-screw-lift",
   "prompt": "a vertical lead-screw lift: a NEMA 17 stepper under a printed 120x100x8mm base turns a T8 lead screw through a 5x8 coupler, raising a printed 80x60x8mm platform through 120mm of travel on a flanged T8 nut, guided by an 8mm rod and an LM8UU bearing",
-  "why": "PL, the most hardware one joint mints: motor, coupler, lead screw, nut, guide rod, linear bearing. The sweep runs the platform up the full stroke against the screw, rod and base.",
+  "why": "PL, the most hardware one joint mints: motor, coupler, lead screw, nut, guide rod, linear bearing. The sweep runs the platform up the full stroke against the screw, rod and base. The guide may ride in the lead-screw joint or be its own prismatic joint on the platform, so the screw drive and the LM8UU guide are asserted separately.",
   "expect": {
     "nodes": {
       "min": 2,
@@ -44,10 +44,15 @@
             "lead_screw",
             "lead_nut",
             "nema17",
-            "coupler",
-            "lm_uu"
+            "coupler"
           ],
           "travel": 120
+        },
+        {
+          "motion": "prismatic",
+          "hardware": [
+            "lm_uu"
+          ]
         }
       ],
       "bom": [

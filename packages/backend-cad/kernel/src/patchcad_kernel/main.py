@@ -507,8 +507,8 @@ async def clash_endpoint(body: ClashBody):
 class InsertionBody(BaseModel):
     parts: list[ClashPart] = Field(default_factory=list)
     import_dir: str = ""
-    """{id, moving: [key], still: [key], direction, clear_mm?}: direction is the way the moving parts travel
-    IN; clear_mm how far they ride a placed shaft before they are free."""
+    """{id, moving: [key], still: [key], direction, clear_mm?, travel_mm?}: direction is the way the moving
+    parts travel IN; clear_mm how far they ride a placed shaft before they are free; travel_mm a fixed sweep."""
     checks: list[dict[str, Any]] = Field(default_factory=list)
     allow: list[dict[str, Any]] = Field(default_factory=list)
 

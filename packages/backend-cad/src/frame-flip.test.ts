@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { architectOutputToGraph, type ArchitectOutput } from "@patchcad/engine";
 import { CadBackend } from "./index.js";
-import { fixFrameFlips } from "./frame-flip.js";
+import { fixFrameFlips, fixSpans, settled } from "./frame-flip.js";
 import { cadPlanGeometryLint } from "./plan-geometry.js";
 
 /** The hinge-revolute eval's plan (2026-10-03 11:53, after its repairs), as
@@ -88,4 +88,37 @@ describe("hinges on a bearing pivot", () => {
     d.joints[0]!.load = "heavy";
     expect(check(d).some((p) => /M1 room around the axis in a Ø7\.0 < bearing OD 10\.0/.test(p))).toBe(true);
   });
+});
+
+describe("mate loops (real-storage-crate)", () => {
+  // The crate's draft: four end slats (one node, instanced), each placed by its
+  // right end on one side panel with its left end on the other.
+  const crate = JSON.parse(readFileSync(new URL("./fixtures/real-storage-crate-draft.json", import.meta.url), "utf8")) as ArchitectOutput;
+  const loops = (problems: string[]) => problems.filter((p) => /disagrees|spans/.test(p));
+  const slat = (d: ArchitectOutput) => d.nodes.find((n) => n.id === "slat-plain")!.contract.params.find((p) => p.name === "length")!;
+
+  it("checks each slat's far end against the copy it meets, not the first copy", () => {
+    // Was: "mate side-panel.end_neg_low → slat-plain.left_end disagrees … by 472.00mm".
+    expect(loops(check(crate))).toEqual([]);
+  }, 60_000);
+
+  it("says a slat is the wrong length, and closes the loop by binding it", () => {
+    // The draft binds the floor's width to the slat's length, which already
+    // closes the loop; without that binding a 280 slat is 30 short.
+    const short = structuredClone(crate);
+    delete (short.nodes.find((n) => n.id === "bottom-panel")!.contract.payload as { paramBindings: Record<string, string> }).paramBindings.width;
+    (slat(short) as { default: number }).default = 280;
+    const problems = check(short);
+    expect(loops(problems)[0]).toMatch(/^plan assembly: slat-plain spans 30\.00mm less than the gap between side-panel and side-panel-far/);
+    const fixed = fixSpans(short, problems, check)!;
+    expect(fixed.notes).toEqual([expect.stringMatching(/^loop closure: slat-plain\.length 280 → 310, the gap between side-panel and side-panel-far \(T1: expr: 310 \+ /)]);
+    expect(loops(check(fixed.draft))).toEqual([]);
+    // T1: the slat follows the bottom panel's width, which sets the panels apart.
+    const binding = (fixed.draft.nodes.find((n) => n.id === "slat-plain")!.contract.payload as { paramBindings: Record<string, string> }).paramBindings.length!;
+    expect(binding).toContain("param(bottom-panel.width)");
+    const wider = structuredClone(fixed.draft);
+    (wider.nodes.find((n) => n.id === "bottom-panel")!.contract.params.find((p) => p.name === "width") as { default: number }).default += 20;
+    // T1 moves the slat with it (the handle slat, never short, is not bound).
+    expect(loops(check(settled(wider))).filter((p) => p.includes("slat-plain"))).toEqual([]);
+  }, 120_000);
 });

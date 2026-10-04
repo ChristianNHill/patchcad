@@ -143,7 +143,7 @@ function gearRow(node: NodeRecord): Omit<BuyRow, "qty" | "nodes"> | null {
   return { sku: `${sku.id}-z${z}`, description: `spur_gear ${sku.key} z${z}`, standard: CATALOG.families.spur_gear!.standard ?? "—", vendors: UNVERIFIED_PN };
 }
 
-function buyRow(node: NodeRecord): Omit<BuyRow, "qty" | "nodes"> {
+export function buyRow(node: NodeRecord): Omit<BuyRow, "qty" | "nodes"> {
   const sku = skuAtLength(node);
   if (!sku) return gearRow(node) ?? { sku: node.kind, description: node.title, standard: "—", vendors: UNVERIFIED_PN };
   const family = CATALOG.families[sku.family]!;

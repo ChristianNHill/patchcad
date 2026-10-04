@@ -1,0 +1,91 @@
+{
+  "id": "real-robot-arm-5dof",
+  "facts": "evals/real/so101-robot-arm.json",
+  "prompt": "a small 3D-printed 5-axis desktop robot arm with a gripper, driven by six 45x25x38mm serial bus servos: a 110x87x72mm base with a pan servo, a shoulder bracket, a 142mm upper arm, a 131mm forearm, a wrist pitch bracket, a wrist roll and a two-jaw gripper with one moving jaw; each printed link screwed to its servo's horn with M3 screws",
+  "why": "Apache-2.0, STEP published (97 instances). 10 printed links, 6 servos, ~70 screws, 6 revolute joints, 25 guide steps base to gripper.",
+  "expect": {
+    "nodes": {
+      "min": 5,
+      "max": 12
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "globalProblems": 0,
+    "assembly": {
+      "parts": 16,
+      "contacts": 4,
+      "joints": [
+        {
+          "motion": "revolute",
+          "count": 5,
+          "travel": 180
+        }
+      ],
+      "bom": [
+        {
+          "family": "shcs|button|csk",
+          "minQty": 12
+        }
+      ]
+    }
+  },
+  "reference": {
+    "partsMade": 10,
+    "hardware": {
+      "STS3215 servo": 6,
+      "M3x6": 45,
+      "M2x6 self-tap": 24
+    },
+    "steps": 25,
+    "order": [
+      "base + pan servo",
+      "shoulder",
+      "upper arm",
+      "forearm",
+      "wrist pitch",
+      "wrist roll",
+      "gripper"
+    ],
+    "cad": {
+      "license": "Apache-2.0",
+      "partCount": 97,
+      "bboxMm": [
+        110.9,
+        319.4,
+        253.4
+      ],
+      "upperArm": 142.2,
+      "forearm": 130.7,
+      "servo": [
+        45.2,
+        37.8,
+        24.7
+      ]
+    }
+  }
+}

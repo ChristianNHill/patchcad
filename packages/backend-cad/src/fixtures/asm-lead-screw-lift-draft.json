@@ -1,0 +1,1449 @@
+{
+ "nodes": [
+  {
+   "id": "base",
+   "kind": "part",
+   "title": "Lift base",
+   "spec": "Flat 120x100x8 mm base plate. The NEMA 17 stepper hangs under it on the lead-screw axis, and the T8 lead screw rises through it. A short round boss on the underside, on the guide-rod axis, holds the fixed 8 mm guide rod upright. The joint rules cut the motor mount, the screw clearance and the rod socket.",
+   "contract": {
+    "name": "Lift base",
+    "summary": "120x100x8 plate. The lead-screw axis is at -rodSpacing/2 on x and the guide-rod axis at +rodSpacing/2. Both joint faces are on the top face (+z). A rod-socket boss hangs below the guide axis.",
+    "params": [
+     {
+      "type": "number",
+      "name": "width",
+      "description": "base length along x",
+      "default": 120,
+      "min": 90,
+      "max": 200
+     },
+     {
+      "type": "number",
+      "name": "depth",
+      "description": "base width along y",
+      "default": 100,
+      "min": 70,
+      "max": 160
+     },
+     {
+      "type": "number",
+      "name": "thickness",
+      "description": "how thick the base plate prints",
+      "default": 8,
+      "min": 5,
+      "max": 15
+     },
+     {
+      "type": "number",
+      "name": "rodSpacing",
+      "description": "distance between the lead-screw axis and the guide-rod axis",
+      "default": 40,
+      "min": 34,
+      "max": 70
+     },
+     {
+      "type": "number",
+      "name": "rodBossHeight",
+      "description": "how far the guide-rod socket boss hangs below the plate, giving the rod a deeper grip",
+      "default": 16,
+      "min": 6,
+      "max": 30
+     },
+     {
+      "type": "number",
+      "name": "lift_pilot",
+      "description": "motor pilot Ø for lift",
+      "default": 22
+     },
+     {
+      "type": "number",
+      "name": "guide_rod_d",
+      "description": "rod Ø for guide",
+      "default": 8
+     }
+    ],
+    "provides": [
+     {
+      "key": "lead_face",
+      "type": "FLAT_FACE",
+      "description": "top face on the lead-screw axis; the motor mounts under it and the screw rises through it"
+     },
+     {
+      "key": "guide_face",
+      "type": "FLAT_FACE",
+      "description": "top face on the guide-rod axis; the 8 mm rod stands up from here"
+     },
+     {
+      "key": "lift_motor_mount",
+      "type": "MOTOR_MOUNT",
+      "description": ""
+     },
+     {
+      "key": "guide_rod",
+      "type": "BORE",
+      "description": ""
+     }
+    ],
+    "requires": [],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "lead_face",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "-param(base.rodSpacing) / 2",
+         0,
+         "param(base.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "size": 30,
+        "ring_diameter": 21.4
+       }
+      },
+      {
+       "name": "guide_face",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(base.rodSpacing) / 2",
+         0,
+         "param(base.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "size": 22,
+        "ring_diameter": "(param(base.guide_rod_d)) + 2.4"
+       }
+      },
+      {
+       "name": "lift_motor_mount",
+       "type": "MOTOR_MOUNT",
+       "pose": {
+        "origin": [
+         "(-param(base.rodSpacing) / 2)",
+         0,
+         "(param(base.thickness) / 2) + (-(param(base.thickness)))"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "pilot_diameter": "param(base.lift_pilot)",
+        "hole_diameter": 3.4,
+        "pitch_x": 31,
+        "pitch_y": 31
+       }
+      },
+      {
+       "name": "guide_rod",
+       "type": "BORE",
+       "pose": {
+        "origin": [
+         "(param(base.rodSpacing) / 2)",
+         0,
+         "(param(base.thickness) / 2)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(base.guide_rod_d)",
+        "depth": "(param(base.thickness) + param(base.rodBossHeight)) - 1.2"
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "box",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "dims": [
+         "param(base.width)",
+         "param(base.depth)",
+         "param(base.thickness)"
+        ]
+       },
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          "param(base.rodSpacing) / 2",
+          0,
+          "-param(base.thickness) / 2 - param(base.rodBossHeight) / 2 + 0.5"
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 24,
+        "h": "param(base.rodBossHeight) + 1"
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "lift_pilot": "hw:motorPilot:param:lift_motor.sku",
+      "guide_rod_d": "hw:shaftD:param:guide_rod.sku"
+     },
+     "visualChecks": [
+      "Is the part a flat rectangular plate?",
+      "Is there a round boss on the underside, offset to one side of center along x?",
+      "Is there a square four-hole motor mount pattern on the opposite side of center from the boss?"
+     ],
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "x",
+       "min": 119.5,
+       "max": 120.5
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "y",
+       "min": 99.5,
+       "max": 100.5
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "platform",
+   "kind": "part",
+   "title": "Lift platform",
+   "spec": "Flat 80x60x8 mm platform that rides up and down. The flanged T8 lead nut bolts to its underside on the lead-screw axis, and its body runs up into a tall round lead boss on the top face so the whole nut is housed. A second round boss on the guide axis houses the LM8UU linear bearing. The joint rules cut the nut flange holes, the nut bore and the bearing seat.",
+   "contract": {
+    "name": "Lift platform",
+    "summary": "80x60x8 platform. The lead-nut axis is at -rodSpacing/2 on x with a lead boss rising above it, and the LM8UU boss axis is at +rodSpacing/2. Both joint faces are on the underside (-z), facing the base.",
+    "params": [
+     {
+      "type": "number",
+      "name": "width",
+      "description": "platform length along x",
+      "default": 80,
+      "min": 60,
+      "max": 160
+     },
+     {
+      "type": "number",
+      "name": "depth",
+      "description": "platform width along y",
+      "default": 60,
+      "min": 40,
+      "max": 120
+     },
+     {
+      "type": "number",
+      "name": "thickness",
+      "description": "how thick the platform plate prints",
+      "default": 8,
+      "min": 5,
+      "max": 15
+     },
+     {
+      "type": "number",
+      "name": "rodSpacing",
+      "description": "distance between the lead-nut axis and the bearing axis (follows the base)",
+      "default": 40,
+      "min": 34,
+      "max": 70
+     },
+     {
+      "type": "number",
+      "name": "bossHeight",
+      "description": "how tall the bearing boss rises above the platform so the full LM8UU fits inside",
+      "default": 18,
+      "min": 16,
+      "max": 30
+     },
+     {
+      "type": "number",
+      "name": "leadBossHeight",
+      "description": "how tall the lead-nut boss rises above the platform so the whole T8 nut body is housed",
+      "default": 30,
+      "min": 30,
+      "max": 45
+     },
+     {
+      "type": "number",
+      "name": "guide_lm_od",
+      "description": "linear bearing OD for guide",
+      "default": 15
+     }
+    ],
+    "provides": [
+     {
+      "key": "lead_face",
+      "type": "FLAT_FACE",
+      "description": "underside on the lead-screw axis, where the flanged T8 nut mounts"
+     },
+     {
+      "key": "guide_face",
+      "type": "FLAT_FACE",
+      "description": "underside on the guide-rod axis; the LM8UU seat runs up into the boss from here"
+     },
+     {
+      "key": "lift_nut",
+      "type": "BORE",
+      "description": "the lead nut's body, its flange against this face"
+     },
+     {
+      "key": "lift_nut_holes",
+      "type": "HOLE_PATTERN",
+      "description": ""
+     },
+     {
+      "key": "guide_lm_seat",
+      "type": "LINEAR_BEARING_SEAT",
+      "description": ""
+     }
+    ],
+    "requires": [],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "lead_face",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "-param(platform.rodSpacing) / 2",
+         0,
+         "-param(platform.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "size": 30,
+        "ring_diameter": 21.8
+       }
+      },
+      {
+       "name": "guide_face",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(platform.rodSpacing) / 2",
+         0,
+         "-param(platform.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "size": 22,
+        "ring_diameter": "(param(platform.guide_lm_od)) + 2.4"
+       }
+      },
+      {
+       "name": "lift_nut",
+       "type": "BORE",
+       "pose": {
+        "origin": [
+         "(-param(platform.rodSpacing) / 2)",
+         0,
+         "(-param(platform.thickness) / 2)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": 10.2
+       }
+      },
+      {
+       "name": "lift_nut_holes",
+       "type": "HOLE_PATTERN",
+       "pose": {
+        "origin": [
+         "(-param(platform.rodSpacing) / 2)",
+         0,
+         "(-param(platform.thickness) / 2)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": 3.4,
+        "count": 4,
+        "pcd": 16
+       }
+      },
+      {
+       "name": "guide_lm_seat",
+       "type": "LINEAR_BEARING_SEAT",
+       "pose": {
+        "origin": [
+         "(param(platform.rodSpacing) / 2)",
+         0,
+         "(-param(platform.thickness) / 2)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "od": "param(platform.guide_lm_od)",
+        "length": 24,
+        "fit": "press",
+        "retention": "lip"
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "box",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "dims": [
+         "param(platform.width)",
+         "param(platform.depth)",
+         "param(platform.thickness)"
+        ]
+       },
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          "param(platform.rodSpacing) / 2",
+          0,
+          "param(platform.thickness) / 2 + param(platform.bossHeight) / 2 - 0.5"
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 26,
+        "h": "param(platform.bossHeight) + 1"
+       },
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          "-param(platform.rodSpacing) / 2",
+          0,
+          "param(platform.thickness) / 2 + param(platform.leadBossHeight) / 2 - 0.5"
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 24,
+        "h": "param(platform.leadBossHeight) + 1"
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "rodSpacing": "expr: param(base.rodSpacing)",
+      "guide_lm_od": "hw:bearingSeatD:param:guide_linear_bearing.sku"
+     },
+     "visualChecks": [
+      "Are there two round bosses rising from the top face, one each side of center along x?",
+      "Is the lead-nut boss taller than the bearing boss?",
+      "Is there a small bolt circle around the lead-nut hole on the underside?"
+     ],
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "x",
+       "min": 79.5,
+       "max": 80.5
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "y",
+       "min": 59.5,
+       "max": 60.5
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "lift_motor",
+   "kind": "motor",
+   "title": "lift motor",
+   "spec": "T8×200 lead screw from a NEMA 17, nut in b. Catalog NEMA ICS 16 faceplate (42.3 square, 31 hole pitch, M3, Ø22 pilot, Ø5 shaft); shaft length and flat are typical; length is the body length NEMA17, built by the registry, never generated.",
+   "contract": {
+    "name": "lift_motor",
+    "summary": "NEMA-NEMA17",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "NEMA-NEMA17"
+     }
+    ],
+    "provides": [
+     {
+      "key": "shaft",
+      "type": "HUB_BORE",
+      "description": ""
+     }
+    ],
+    "requires": [
+     {
+      "key": "mount",
+      "type": "MOTOR_MOUNT",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "mount",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 7
+       }
+      },
+      {
+       "name": "shaft",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "-((param(base.thickness)) + 1)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 2.5
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 50.76,
+        "h": 2
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {}
+    }
+   }
+  },
+  {
+   "id": "lift_coupler",
+   "kind": "coupler",
+   "title": "lift coupler",
+   "spec": "T8×200 lead screw from a NEMA 17, nut in b. Catalog part 5x8, built by the registry, never generated.",
+   "contract": {
+    "name": "lift_coupler",
+    "summary": "COUPLER-5x8",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "COUPLER-5x8"
+     }
+    ],
+    "provides": [
+     {
+      "key": "screw",
+      "type": "HUB_BORE",
+      "description": ""
+     }
+    ],
+    "requires": [
+     {
+      "key": "bore",
+      "type": "HUB_BORE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "bore",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 6
+       }
+      },
+      {
+       "name": "screw",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         12.5
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 9
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 22.8,
+        "h": 50
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {}
+    }
+   }
+  },
+  {
+   "id": "lift_lead_screw",
+   "kind": "shaft",
+   "title": "lift lead screw",
+   "spec": "T8×200 lead screw from a NEMA 17, nut in b. Catalog part T8, built by the registry, never generated.",
+   "contract": {
+    "name": "lift_lead_screw",
+    "summary": "LEAD-T8 × 200",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "LEAD-T8"
+     },
+     {
+      "type": "number",
+      "name": "length",
+      "description": "length, mm",
+      "default": 200
+     }
+    ],
+    "provides": [
+     {
+      "key": "nut",
+      "type": "FLAT_FACE",
+      "description": ""
+     }
+    ],
+    "requires": [
+     {
+      "key": "end",
+      "type": "HUB_BORE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "end",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 4
+       }
+      },
+      {
+       "name": "nut",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         13.5
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 10.2
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 9.6,
+        "h": 400
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {}
+    }
+   }
+  },
+  {
+   "id": "lift_lead_nut",
+   "kind": "lead_nut",
+   "title": "lift lead nut",
+   "spec": "T8×200 lead screw from a NEMA 17, nut in b. Catalog part T8, built by the registry, never generated.",
+   "contract": {
+    "name": "lift_lead_nut",
+    "summary": "LEADNUT-T8",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "LEADNUT-T8"
+     }
+    ],
+    "provides": [],
+    "requires": [
+     {
+      "key": "screw",
+      "type": "FLAT_FACE",
+      "description": ""
+     },
+     {
+      "key": "seat",
+      "type": "BORE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "screw",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         3.5
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 10.2
+       }
+      },
+      {
+       "name": "seat",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 21
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 26.4,
+        "h": 30
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {}
+    }
+   }
+  },
+  {
+   "id": "guide_rod",
+   "kind": "shaft",
+   "title": "guide rod",
+   "spec": "LM8UU on a Ø8 rod. Catalog part 8, built by the registry, never generated.",
+   "contract": {
+    "name": "guide_rod",
+    "summary": "ROD-8 × 169.8",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "ROD-8"
+     },
+     {
+      "type": "number",
+      "name": "length",
+      "description": "length, mm",
+      "default": 169.8
+     }
+    ],
+    "provides": [
+     {
+      "key": "slide",
+      "type": "FLAT_FACE",
+      "description": ""
+     }
+    ],
+    "requires": [
+     {
+      "key": "end",
+      "type": "BORE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "end",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "(param(base.thickness) + param(base.rodBossHeight)) - 1.2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 4
+       }
+      },
+      {
+       "name": "slide",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "((param(base.thickness) + param(base.rodBossHeight)) - 1.2) + 1"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 9
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 9.6,
+        "h": 339.6
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "length": "expr: ((param(base.thickness) + param(base.rodBossHeight)) - 1.2) + (param(platform.thickness) + param(platform.bossHeight)) + 121"
+     }
+    }
+   }
+  },
+  {
+   "id": "guide_linear_bearing",
+   "kind": "linear_bearing",
+   "title": "guide linear bearing",
+   "spec": "LM8UU on a Ø8 rod. Catalog LM-UU series (THK designation, matched across vendors); groove* are the retaining-ring grooves LM8UU, built by the registry, never generated.",
+   "contract": {
+    "name": "guide_linear_bearing",
+    "summary": "LIN-LM8UU",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "LIN-LM8UU"
+     }
+    ],
+    "provides": [],
+    "requires": [
+     {
+      "key": "seat",
+      "type": "LINEAR_BEARING_SEAT",
+      "description": ""
+     },
+     {
+      "key": "bore",
+      "type": "FLAT_FACE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "seat",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 14
+       }
+      },
+      {
+       "name": "bore",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 9
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 18,
+        "h": 48
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {}
+    }
+   }
+  }
+ ],
+ "edges": [
+  {
+   "from": "base",
+   "fromPort": "lift_motor_mount",
+   "to": "lift_motor",
+   "toPort": "mount"
+  },
+  {
+   "from": "lift_motor",
+   "fromPort": "shaft",
+   "to": "lift_coupler",
+   "toPort": "bore"
+  },
+  {
+   "from": "lift_coupler",
+   "fromPort": "screw",
+   "to": "lift_lead_screw",
+   "toPort": "end"
+  },
+  {
+   "from": "lift_lead_screw",
+   "fromPort": "nut",
+   "to": "lift_lead_nut",
+   "toPort": "screw"
+  },
+  {
+   "from": "platform",
+   "fromPort": "lift_nut",
+   "to": "lift_lead_nut",
+   "toPort": "seat"
+  },
+  {
+   "from": "base",
+   "fromPort": "guide_rod",
+   "to": "guide_rod",
+   "toPort": "end"
+  },
+  {
+   "from": "platform",
+   "fromPort": "guide_lm_seat",
+   "to": "guide_linear_bearing",
+   "toPort": "seat"
+  },
+  {
+   "from": "guide_rod",
+   "fromPort": "slide",
+   "to": "guide_linear_bearing",
+   "toPort": "bore"
+  }
+ ],
+ "entryNodeId": "base",
+ "rationale": "Two printed parts are needed because the platform slides relative to the base. The driven prismatic joint mints the NEMA 17, the 5x8 coupler, the T8 screw and the flanged nut. The guide joint mints the 8 mm rod and the LM8UU, and the joint rules cut every mount and seat. Bosses carry the rod socket and the 24 mm bearing, which do not fit in 8 mm plates.",
+ "design": "Sturdy functional machine parts: flat plates with a 1 mm chamfer on outside edges and generous fillets where the bosses meet the plates. Walls should read solid rather than skeletal, with no decoration, so the base and platform look like one matched mechanism.",
+ "joints": [
+  {
+   "id": "lift",
+   "a": {
+    "node": "base",
+    "port": "lead_face"
+   },
+   "b": {
+    "node": "platform",
+    "port": "lead_face"
+   },
+   "intent": "serviceable",
+   "motion": "prismatic",
+   "duty": "occasional",
+   "driven": true,
+   "speedClass": "low",
+   "load": "light",
+   "access": "both_sides",
+   "count": 1,
+   "wallA": "param(base.thickness)",
+   "wallB": "param(platform.thickness) + param(platform.leadBossHeight)",
+   "shaftHint": 8,
+   "strokeMm": 120,
+   "prefer": {
+    "family": "lead_screw",
+    "key": "T8"
+   },
+   "note": "NEMA 17 under the base, 5x8 coupler to a T8 lead screw, flanged T8 nut screwed to the platform underside. The nut body runs up through the plate into the lead boss, so the platform's wall along the screw axis is the plate plus the boss.",
+   "expanded": "PL|motor=nema17:NEMA17|coupler=coupler:5x8|lead_screw=lead_screw:T8|lead_nut=lead_nut:T8",
+   "minted": [
+    "lift_pilot",
+    "lift_motor_mount",
+    "lift_nut",
+    "lift_nut_holes"
+   ]
+  },
+  {
+   "id": "guide",
+   "a": {
+    "node": "base",
+    "port": "guide_face"
+   },
+   "b": {
+    "node": "platform",
+    "port": "guide_face"
+   },
+   "intent": "serviceable",
+   "motion": "prismatic",
+   "duty": "occasional",
+   "load": "light",
+   "access": "both_sides",
+   "count": 1,
+   "wallA": "param(base.thickness) + param(base.rodBossHeight)",
+   "wallB": "param(platform.thickness) + param(platform.bossHeight)",
+   "shaftHint": 8,
+   "strokeMm": 120,
+   "prefer": {
+    "family": "lm_uu",
+    "key": "LM8UU"
+   },
+   "note": "8 mm guide rod held in the base, LM8UU in the platform boss; stops the platform turning with the screw.",
+   "expanded": "P1|rod=shaft:8|linear_bearing=lm_uu:LM8UU",
+   "minted": [
+    "guide_rod_d",
+    "guide_rod",
+    "guide_lm_od",
+    "guide_lm_seat"
+   ]
+  }
+ ]
+}

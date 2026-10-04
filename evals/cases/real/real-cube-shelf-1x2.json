@@ -1,0 +1,96 @@
+{
+  "id": "real-cube-shelf-1x2",
+  "facts": "evals/real/ikea-kallax-1x2.json",
+  "prompt": "a flat-pack cube shelf with two square compartments side by side, 765mm wide, 390mm deep and 410mm tall: top and bottom panels 765x390x38mm, two 38mm-thick end panels, and a 15mm-thick centre divider; the ends are fixed to top and bottom with eight long connector screws (two per corner) and the divider is held by four 8mm wooden dowels",
+  "why": "Real BOM: 5 panels, 8 connector screws, 4 dowels (plus optional wall brackets); 9 steps, carcass first then wall fixing.",
+  "expect": {
+    "nodes": {
+      "min": 2,
+      "max": 5
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "globalProblems": 0,
+    "assembly": {
+      "parts": 17,
+      "contacts": 4,
+      "joints": [
+        {
+          "motion": "fixed",
+          "hardware": [
+            "shcs|button|csk"
+          ],
+          "count": 2
+        },
+        {
+          "motion": "fixed",
+          "hardware": [
+            "dowel"
+          ]
+        }
+      ],
+      "bom": [
+        {
+          "family": "shcs|button|csk",
+          "minQty": 8
+        },
+        {
+          "family": "dowel",
+          "minQty": 4
+        }
+      ],
+      "bbox": {
+        "value": [
+          765,
+          390,
+          410
+        ],
+        "tol": 0.15,
+        "sorted": true
+      }
+    }
+  },
+  "reference": {
+    "partsMade": 5,
+    "hardware": {
+      "connector screw": 8,
+      "wood dowel ~8x60": 4,
+      "short screw (wall bracket)": 4,
+      "wall bracket": 2
+    },
+    "steps": 9,
+    "order": [
+      "end panel to long panel",
+      "divider dowels + divider",
+      "second end panel",
+      "second long panel",
+      "wall brackets"
+    ],
+    "cad": null
+  }
+}

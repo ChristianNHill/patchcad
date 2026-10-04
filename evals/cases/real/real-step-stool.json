@@ -1,0 +1,96 @@
+{
+  "id": "real-step-stool",
+  "facts": "evals/real/ikea-bekvam-step-stool.json",
+  "prompt": "a flat-pack wooden two-step stool, 430mm wide, 390mm deep and 500mm tall: two splayed side frames (legs about 30x40mm), four cross rails (two upper, two lower) screwed into the side frames with eight M6 connector screws, a lower step about 400x150x18mm located on two 8mm wooden dowels between the side frames, and a 430x330x18mm seat bolted onto the upper rails from below with three M6 screws",
+  "why": "Real BOM: 2 side frames, 4 rails, 1 step, 1 seat; 8 connector screws, 3 machine screws, 2 dowels; 7 steps, frame then rails then step then second frame then seat.",
+  "expect": {
+    "nodes": {
+      "min": 3,
+      "max": 8
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "globalProblems": 0,
+    "assembly": {
+      "parts": 19,
+      "contacts": 6,
+      "joints": [
+        {
+          "motion": "fixed",
+          "hardware": [
+            "shcs|button|csk"
+          ],
+          "count": 2
+        },
+        {
+          "motion": "fixed",
+          "hardware": [
+            "dowel"
+          ]
+        }
+      ],
+      "bom": [
+        {
+          "family": "shcs|button|csk",
+          "minQty": 10
+        },
+        {
+          "family": "dowel",
+          "minQty": 2
+        }
+      ],
+      "bbox": {
+        "value": [
+          430,
+          390,
+          500
+        ],
+        "tol": 0.15,
+        "sorted": true
+      }
+    }
+  },
+  "reference": {
+    "partsMade": 8,
+    "hardware": {
+      "connector screw ~6x60": 8,
+      "machine screw ~M6x40": 3,
+      "wood dowel ~8x30": 2
+    },
+    "steps": 7,
+    "order": [
+      "2 lower rails into side frame 1",
+      "2 upper rails",
+      "dowels into step",
+      "step onto rails",
+      "side frame 2",
+      "seat from below"
+    ],
+    "cad": null
+  }
+}

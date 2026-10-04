@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { CATALOG } from "./catalog.js";
 import {
   JOINT_RULES, SNAP_ENABLED, beltCenter, beltLength, gt2PitchD, jointEscapes, pickDrive, pickThread, railHoles, selectJoint,
   type JointDecision, type JointInput,
@@ -28,6 +29,8 @@ const roles = (d: JointDecision) => d.parts.map((p) => `${p.role}:${p.family}:${
 describe("selectJoint: one row per rule", () => {
   const rows: [string, Partial<JointInput>, string, string[]][] = [
     ["R1 dowel", { intent: "alignment", wallA: 8, wallB: 8 }, "R1", ["dowel:dowel:3x10"]],
+    ["W4 dowel screw, leg into a top, as stated", { ...WOOD, wallA: 50, wallB: 400, prefer: { family: "dowel_screw", key: "6" } }, "W4", ["stud:dowel_screw:6x60"]],
+    ["R8 threaded-rod stud, as stated", { intent: "serviceable", wallA: 50, wallB: 400, prefer: { family: "threaded_rod", key: "M6" } }, "R8", ["stud:threaded_rod:M6x30"]],
     ["R1b printed peg when the walls are too thin", { intent: "alignment", wallA: 2, wallB: 3 }, "R1b", []],
     ["R2 tapped into machined b", { processB: "CNC", wallB: 8 }, "R2", ["screw:button:M3x10"]],
     ["R3 heavy through-bolt", { load: "heavy", wallA: 6, wallB: 6 }, "R3", ["screw:shcs:M5x25", "nut:hex_nut:M5", "washer_a:washer:M5", "washer_b:washer:M5"]],
@@ -37,6 +40,7 @@ describe("selectJoint: one row per rule", () => {
     ["R6 side nut trap", { intent: "permanent", load: "medium", access: "one_side", wallA: 4, wallB: 10, lateral: 12 }, "R6", ["screw:button:M4x12", "nut:hex_nut:M4"]],
     ["M1 rotor on two bearings", { motion: "revolute", duty: "continuous", wallA: 14, wallB: 8 }, "M1", ["bearing_a:bearing:625", "bearing_b:bearing:625", "shaft:d_shaft:5", "collar:collar:5"]],
     ["M1h V-wheel on its own bearings, axle in a 3mm plate", { motion: "revolute", duty: "continuous", wallA: 3, wallB: 12 }, "M1h", ["hub_bearing_a:bearing:625", "hub_bearing_b:bearing:625", "axle_shaft:d_shaft:5", "axle_collar:collar:5"]],
+    ["M1f cradle between two supports, one flanged bearing each", { motion: "revolute", wallA: 8, wallB: 8, pairedB: true, prefer: { family: "bearing_flanged" } }, "M1f", ["bearing:bearing_flanged:F625", "shaft:d_shaft:5", "spacer:washer:M5"]],
     ["M2 occasional pivot on bushings", { motion: "revolute", wallA: 12, wallB: 8 }, "M2", ["bushing_a:bushing:5x8x5", "bushing_b:bushing:5x8x5", "shaft:d_shaft:5", "collar:collar:5"]],
     ["M2p printed pin when allowed, e-clipped", { motion: "revolute", allowPrinted: true }, "M2p", ["pin_clip:eclip:4"]],
     ["M2d a separate pin when the walls are too thin for bushings", { motion: "revolute", wallA: 7.7, wallB: 7.7, shaftHint: 3 }, "M2d", ["pin:dowel:3x12"]],
@@ -214,8 +218,11 @@ describe("driven slides", () => {
 
   it("a lead screw reaches b's top at full stroke, on a stocked length", () => {
     const d = ok({ ...slide, strokeMm: 100 });
-    expect(d.dims).toMatchObject({ z0: 30.5, screwStart: 13.5, lead: 8 });
-    // 30.5 - 13.5 + 100 + 30 = 147 → the 150 stock.
+    // The motor's 6mm pocket puts its shaft tip 18 up: the coupler rises to 6
+    // so the screw starts at the shaft's tip, never inside it.
+    expect(d.dims).toMatchObject({ gap: 6, z0: 35.5, screwStart: 18.5, lead: 8 });
+    // 35.5 - 18.5 + 100 + 30 = 147 → the 150 stock.
+    expect(ok({ ...slide, strokeMm: 100, wallMotor: undefined, wallA: 12 }).dims).toMatchObject({ gap: 1, z0: 30.5, screwStart: 13.5 });
     expect(d.parts.find((p) => p.role === "lead_screw")!.length).toBe(150);
   });
 });
@@ -300,6 +307,104 @@ describe("eval fixes", () => {
   it("DIN 6799 clips reach Ø2-3 shafts, so a printed Ø3 pin is e-clipped", () => {
     expect(roles(ok({ motion: "revolute", allowPrinted: true, shaftHint: 3, wallB: 4 }))).toEqual(["pin_clip:eclip:1.9"]);
     expect(roles(ok({ motion: "revolute", allowPrinted: true, shaftHint: 2, wallB: 4 }))).toEqual(["pin_clip:eclip:1.2"]);
+  });
+});
+
+describe("real-product leftovers", () => {
+  // asm-hinged-box: Ø9 knuckles, the architect's min_wall 2.4 on the box.
+  const hinge: Partial<JointInput> = { motion: "revolute", wallA: 24, wallB: 16, shaftHint: 3, roomA: 9, prefer: { family: "shaft", key: "3" } };
+
+  it("a joint leaves the wall its part asserts: a min_wall 2.4 knuckle has no room for a bushing", () => {
+    expect(ok(hinge).rule).toBe("M2");
+    expect([ok({ ...hinge, minWallA: 2.4 }).rule, ...roles(ok({ ...hinge, minWallA: 2.4 }))]).toEqual(["M2d", "pin:dowel:3x30"]);
+    // b's stated wall does not shrink a's room.
+    expect(ok({ ...hinge, minWall: 2.4, minWallA: 1.2 }).rule).toBe("M2");
+    // A stated bushing that no longer fits is a shortfall naming the wall.
+    const r = selectJoint({ ...base, ...hinge, prefer: { family: "bushing", key: "3x6" }, minWallA: 2.4 });
+    expect((r as { error: string }).error).toContain("M2 room around the axis in a Ø9.0 < bushing OD 6.0 + 2 × 2.4");
+  });
+
+  // real-pan-tilt-head: a tilt cradle between two supports on two F623s.
+  const idle: Partial<JointInput> = { motion: "revolute", intent: "serviceable", wallA: 10, wallB: 8, prefer: { family: "bearing_flanged", key: "F623" } };
+
+  it("a stated flanged bearing on a paired support takes one, the flange holding b", () => {
+    const d = ok({ ...idle, pairedB: true });
+    expect([d.rule, ...roles(d)]).toEqual(["M1f", "bearing:bearing_flanged:F623", "shaft:d_shaft:3", "spacer:washer:M3"]);
+    expect(d.dims).toMatchObject({ d: 3, width: 4, flange: 1, gap: 0.5 });
+    // One flanged bearing alone cannot hold b both ways: M1's pair it is.
+    expect([ok(idle).rule, ...roles(ok(idle)).slice(0, 2)]).toEqual(["M1", "bearing_a:bearing_flanged:F623", "bearing_b:bearing_flanged:F623"]);
+    // A support too thin for the bearing says so.
+    const r = selectJoint({ ...base, ...idle, pairedB: true, wallA: 4, wallB: 8 });
+    expect((r as { error: string }).error).toContain("M1f wallA 4.0 < flanged bearing width 4.0 + 1.2");
+  });
+
+  it("a lead screw's 3mm end plate keeps its wall: a boss on its face holds the guide rod (real-linear-actuator)", () => {
+    const d = ok({ motion: "prismatic", driven: true, strokeMm: 100, wallA: 3, wallB: 30, prefer: { family: "lead_screw", key: "T8" } });
+    expect(d.rule).toBe("PL");
+    expect(d.dims).toMatchObject({ boss: 6.2, bossD: 14.4, socket: 8 });
+    expect(ok({ motion: "prismatic", driven: true, strokeMm: 100, wallA: 10, wallB: 30 }).dims.boss).toBe(0);
+  });
+
+  it("a lead screw on a body that rides its own guide takes no rod, so a thin b is no shortfall", () => {
+    const d = ok({ motion: "prismatic", driven: true, strokeMm: 100, wallA: 3, wallB: 10, guided: true });
+    expect(roles(d)).toEqual(["motor:nema17:NEMA17", "coupler:coupler:5x8", "lead_screw:lead_screw:T8x150", "lead_nut:lead_nut:T8"]);
+    expect(d.dims.boss).toBe(0);
+    // Unguided, the same thin b carries its LM8UU in a boss.
+    expect(ok({ motion: "prismatic", driven: true, strokeMm: 100, wallA: 3, wallB: 10 }).dims.lmBoss).toBe(15.2);
+  });
+
+  it("asm-lead-screw-lift: an 8mm platform carries its LM8UU in a boss, and the motor reads wallA", () => {
+    const lift = { motion: "prismatic" as const, driven: true, strokeMm: 120, wallA: 8, wallB: 8 };
+    const d = ok(lift);
+    expect(d.dims).toMatchObject({ lmBoss: 17.2, lmBossD: 21.4 });
+    // the boss clears the coupler: guide ≥ 19/2 + 21.4/2 + 1, + 1.2
+    expect(d.dims.guide).toBeGreaterThanOrEqual(22.4);
+    // a wallMotor thicker than a (an offset drive's) no longer starves the coupler
+    expect(ok({ ...lift, wallMotor: 20 }).rule).toBe("PL");
+    // a real pocket thinner than a still counts, and the message names the wall it read
+    const r = selectJoint({ ...base, ...lift, wallA: 20 });
+    expect((r as { error: string }).error).toContain("(a is 20.0 thick where the motor mounts)");
+  });
+
+  it("a driven joint honours stated flanged bearings in its spindle", () => {
+    const d = ok({ ...idle, driven: true, ratio: 64 / 21, torqueClass: "high", wallA: 12 });
+    expect(d.rule).toBe("DG");
+    expect(roles(d).slice(0, 2)).toEqual(["bearing_a:bearing_flanged:F623", "bearing_b:bearing_flanged:F623"]);
+    // The driven gear clears the flange: the spacer sits on the inner race, fw proud.
+    expect(d.dims.gap).toBe(1.5);
+  });
+});
+
+describe("stated hardware every family can be", () => {
+  // real-side-table (dowel_screw 6, threaded_rod M6) and real-step-stool
+  // (wood_dowel 8 on printed parts) failed: binding prefer, no rule used them.
+  it("every catalog family is in some rule's uses, but the few that never join two parts", () => {
+    const used = new Set(JOINT_RULES.flatMap((r) => r.uses));
+    // A seal, a magnet catch and a board standoff are placed in their own
+    // pockets by the plan; a wire nail is not stocked as a joint yet.
+    expect(Object.keys(CATALOG.families).filter((f) => !used.has(f))).toEqual(["wire_nail", "disc_magnet", "oring", "standoff"]);
+  });
+
+  it("a family no rule uses says so plainly instead of asking for room", () => {
+    const r = selectJoint({ ...base, id: "j", prefer: { family: "standoff", key: "M3" } });
+    expect((r as { error: string }).error).toBe("j: stated standoff M3: no joint rule supports standoff yet");
+  });
+
+  it("stated furniture dowels glue printed parts too", () => {
+    const d = ok({ intent: "alignment", wallA: 30, wallB: 30, prefer: { family: "wood_dowel", key: "8" } });
+    expect([d.rule, ...roles(d)]).toEqual(["W1", "dowel:wood_dowel:8x45"]);
+  });
+
+  it("a dowel engages 1·d in each part: the organiser's Ø5 pin in an 8mm top", () => {
+    const d = ok({ intent: "alignment", wallA: 99, wallB: 8, prefer: { family: "dowel", key: "5" } });
+    expect([d.rule, ...roles(d)]).toEqual(["R1", "dowel:dowel:5x16"]);
+    expect(d.dims).toMatchObject({ press: 9.7, depthA: 10.2, depthB: 6.8 }); // 6.8 + 1.2 ≤ 8: blind
+    // a 6mm plate is too thin for a blind Ø5: the hole goes through it
+    const t = ok({ intent: "alignment", wallA: 99, wallB: 6, prefer: { family: "dowel", key: "5" } });
+    expect(t.dims).toMatchObject({ depthB: 6 });
+    expect(t.reasons.join(" ")).toContain("through b");
+    // never through both: two thin plates take a printed peg
+    expect(ok({ intent: "alignment", wallA: 3, wallB: 3 }).rule).toBe("R1b");
   });
 });
 

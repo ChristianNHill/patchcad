@@ -1,0 +1,75 @@
+{
+  "id": "real-pinewood-car",
+  "facts": "evals/real/pinewood-derby-car.json",
+  "prompt": "a pinewood-derby style race car: a 178mm-long, 44.5mm-wide wooden body block shaped into a low wedge, on four 30mm-diameter, 9.5mm-wide plastic wheels that spin on 2.2mm axle nails pressed into the body sides, 110mm wheelbase, overall width at most 70mm and at least 9.5mm ground clearance under the body",
+  "why": "Kit facts: 1 block, 4 wheels, 4 axle nails; max 7in long, 2.75in wide, 5oz. Four revolute wheel joints on press-fit nails.",
+  "expect": {
+    "nodes": {
+      "min": 2,
+      "max": 3
+    },
+    "allReady": true,
+    "noSkippedPorts": true,
+    "zeroLlmKinds": [
+      "fastener",
+      "nut",
+      "insert",
+      "washer",
+      "bearing",
+      "shaft",
+      "collar",
+      "magnet",
+      "dowel",
+      "gear",
+      "pulley",
+      "belt",
+      "motor",
+      "linear_bearing",
+      "coupler",
+      "lead_nut",
+      "eclip",
+      "bushing",
+      "threaded_rod",
+      "standoff",
+      "rail",
+      "carriage"
+    ],
+    "assemblyProblems": 0,
+    "globalProblems": 0,
+    "assembly": {
+      "parts": 9,
+      "contacts": 2,
+      "joints": [
+        {
+          "motion": "revolute",
+          "count": 2,
+          "travel": 360
+        }
+      ],
+      "bom": [
+        {
+          "family": "dowel|shaft",
+          "minQty": 2
+        }
+      ],
+      "bbox": {
+        "value": [
+          178,
+          70,
+          45
+        ],
+        "tol": 0.15,
+        "sorted": true
+      }
+    }
+  },
+  "reference": {
+    "partsMade": 1,
+    "hardware": {
+      "wheel 30x9.5": 4,
+      "axle nail 2.2": 4
+    },
+    "steps": null,
+    "cad": null
+  }
+}

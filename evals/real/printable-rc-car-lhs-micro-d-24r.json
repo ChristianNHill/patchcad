@@ -1,0 +1,331 @@
+{
+  "id": "printable-rc-car-lhs-micro-d-24r",
+  "name": "LHS RC MICRO-D 24R: 1:24 3D-printed RC drift chassis (RWD, adjustable suspension) by LH Stinger",
+  "category": "toy-car",
+  "sources": [
+    {
+      "url": "https://github.com/lhndo/LHS-RC-MICRO-D-24R-Chassis",
+      "what": "repo (README specs, license)"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/lhndo/LHS-RC-MICRO-D-24R-Chassis/main/Micro-D_24R_CAD.step",
+      "what": "STEP (full assembly incl. hardware + electronics, 50MB)"
+    },
+    {
+      "url": "https://docs.google.com/spreadsheets/d/1McK3dMZJtdG0EwnIzz4Fmolz2wLCNfXcopYI-H6RcH4/edit",
+      "what": "BOM"
+    }
+  ],
+  "license": "CC-BY-NC-SA-4.0",
+  "overallDimsMm": {
+    "x": 171.9,
+    "y": 87.1,
+    "z": 40.4,
+    "note": "measured from STEP assembly bbox: x=length, y=width (README rear track 87mm, front 84mm), z=height of chassis+wheels+electronics (no body shell)"
+  },
+  "parts": [
+    {
+      "name": "chassis base / front structure / top front structure / pillars",
+      "qty": 5,
+      "source": "printed",
+      "material": "PLA/PETG-class (0.14mm layers)",
+      "dimsMm": "",
+      "notes": "STEP products: BASE, Front Structure, Top Front Structure, Pillar, Front Pillar"
+    },
+    {
+      "name": "front suspension (lower wishbone, upper arm, upper wishbone inner, caster spacer, front hub)",
+      "qty": 10,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "",
+      "notes": "x2 per side by STEP product names"
+    },
+    {
+      "name": "rear suspension (rear arm lower, top inner, top outer, rear hub)",
+      "qty": 8,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "",
+      "notes": "x2 per side"
+    },
+    {
+      "name": "steering (steering arms, linkages, steer block, servo mount, servo link, servo horn, servo arm joint)",
+      "qty": 12,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "",
+      "notes": "counts from STEP product names"
+    },
+    {
+      "name": "gearboxes (motor gearbox case, rear gearbox case, motor mount 130/180, gearset 10:1, pinion 2mm ID)",
+      "qty": 5,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "",
+      "notes": "10:1 or 6:1 ratio options; RWD locked differential"
+    },
+    {
+      "name": "driveline (dogbones, CV joint outer/inner)",
+      "qty": 6,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "",
+      "notes": ""
+    },
+    {
+      "name": "rim",
+      "qty": 4,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "22 OD x 10 (front) / 22 OD x 12 (rear)",
+      "notes": "README: rims 22mm OD"
+    },
+    {
+      "name": "tyre",
+      "qty": 4,
+      "source": "printed",
+      "material": "hard drift tyre",
+      "dimsMm": "27x10x22 front, 28x12x22 rear",
+      "notes": "from STEP product names"
+    },
+    {
+      "name": "shock",
+      "qty": 4,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "",
+      "notes": "front x2, rear x2"
+    },
+    {
+      "name": "ESC tray",
+      "qty": 1,
+      "source": "printed",
+      "material": "",
+      "dimsMm": "",
+      "notes": ""
+    },
+    {
+      "name": "servo (HBX 16889 3-wire)",
+      "qty": 1,
+      "source": "bought",
+      "material": "",
+      "dimsMm": "",
+      "notes": ""
+    },
+    {
+      "name": "motor 180 53T brushed (or 130)",
+      "qty": 1,
+      "source": "bought",
+      "material": "",
+      "dimsMm": "",
+      "notes": ""
+    },
+    {
+      "name": "ESC Hobbywing QuicRun 1625",
+      "qty": 1,
+      "source": "bought",
+      "material": "",
+      "dimsMm": "",
+      "notes": ""
+    },
+    {
+      "name": "receiver (DumboRC P6FG)",
+      "qty": 1,
+      "source": "bought",
+      "material": "",
+      "dimsMm": "",
+      "notes": ""
+    },
+    {
+      "name": "battery 2S 7.4V 600-650mAh",
+      "qty": 1,
+      "source": "bought",
+      "material": "",
+      "dimsMm": "",
+      "notes": "BOM 650mAh XT60; STEP models 600mAh"
+    }
+  ],
+  "hardware": [
+    {
+      "class": "bearing",
+      "size": "693ZZ 3x8x4",
+      "qty": 7,
+      "notes": "BOM 7; STEP models 6"
+    },
+    {
+      "class": "bearing",
+      "size": "MR85 5x8x2.5",
+      "qty": 6,
+      "notes": "BOM 6; STEP 6"
+    },
+    {
+      "class": "bearing",
+      "size": "MR115 5x11x4",
+      "qty": 2,
+      "notes": "BOM 2; STEP 2 (MR115-2RS)"
+    },
+    {
+      "class": "insert",
+      "size": "M3 heat-set 5x4",
+      "qty": 12,
+      "notes": "BOM 12; STEP models 14"
+    },
+    {
+      "class": "screw",
+      "size": "M2.5x8 socket head",
+      "qty": 11,
+      "notes": "STEP count; BOM lists M2.5 cap 8/20mm without qty"
+    },
+    {
+      "class": "screw",
+      "size": "M2.5x20 socket head",
+      "qty": 5,
+      "notes": "STEP count"
+    },
+    {
+      "class": "rod",
+      "size": "M2.5x8 turnbuckle rod (cut screw)",
+      "qty": 4,
+      "notes": "STEP 'Rod M2.5 8mm' x4; BOM: cut from M2.5 screws"
+    },
+    {
+      "class": "screw",
+      "size": "M3 button head 10/12/14/16",
+      "qty": 10,
+      "notes": "STEP: 14mm x5, 16mm x2, 10mm x2, 12mm x1; BOM says 'various'"
+    },
+    {
+      "class": "screw",
+      "size": "M3 countersunk various",
+      "qty": 0,
+      "notes": "BOM lists, qty unspecified"
+    },
+    {
+      "class": "screw",
+      "size": "M2x6 button head",
+      "qty": 6,
+      "notes": "STEP 'M2 x 6' x6; BOM M2 button head 6/8mm"
+    },
+    {
+      "class": "nut",
+      "size": "M3 low-profile nylock",
+      "qty": 4,
+      "notes": "BOM 4; STEP 4"
+    },
+    {
+      "class": "motor",
+      "size": "180 brushed 53T (or 130)",
+      "qty": 1,
+      "notes": ""
+    },
+    {
+      "class": "servo",
+      "size": "HBX 16889 micro servo",
+      "qty": 1,
+      "notes": "STEP models an FTX Tracer servo"
+    }
+  ],
+  "joins": [
+    {
+      "a": "printed parts",
+      "b": "chassis base",
+      "method": "screw",
+      "qty": 0,
+      "notes": "M3 button/countersunk into heat-set inserts plus M2.5/M2 screws; per-joint mapping not documented"
+    },
+    {
+      "a": "heat-set insert",
+      "b": "printed parts",
+      "method": "press_fit",
+      "qty": 12,
+      "notes": "heat-staked"
+    },
+    {
+      "a": "hubs / gear shafts",
+      "b": "bearings",
+      "method": "bearing",
+      "qty": 15,
+      "notes": "BOM bearing total"
+    },
+    {
+      "a": "suspension arms",
+      "b": "chassis",
+      "method": "pin",
+      "qty": 0,
+      "notes": "pivot on M2.5/M3 screws (count not documented)"
+    }
+  ],
+  "motion": [
+    {
+      "between": [
+        "wheel",
+        "hub"
+      ],
+      "type": "rotate",
+      "travel": "continuous"
+    },
+    {
+      "between": [
+        "steer block",
+        "front suspension"
+      ],
+      "type": "hinge",
+      "travel": "high steering angle for drifting (exact deg not published)"
+    },
+    {
+      "between": [
+        "suspension arms",
+        "chassis"
+      ],
+      "type": "hinge",
+      "travel": "shock-limited"
+    },
+    {
+      "between": [
+        "shock body",
+        "shock shaft"
+      ],
+      "type": "slide",
+      "travel": "not published"
+    },
+    {
+      "between": [
+        "gearset",
+        "gearbox case"
+      ],
+      "type": "rotate",
+      "travel": "continuous"
+    }
+  ],
+  "assembly": {
+    "steps": 0,
+    "stepsSource": "README: there are currently no detailed build instructions; follow the CAD",
+    "order": [
+      "print parts (OrcaSlicer 3mf)",
+      "install heat-set inserts",
+      "build gearboxes + diff",
+      "front/rear suspension + hubs",
+      "steering + servo",
+      "electronics",
+      "wheels"
+    ]
+  },
+  "referenceCad": {
+    "available": true,
+    "url": "https://raw.githubusercontent.com/lhndo/LHS-RC-MICRO-D-24R-Chassis/main/Micro-D_24R_CAD.step",
+    "format": "STEP",
+    "license": "CC-BY-NC-SA-4.0",
+    "partCount": 215,
+    "keyDims": {
+      "bboxMm": "171.9 x 87.1 x 40.4 (measured from STEP)",
+      "solids": "215 (measured; includes fasteners, bearings, electronics)",
+      "stepProducts": "186 PRODUCT entities, 192 assembly occurrences",
+      "wheelbaseMm": "110 (README)",
+      "trackMm": "front 84, rear 87 (README)",
+      "rimOdMm": "22 (README)",
+      "gearRatios": "10:1 or 6:1 (README)"
+    }
+  },
+  "confidence": "high for license, README specs, BOM bearings/inserts/nuts and STEP-measured bbox/solid count; medium for per-part printed counts (inferred from STEP product names, which include mirrored copies and sub-assemblies); screw quantities are STEP-modelled counts, the BOM leaves most unspecified.",
+  "notes": "Chosen over OpenRC (Daniel Noree) because it ships a full STEP + BOM under an explicit CC license. NonCommercial: facts and eval use only. README requires <0.1mm printer tolerances. Local STEP copy: (local scratch copy)"
+}

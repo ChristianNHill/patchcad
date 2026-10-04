@@ -22,6 +22,9 @@ export const SNAP_ENABLED = false;
 /** FDM's minimum wall, the process default in CadContractPayload. */
 export const FDM_MIN_WALL_MM = 1.2;
 
+/** A print-in-place pin's diametral clearance in its knuckle. */
+export const PRINT_IN_PLACE_GAP_MM = 0.6;
+
 const Dim = z.union([z.number(), z.string()]);
 const Level = z.enum(["low", "medium", "high"]);
 const End = z.object({ node: z.string(), port: z.string() });
@@ -66,6 +69,9 @@ export const CadJoint = z.object({
    *  is thinner than wallA (a pocket in a's underside). Defaults to wallA. */
   wallMotor: Dim.optional(),
   allowPrinted: z.boolean().optional(),
+  /** Revolute, printed: a and b print as one piece, the pin captive in its
+   *  knuckles with clearance, so nothing is assembled (or swept going in). */
+  printInPlace: z.boolean().optional().describe("revolute: a and b print together as one piece, the hinge pin captive with clearance (a print-in-place hinge or fidget). Only when both are FDM, the pin is integral, and the brief says it prints assembled or it can never come apart; never with hardware"),
   /** Hardware the brief names. Binding: only rules that use it are tried, and
    *  when it cannot fit the joint errors instead of substituting. */
   prefer: z.object({
@@ -78,6 +84,9 @@ export const CadJoint = z.object({
   hubFit: z.enum(["slip", "press"]).optional().describe("revolute: press when b is pressed onto the shaft (a wheel onto an axle), else slip"),
   /** Revolute travel in degrees; continuous joints sweep the full turn. */
   limits: z.tuple([z.number(), z.number()]).optional(),
+  /** Revolute: how far it turns from rest, degrees, with no direction:
+   *  expansion turns it whichever way the parts allow and writes `limits`. */
+  travel: z.number().positive().max(360).optional().describe("revolute: degrees it turns from the pose the mates place, either way; expansion picks the direction and writes limits. Prefer it to limits"),
   /** "derived": plan expansion swept the parts' envelopes for `limits`
    *  because none were stated, and re-derives them on every expansion. */
   limitsSource: z.enum(["derived"]).optional().describe("set by plan expansion; never write it"),
@@ -108,7 +117,10 @@ export interface JointInput {
   /** Material b is machined from, for engagement length: steel | aluminum. */
   materialB?: string;
   materialA?: string;
+  /** b's minimum wall, and a's when it differs: the largest of FDM's 1.2,
+   *  the part's process minWall and its own min_wall assertion. */
   minWall?: number;
+  minWallA?: number;
   flush?: boolean;
   count?: number;
   threadHint?: string;
@@ -128,6 +140,16 @@ export interface JointInput {
    *  around the axis there (expand.ts materialAt). Unknown when undefined. */
   depthA?: number;
   roomA?: number;
+  /** b also turns on a coaxial revolute joint from its far side (a cradle
+   *  between two supports). */
+  pairedB?: boolean;
+  /** A slide whose moving body already rides a guide of its own (wheels on
+   *  a rail, another slide's carriage): no guide rod of its own. */
+  guided?: boolean;
+  /** a's envelope holds the axis ahead of a.port past b's wall: b sits
+   *  between a's knuckles, so nothing fixed to a can enter b along the axis. */
+  trappedB?: boolean;
+  printInPlace?: boolean;
 }
 
 /** One catalog part a joint needs. `role` becomes the node id suffix. */
@@ -140,6 +162,7 @@ export interface HardwarePick {
 
 export type Recipe =
   | "hub_bearings"
+  | "flanged_bearing"
   | "dowel"
   | "peg"
   | "tapped"
@@ -160,7 +183,8 @@ export type Recipe =
   | "lead_screw"
   | "belt_carriage"
   | "confirmat"
-  | "cam_lock";
+  | "cam_lock"
+  | "stud";
 
 /** ca·wallA + cb·wallB + k, mm: a length bound the expansion re-derives as a
  *  T1 binding, so a wall edit re-picks the screw length with no LLM call. */
@@ -201,6 +225,8 @@ const atLeast = (load: JointInput["load"], floor: JointInput["load"]) => LOADS.i
 const mm = (n: number) => (Math.round(n * 10) / 10).toFixed(1);
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const minWallOf = (i: JointInput) => i.minWall ?? FDM_MIN_WALL_MM;
+const minWallA = (i: JointInput) => i.minWallA ?? minWallOf(i);
+const minWallBoth = (i: JointInput) => Math.max(minWallOf(i), minWallA(i));
 const n = (family: string, key: string, field: string) => dim(familyDims(family, key)!, field);
 const SCREWS = ["shcs", "button", "csk"];
 const SPINDLE = ["bearing", "d_shaft", "shaft", "collar", "eclip"];
@@ -244,7 +270,7 @@ interface Head {
 
 /** flush → countersunk; room for a counterbore → SHCS in one; else button. */
 function pickHead(i: JointInput, thread: string, opts: { recessed: boolean }): Head | string {
-  const mw = minWallOf(i);
+  const mw = minWallA(i);
   if (i.flush) {
     const h = n("csk", thread, "headH");
     if (i.wallA < h + mw) return `wallA ${mm(i.wallA)} < countersunk ${thread} head ${mm(h)} + ${mw}`;
@@ -275,27 +301,46 @@ function decision(rule: string, recipe: Recipe, summary: string, reasons: string
 const fixed = (i: JointInput) => (i.motion ?? "fixed") === "fixed";
 const fastens = (i: JointInput) => fixed(i) && i.intent !== "alignment";
 
-/** R1: ISO 2338 dowel, press in a, slip in b, at least 1.5·d into each side. */
+/** R1: ISO 2338 dowel, press in a, slip in b. Common practice engages a
+ *  dowel at least 1·d in each part (1.5·d preferred, so a 3·d pin first): a
+ *  blind hole e + 0.5 deep with the minimum wall behind it, or, in a part too
+ *  thin for that, a through hole with the pin 0.5 shy of the far face (the
+ *  organiser's Ø5 pin in an 8mm top). Old rule: both walls ≥ 1.5·d + 1.7,
+ *  9.2 for a Ø5, which refused that top. */
 const R1: JointRule = {
   id: "R1",
   when: (i) => fixed(i) && i.intent === "alignment",
   uses: ["dowel"],
   fit: (i) => {
-    const room = Math.min(i.wallA, i.wallB) - minWallOf(i) - 0.5;
+    const mw = minWallBoth(i);
+    // How far a pin may go into a wall: blind with mw behind, else through.
+    const cap = (wall: number, d: number) => (wall - mw - 0.5 >= d ? wall - mw - 0.5 : wall - 0.5 >= d ? wall - 0.5 : -1);
     const stated = statedKey(i, "dowel") ?? (i.shaftHint !== undefined ? canonicalKey("dowel", String(i.shaftHint)) : undefined);
     const preferred = stated ? Number(stated) : { none: 3, light: 3, medium: 4, heavy: 5 }[i.load];
     const sizes = stated ? [preferred] : Object.keys(CATALOG.families.dowel!.dims).map(Number).filter((d) => d <= preferred).sort((a, b) => b - a);
     for (const d of sizes) {
+      const [ca, cb] = [cap(i.wallA, d), cap(i.wallB, d)];
+      // Through one part at most: through both, nothing holds the pin's ends.
+      if (ca < 0 || cb < 0 || (ca > i.wallA - mw - 0.5 && cb > i.wallB - mw - 0.5)) continue;
       const key = canonicalKey("dowel", String(d))!;
-      const L = pickLength("dowel", key, { min: 3 * d, max: 2 * room });
+      const L = pickLength("dowel", key, { min: 3 * d, max: ca + cb }) ?? pickLength("dowel", key, { min: 2 * d, max: ca + cb });
       if (L === undefined) continue;
+      const eb = r2(Math.min(cb, Math.max(L / 2, L - ca)));
+      const ea = r2(L - eb);
+      const depth = (e: number, wall: number) => r2(Math.min(e + 0.5, wall));
+      const through = (wall: number, e: number) => e + 0.5 > wall - mw;
       return decision("R1", "dowel", `Ø${d}×${L} dowel, press in a, slip in b`, [
         `alignment: ISO 2338 dowel`,
-        stated ? `Ø${d} as stated` : `Ø${d}: the largest at or under the ${i.load}-load Ø${preferred} that fits ${mm(room)} each side`,
-      ], { parts: [{ role: "dowel", family: "dowel", key, length: L }], dims: { d, length: L, depth: L / 2 + 0.5 } });
+        stated ? `Ø${d} as stated` : `Ø${d}: the largest at or under the ${i.load}-load Ø${preferred} engaging 1·d or more in both`,
+        `${mm(ea)} in a, ${mm(eb)} in b${through(i.wallB, eb) ? ", through b (too thin for a blind hole)" : ""}${through(i.wallA, ea) ? ", through a" : ""}`,
+      ], {
+        parts: [{ role: "dowel", family: "dowel", key, length: L }],
+        dims: { d, length: L, depth: depth(Math.max(ea, eb), Math.max(i.wallA, i.wallB)), depthA: through(i.wallA, ea) ? i.wallA : depth(ea, i.wallA), depthB: through(i.wallB, eb) ? i.wallB : depth(eb, i.wallB), press: ea },
+      });
     }
-    if (stated) return `walls ${mm(i.wallA)}/${mm(i.wallB)}: a Ø${preferred} dowel needs both ≥ 1.5·d + ${minWallOf(i)} + 0.5 = ${mm(1.5 * preferred + minWallOf(i) + 0.5)}`;
-    return `walls ${mm(i.wallA)}/${mm(i.wallB)}: no dowel Ø${preferred} or smaller reaches 1.5·d into both with ${minWallOf(i)} left`;
+    const need = (d: number) => mm(d + 0.5);
+    if (stated) return `walls ${mm(i.wallA)}/${mm(i.wallB)}: a Ø${preferred} dowel needs 1·d in both, a wall of at least ${need(preferred)} each (through), on a stocked length`;
+    return `walls ${mm(i.wallA)}/${mm(i.wallB)}: no dowel Ø${preferred} or smaller engages 1·d in both on a stocked length`;
   },
 };
 
@@ -491,7 +536,8 @@ const WOOD_SKIN_MM = 3;
 /** The largest furniture dowel whose symmetric blind holes (L/2 + 0.5 deep)
  *  leave WOOD_SKIN_MM in both walls, longest stocked first. */
 function woodDowel(i: JointInput): HardwarePick | undefined {
-  for (const d of [8, 6]) {
+  const stated = statedKey(i, "wood_dowel");
+  for (const d of stated ? [Number(stated)] : [8, 6]) {
     if (i.lateral !== undefined && i.lateral < 2 * d) continue;
     const key = String(d);
     const L = [...standardLengths("wood_dowel", key)].reverse().find((l) => l / 2 + 0.5 + WOOD_SKIN_MM <= Math.min(i.wallA, i.wallB));
@@ -504,6 +550,8 @@ function woodDowel(i: JointInput): HardwarePick | undefined {
 const W1: JointRule = {
   id: "W1",
   when: (i) => fixed(i) && i.intent === "alignment" && wood(i),
+  // A brief's furniture dowels glue any two parts that hold them, wood named or not.
+  can: (i) => fixed(i) && (i.intent === "alignment" || i.intent === "permanent"),
   uses: ["wood_dowel"],
   fit: (i) => {
     const p = woodDowel(i);
@@ -571,6 +619,56 @@ const W3: JointRule = {
   },
 };
 
+// ---------- Studs ----------
+
+/** Wall left behind a stud's blind hole: wood's skin, else the parts' minimum. */
+const skinOf = (i: JointInput) => (wood(i) ? WOOD_SKIN_MM : minWallBoth(i));
+
+/** W4: a double-ended dowel screw, half in each part's pilot hole (IKEA's
+ *  leg into a table top). Only as stated. The longest stocked length whose
+ *  half + 1 leaves the skin in both walls, at least 2.5·d into each. */
+const W4: JointRule = {
+  id: "W4",
+  when: (i) => fastens(i) && i.prefer?.family === "dowel_screw",
+  can: fastens,
+  uses: ["dowel_screw"],
+  fit: (i) => {
+    const key = statedKey(i, "dowel_screw") ?? (atLeast(i.load, "medium") ? "8" : "6");
+    const [d, skin] = [n("dowel_screw", key, "d"), skinOf(i)];
+    const L = [...standardLengths("dowel_screw", key)].reverse().find((l) => l / 2 >= 2.5 * d && l / 2 + 1 + skin <= Math.min(i.wallA, i.wallB));
+    if (L === undefined) return `walls ${mm(i.wallA)}/${mm(i.wallB)}: no stocked Ø${key} dowel screw (${standardLengths("dowel_screw", key).join(", ")}) reaches 2.5·d into both with ${skin} left behind`;
+    return decision("W4", "stud", `Ø${key}×${L} dowel screw, half in each part`, [`a double-ended dowel screw as stated, ${L / 2}mm into each part's Ø${n("dowel_screw", key, "pilot")} pilot`], {
+      parts: [{ role: "stud", family: "dowel_screw", key, length: L }],
+      dims: { d, length: L, depth: L / 2 + 1, pilot: n("dowel_screw", key, "pilot") },
+    });
+  },
+};
+
+/** R8: a threaded-rod stud, half threaded into each part (a leg screwed onto
+ *  a top or a frame). Only as stated. The shortest stocked length that
+ *  engages each side the material's minimum and leaves the skin behind. */
+const R8: JointRule = {
+  id: "R8",
+  when: (i) => fastens(i) && i.prefer?.family === "threaded_rod",
+  can: fastens,
+  uses: ["threaded_rod"],
+  fit: (i) => {
+    const { thread, reason } = pickThread(i);
+    if (!familyDims("threaded_rod", thread)) return `no ${thread} threaded rod stocked`;
+    const spec = threadSpec(thread)!;
+    const engageIn = (process: JointProcess, material?: string) =>
+      isWood(material) ? 2 * majorDiameter(thread) : process === "CNC" ? spec.engagementMin[(material ?? "").toLowerCase().includes("steel") ? "steel" : "aluminum"]! : spec.engagementMin.fdm!;
+    const engage = Math.max(engageIn(i.processA, i.materialA), engageIn(i.processB, i.materialB));
+    const skin = skinOf(i);
+    const L = standardLengths("threaded_rod", thread).find((l) => l / 2 >= engage && l / 2 + 1 + skin <= Math.min(i.wallA, i.wallB));
+    if (L === undefined) return `walls ${mm(i.wallA)}/${mm(i.wallB)}: no stocked ${thread} rod engages ${mm(engage)} into both with ${skin} left behind`;
+    return decision("R8", "stud", `${thread}×${L} threaded-rod stud, half in each part`, [`threaded rod as stated, ${L / 2}mm into each part's tapped hole (≥ ${mm(engage)} engaged)`, reason], {
+      thread, parts: [{ role: "stud", family: "threaded_rod", key: thread, length: L }],
+      dims: { d: majorDiameter(thread), length: L, depth: L / 2 + 1 },
+    });
+  },
+};
+
 // ---------- Motion ----------
 
 const revolute = (i: JointInput) => i.motion === "revolute";
@@ -589,7 +687,7 @@ const shaftFor = (i: JointInput) => {
     return key ? dim(familyDims(family, key)!, "bore") : undefined;
   };
   const pin = statedKey(i, "shaft");
-  return i.shaftHint ?? bore("bearing") ?? bore("bushing") ?? (pin ? Number(pin) : undefined) ?? { none: 5, light: 5, medium: 8, heavy: 10 }[i.load];
+  return i.shaftHint ?? bore("bearing") ?? bore("bearing_flanged") ?? bore("bushing") ?? (pin ? Number(pin) : undefined) ?? { none: 5, light: 5, medium: 8, heavy: 10 }[i.load];
 };
 
 /** Retention: a set-screw collar where one is stocked, else an e-clip (which
@@ -616,6 +714,8 @@ interface Spindle {
   key: string;
   od: number;
   width: number;
+  /** The flange's width when the brief states flanged bearings, else 0. */
+  flange: number;
   keep: HardwarePick;
   parts: HardwarePick[];
   reasons: string[];
@@ -623,24 +723,27 @@ interface Spindle {
 
 /** Two deep-groove bearings, one in each face of a, a shaft through them
  *  fixed in b's hub, a collar outside each. Largest OD first (the higher
- *  rating), stepping down while two bearings and a shoulder do not fit wallA. */
-function spindleFor(i: JointInput): Spindle | string {
+ *  rating), stepping down while two bearings and a shoulder do not fit wallA.
+ *  Flanged ones when the brief states them, each flange on its face. */
+function spindleFor(i: JointInput, one = false): Spindle | string {
   const d = shaftFor(i);
-  const mw = minWallOf(i);
+  const mw = minWallA(i);
   const past = pastA(i);
   if (past) return past;
-  const stated = statedKey(i, "bearing");
-  const all = Object.entries(CATALOG.families.bearing!.dims).filter(([k, r]) => r.bore === d && (!stated || k === stated));
-  if (stated && all.length === 0) return `bearing ${stated} has a Ø${n("bearing", stated, "bore")} bore, not the Ø${d} shaft`;
+  const family = i.prefer?.family === "bearing_flanged" ? "bearing_flanged" : "bearing";
+  const stated = statedKey(i, family);
+  const all = Object.entries(CATALOG.families[family]!.dims).filter(([k, r]) => r.bore === d && (!stated || k === stated));
+  if (stated && all.length === 0) return `bearing ${stated} has a Ø${n(family, stated, "bore")} bore, not the Ø${d} shaft`;
   const candidates = all
     .filter(([, r]) => i.roomA === undefined || dim(r, "od") + 2 * mw <= i.roomA)
     .sort((a, b) => dim(b[1], "od") - dim(a[1], "od"));
   if (all.length === 0) return `no deep-groove bearing with a Ø${d} bore`;
   if (candidates.length === 0) return `room around the axis in a Ø${mm(i.roomA!)} < bearing OD ${mm(Math.min(...all.map(([, r]) => dim(r, "od"))))} + 2 × ${mw}`;
-  const fits = candidates.find(([, r]) => i.wallA >= 2 * dim(r, "width") + mw);
+  const count = one ? 1 : 2;
+  const fits = candidates.find(([, r]) => i.wallA >= count * dim(r, "width") + mw);
   if (!fits) {
     const w = Math.min(...candidates.map(([, r]) => dim(r, "width")));
-    return `wallA ${mm(i.wallA)} < 2 × bearing width ${mm(w)} + ${mw}`;
+    return `wallA ${mm(i.wallA)} < ${one ? "" : "2 × "}bearing width ${mm(w)} + ${mw}`;
   }
   if (i.wallB < d) return `wallB ${mm(i.wallB)} < hub engagement Ø${d}`;
   const [key, row] = fits;
@@ -649,17 +752,17 @@ function spindleFor(i: JointInput): Spindle | string {
   const keep = retention(d);
   if (!keep.key) return `no collar or e-clip for a Ø${d} shaft`;
   return {
-    d, key, od: dim(row, "od"), width: dim(row, "width"), keep,
+    d, key, od: dim(row, "od"), width: dim(row, "width"), flange: family === "bearing_flanged" ? dim(row, "flangeW") : 0, keep,
     parts: [
-      { role: "bearing_a", family: "bearing", key },
-      { role: "bearing_b", family: "bearing", key },
+      { role: "bearing_a", family, key },
+      ...(one ? [] : [{ role: "bearing_b", family, key }]),
       { role: shaft.role, family: shaft.family, key: shaft.key },
       { role: keep.role, family: keep.family, key: keep.key },
     ],
     reasons: [
       `Ø${d} shaft for a ${i.load} load${i.shaftHint ? " (hinted)" : ""}`,
-      `${key}: the largest-OD Ø${d} bearing that fits twice in wallA ${mm(i.wallA)}`,
-      "two bearings: one cannot take a moment load",
+      one ? `${key}: the largest-OD Ø${d} bearing that fits in wallA ${mm(i.wallA)}` : `${key}: the largest-OD Ø${d} bearing that fits twice in wallA ${mm(i.wallA)}`,
+      one ? "one bearing here, its partner in b's other support: the pair takes the moment" : "two bearings: one cannot take a moment load",
       shaft.note,
       keep.note,
     ],
@@ -679,7 +782,7 @@ const M1: JointRule = {
   id: "M1",
   when: (i) => revolute(i) && !i.driven && !casual(i),
   can: (i) => revolute(i) && !i.driven,
-  uses: SPINDLE,
+  uses: [...SPINDLE, "bearing_flanged"],
   fit: (i) => {
     const s = spindleFor(i);
     if (typeof s === "string") return s;
@@ -702,7 +805,7 @@ const M1h: JointRule = {
   can: (i) => revolute(i) && !i.driven && i.wallA < shaftFor(i),
   uses: SPINDLE,
   fit: (i) => {
-    const s = spindleFor({ ...i, wallA: i.wallB, wallB: Infinity, roomA: undefined, depthA: undefined });
+    const s = spindleFor({ ...i, wallA: i.wallB, wallB: Infinity, minWallA: minWallOf(i), roomA: undefined, depthA: undefined });
     if (typeof s === "string") return s.replace("wallA", "wallB").replace(" in a ", " in b ");
     if (i.wallA < s.d / 2) return `wallA ${mm(i.wallA)} < axle socket ${mm(s.d / 2)} (half its Ø)`;
     const role: Record<string, string> = { bearing_a: "hub_bearing_a", bearing_b: "hub_bearing_b" };
@@ -713,17 +816,86 @@ const M1h: JointRule = {
   },
 };
 
+/** M1p: a shaft spanning two supports (a winch drum between 6mm side
+ *  plates, a roller): one deep-groove bearing in each, a collar either side
+ *  of each one's wall. M1's two bearings per wall need 2·w + minWall (15.2
+ *  for a 608), which a stated 6mm plate never holds. Needs b's coaxial joint
+ *  on its far support (`pairedB`); after M1, which is stiffer when it fits. */
+const M1p: JointRule = {
+  id: "M1p",
+  when: (i) => revolute(i) && !i.driven && !casual(i) && !!i.pairedB,
+  can: (i) => revolute(i) && !i.driven && !!i.pairedB,
+  uses: SPINDLE,
+  fit: (i) => {
+    const s = spindleFor(i, true);
+    if (typeof s === "string") return s;
+    return decision("M1p", "bearings", `Ø${s.d} shaft on one ${s.key} here, one in the far support`, [
+      `revolute, b between two supports: one bearing in each`, ...s.reasons,
+    ], { parts: s.parts, dims: { d: s.d, od: s.od, width: s.width } });
+  },
+};
+
+/** b turning between two supports, one flanged bearing in each (a pan-tilt
+ *  cradle, a clevis): the bearing in a's face with its flange on the face, a
+ *  washer on its inner race spacing b off the flange, a shaft from the
+ *  bearing's foot fixed in b's hub. Each flange stops b moving toward its own
+ *  support, so the pair holds b both ways with no collar; one alone does not,
+ *  so the rule needs b's coaxial joint on its far side (`pairedB`). */
+const M1f: JointRule = {
+  id: "M1f",
+  // Only as stated: unstated, M1's two bearings per support are stiffer.
+  when: (i) => revolute(i) && !i.driven && !!i.pairedB && i.prefer?.family === "bearing_flanged",
+  can: (i) => revolute(i) && !i.driven && !!i.pairedB,
+  uses: ["bearing_flanged", "d_shaft", "shaft", "washer"],
+  fit: (i) => {
+    const d = shaftFor(i);
+    const mw = minWallA(i);
+    const past = pastA(i);
+    if (past) return past;
+    const stated = statedKey(i, "bearing_flanged");
+    const all = Object.entries(CATALOG.families.bearing_flanged!.dims).filter(([k, r]) => r.bore === d && (!stated || k === stated));
+    if (all.length === 0) return stated ? `flanged bearing ${stated} has a Ø${n("bearing_flanged", stated, "bore")} bore, not the Ø${d} shaft` : `no flanged bearing with a Ø${d} bore`;
+    const roomy = all.filter(([, r]) => i.roomA === undefined || dim(r, "od") + 2 * mw <= i.roomA).sort((a, b) => dim(b[1], "od") - dim(a[1], "od"));
+    if (roomy.length === 0) return `room around the axis in a Ø${mm(i.roomA!)} < flanged bearing OD ${mm(Math.min(...all.map(([, r]) => dim(r, "od"))))} + 2 × ${mw}`;
+    const fits = roomy.find(([, r]) => i.wallA >= dim(r, "width") + mw);
+    if (!fits) return `wallA ${mm(i.wallA)} < flanged bearing width ${mm(Math.min(...roomy.map(([, r]) => dim(r, "width"))))} + ${mw}`;
+    if (i.wallB < d) return `wallB ${mm(i.wallB)} < hub engagement Ø${d}`;
+    const [key, row] = fits;
+    const shaft = shaftPart(d);
+    if (typeof shaft === "string") return shaft;
+    const washer = canonicalKey("washer", `M${d}`);
+    if (!washer) return `no M${d} washer to space b off the flange`;
+    return decision("M1f", "flanged_bearing", `Ø${d} shaft on a ${key} flanged bearing, its pair in the far support`, [
+      `revolute, b between two supports: one flanged bearing in each, the flanges holding b axially`,
+      `${key}${stated ? " as stated" : `: the largest-OD Ø${d} flanged bearing that fits wallA ${mm(i.wallA)}`}`,
+      shaft.note,
+      `an M${d} washer on the inner race keeps b off the flange`,
+    ], {
+      parts: [{ role: "bearing", family: "bearing_flanged", key }, { role: shaft.role, family: shaft.family, key: shaft.key }, { role: "spacer", family: "washer", key: washer }],
+      dims: { d, od: dim(row, "od"), width: dim(row, "width"), flange: dim(row, "flangeW"), gap: n("washer", washer, "thickness") },
+    });
+  },
+};
+
 /** Occasional and light: a printed pin when allowed, else bronze bushings.
  *  The pin runs through b and an e-clip in a groove past b's far face keeps b
- *  on it. */
+ *  on it. b goes on along the pin, so not when b sits between a's knuckles
+ *  (`trappedB`: the folding phone stand's leaf could never reach its pin) —
+ *  unless the two print in place, captive with no clip. */
 const M2pin: JointRule = {
   id: "M2p",
-  when: (i) => revolute(i) && !i.driven && casual(i) && !atLeast(i.load, "medium") && !!i.allowPrinted,
-  can: (i) => revolute(i) && !i.driven && !!i.allowPrinted,
+  when: (i) => revolute(i) && !i.driven && (!!i.printInPlace || (casual(i) && !atLeast(i.load, "medium") && !!i.allowPrinted && !i.trappedB)),
+  can: (i) => revolute(i) && !i.driven && (!!i.printInPlace || (!!i.allowPrinted && !i.trappedB)),
   uses: ["eclip"],
   fit: (i) => {
     const d = i.shaftHint ?? (i.load === "none" ? 4 : 5);
     if (i.wallB < d) return `wallB ${mm(i.wallB)} < printed pin engagement ${d}`;
+    if (i.printInPlace) {
+      return decision("M2p", "printed_pin", `print-in-place Ø${d} pin, captive`, [
+        "revolute, print in place: the pin prints on a inside b's knuckle, no hardware",
+        `Ø${r2(d + PRINT_IN_PLACE_GAP_MM)} bore: ${PRINT_IN_PLACE_GAP_MM}mm on the Ø so the two prints separate`,
+      ], { dims: { d, bore: r2(d + PRINT_IN_PLACE_GAP_MM), length: r2(i.wallB) } });
+    }
     const clip = Object.entries(CATALOG.families.eclip!.dims).find(([, r]) => Number(r.shaftMin) <= d && d <= Number(r.shaftMax));
     if (!clip) return `no e-clip for a Ø${d} pin`;
     const [key, row] = clip;
@@ -748,37 +920,40 @@ const M2d: JointRule = {
   id: "M2d",
   when: (i) => revolute(i) && !i.driven && casual(i),
   can: (i) => revolute(i) && !i.driven,
-  uses: ["dowel"],
+  uses: ["dowel", "filament_pin"],
   fit: (i) => {
-    const stated = statedKey(i, "dowel");
+    // Filament stock when stated, or hinted at a Ø only filament comes in (1.75).
+    const stockOf = (f: string) => Object.keys(CATALOG.families[f]!.dims).map(Number);
+    const family = statedKey(i, "filament_pin") || (i.shaftHint !== undefined && !stockOf("dowel").includes(i.shaftHint) && stockOf("filament_pin").includes(i.shaftHint)) ? "filament_pin" : "dowel";
+    const stated = statedKey(i, family);
     const preferred = i.shaftHint ?? (stated ? Number(stated) : PIVOT_D[i.load]);
-    const stocked = Object.keys(CATALOG.families.dowel!.dims).map(Number);
+    const stocked = stockOf(family);
     const loose = stocked.find((d) => i.boreA !== undefined && i.boreA > d && i.boreA - d <= FDM_SLIP_FIT_MM && (i.shaftHint ?? d) === d);
     if (loose !== undefined && i.wallA >= loose && i.wallB >= loose) {
-      const key = canonicalKey("dowel", String(loose))!;
-      const L = [...standardLengths("dowel", key)].reverse().find((l) => l >= 2 * loose && l <= i.wallA + i.wallB);
+      const key = canonicalKey(family, String(loose))!;
+      const L = [...standardLengths(family, key)].reverse().find((l) => l >= 2 * loose && l <= i.wallA + i.wallB);
       if (L !== undefined) {
         const run = r2(Math.min(i.wallB, L - loose));
         return decision("M2d", "pin", `Ø${loose}×${L} loose pin, turning in a and b`, [
           `revolute, occasional, ${i.load}: a separate pin, no bushings`,
           `a already declares a Ø${i.boreA} bore on the axis, a slip bore for a Ø${loose} pin: the pin turns in a as in b (a loose-pin hinge; cap or peen its ends to keep it)`,
           `${L}mm: the longest stocked that stays inside a ${mm(i.wallA)} + b ${mm(i.wallB)}`,
-        ], { parts: [{ role: "pin", family: "dowel", key, length: L }], dims: { d: loose, length: L, press: r2(L - run), run, slipA: 1 } });
+        ], { parts: [{ role: "pin", family, key, length: L }], dims: { d: loose, length: L, press: r2(L - run), run, slipA: 1 } });
       }
     }
     const sizes = i.shaftHint || stated ? stocked.filter((d) => d === preferred) : stocked.filter((d) => d <= preferred).sort((a, b) => b - a);
     if (sizes.length === 0) return `no Ø${preferred} pin stocked`;
     for (const d of sizes) {
       if (i.wallA < 1.5 * d || i.wallB < d) continue;
-      const key = canonicalKey("dowel", String(d))!;
-      const L = [...standardLengths("dowel", key)].reverse().find((l) => l >= 2.5 * d && l <= i.wallA + i.wallB);
+      const key = canonicalKey(family, String(d))!;
+      const L = [...standardLengths(family, key)].reverse().find((l) => l >= 2.5 * d && l <= i.wallA + i.wallB);
       if (L === undefined) continue;
       const run = r2(Math.min(i.wallB, L - 1.5 * d));
       return decision("M2d", "pin", `Ø${d}×${L} pin pressed in a, turning in b`, [
         `revolute, occasional, ${i.load}: a separate pin, no bushings`,
         `Ø${d}: the largest${i.shaftHint ? " (hinted)" : ` at or under the ${i.load}-load Ø${preferred}`} pressed 1.5·d into a and bearing d in b`,
         `${L}mm: the longest stocked that stays inside a ${mm(i.wallA)} + b ${mm(i.wallB)}`,
-      ], { parts: [{ role: "pin", family: "dowel", key, length: L }], dims: { d, length: L, press: r2(L - run), run } });
+      ], { parts: [{ role: "pin", family, key, length: L }], dims: { d, length: L, press: r2(L - run), run } });
     }
     return `walls ${mm(i.wallA)}/${mm(i.wallB)}: no Ø${sizes.join("/Ø")} pin presses 1.5·d into a and bears d in b on a stocked length`;
   },
@@ -792,7 +967,7 @@ const M2: JointRule = {
   fit: (i) => {
     const stated = statedKey(i, "bushing");
     const d = i.shaftHint ?? (stated ? dim(familyDims("bushing", stated)!, "bore") : Number(statedKey(i, "shaft") ?? PIVOT_D[i.load]));
-    const mw = minWallOf(i);
+    const mw = minWallA(i);
     const fam = CATALOG.families.bushing!;
     const key = Object.keys(fam.dims).find((k) => fam.dims[k]!.bore === d && (!stated || k === stated));
     if (!key) return `no bushing with a Ø${d} bore`;
@@ -902,7 +1077,7 @@ const motorWall = (i: JointInput) => i.wallMotor ?? i.wallA;
 function motorGrip(i: JointInput, z: number, engage: number, what: string): string | undefined {
   const top = nema("shaftL") - motorWall(i);
   if (top - z >= engage - 1e-9) return undefined;
-  return `the NEMA 17 shaft ends ${mm(top)} above a's face, short of ${what} (${mm(z)} + ${mm(engage)}): mount the motor where a is at most ${mm(nema("shaftL") - z - engage)} thick (wallMotor)`;
+  return `the NEMA 17 shaft ends ${mm(top)} above a's face (a is ${mm(motorWall(i))} thick where the motor mounts), short of ${what} (${mm(z)} + ${mm(engage)}): mount the motor where a is at most ${mm(nema("shaftL") - z - engage)} thick (wallMotor)`;
 }
 
 export const gt2PitchD = (teeth: number) => (teeth * 2) / Math.PI;
@@ -922,9 +1097,9 @@ function drivenSpindle(i: JointInput): (Spindle & { spacer: HardwarePick; gap: n
   const s = spindleFor(i);
   if (typeof s === "string") return s;
   const key = canonicalKey("washer", `M${s.d}`);
-  if (key) return { ...s, spacer: { role: "spacer", family: "washer", key }, gap: n("washer", key, "thickness") };
+  if (key) return { ...s, spacer: { role: "spacer", family: "washer", key }, gap: s.flange + n("washer", key, "thickness") };
   if (s.keep.family !== "collar") return `no M${s.d} washer or collar to space the driven wheel off bearing_a`;
-  return { ...s, spacer: { role: "spacer", family: "collar", key: s.keep.key }, gap: n("collar", s.keep.key, "width") };
+  return { ...s, spacer: { role: "spacer", family: "collar", key: s.keep.key }, gap: s.flange + n("collar", s.keep.key, "width") };
 }
 
 /** Motor axis to driven axis, least: the motor body (under a) clear of the
@@ -932,8 +1107,8 @@ function drivenSpindle(i: JointInput): (Spindle & { spacer: HardwarePick; gap: n
  *  clear of bearing_a's seat. */
 const motorClear = (s: Spindle, i: JointInput) =>
   Math.max(
-    nema("face") / 2 + Math.max(n(s.keep.family, s.keep.key, "od") / 2, s.od / 2 + 2 * minWallOf(i)) + 1,
-    s.od / 2 + nema("pilotD") / 2 + 2 * minWallOf(i),
+    nema("face") / 2 + Math.max(n(s.keep.family, s.keep.key, "od") / 2, s.od / 2 + 2 * minWallA(i)) + 1,
+    s.od / 2 + nema("pilotD") / 2 + 2 * minWallA(i),
   );
 
 /** The stocked pulley pair nearest the ratio, smaller pulleys on a tie. */
@@ -964,7 +1139,7 @@ const DB: JointRule = {
   id: "DB",
   when: (i) => revolute(i) && !!i.driven && pickDrive(i).coupling === "gt2",
   can: (i) => revolute(i) && !!i.driven,
-  uses: [...SPINDLE, "washer", "nema17", "gt2_pulley", "gt2_loop"],
+  uses: [...SPINDLE, "bearing_flanged", "washer", "nema17", "gt2_pulley", "gt2_loop"],
   fit: (i) => {
     const ratio = i.ratio ?? 1;
     const s = drivenSpindle(i);
@@ -1026,7 +1201,7 @@ const DG: JointRule = {
   id: "DG",
   when: (i) => revolute(i) && !!i.driven && pickDrive(i).coupling !== "direct",
   can: (i) => revolute(i) && !!i.driven,
-  uses: [...SPINDLE, "washer", "nema17", "spur_gear"],
+  uses: [...SPINDLE, "bearing_flanged", "washer", "nema17", "spur_gear"],
   fit: (i) => {
     const drive = pickDrive(i);
     const ratio = i.ratio ?? (drive.coupling === "gear" ? 2 : 1);
@@ -1091,10 +1266,10 @@ const P1: JointRule = {
     const d = dim(lm, "bore");
     const mw = minWallOf(i);
     if (i.wallB < dim(lm, "length") + mw) return `wallB ${mm(i.wallB)} < ${key} ${mm(dim(lm, "length"))} + ${mw}`;
-    if (i.wallA < d + mw) return `wallA ${mm(i.wallA)} < rod socket ${d} + ${mw}`;
+    if (i.wallA < d + minWallA(i)) return `wallA ${mm(i.wallA)} < rod socket ${d} + ${minWallA(i)}`;
     return decision("P1", "rod_slide", `${key} on a Ø${d} rod`, [`prismatic, stroke ${i.strokeMm ?? 50}, ${i.load} load: linear ball bushing on a rod`], {
       parts: [{ role: "rod", family: "shaft", key: canonicalKey("shaft", String(d))! }, { role: "linear_bearing", family: "lm_uu", key }],
-      dims: { d, od: dim(lm, "od"), length: dim(lm, "length"), stroke: i.strokeMm ?? 50, socket: r2(i.wallA - mw) },
+      dims: { d, od: dim(lm, "od"), length: dim(lm, "length"), stroke: i.strokeMm ?? 50, socket: r2(i.wallA - minWallA(i)) },
     });
   },
 };
@@ -1108,7 +1283,7 @@ const P1: JointRule = {
 function hardwareScrews(i: JointInput, thread: string, clamp: number, wallHost: number, load: JointInput["load"]): JointDecision | string {
   const input: JointInput = {
     intent: "removable", load, access: "one_side", wallA: r2(clamp), wallB: wallHost, processA: "CNC", processB: i.processA,
-    materialB: i.materialA, minWall: i.minWall, threadHint: thread, noRecess: true,
+    materialB: i.materialA, minWall: minWallA(i), threadHint: thread, noRecess: true,
   };
   const shortfalls: string[] = [];
   for (const rule of JOINT_RULES.filter((r) => r.id === "R2" || r.id === "R4")) {
@@ -1186,30 +1361,44 @@ const PL: JointRule = {
     const stroke = i.strokeMm ?? 50;
     const mw = minWallOf(i);
     const [cp, nut, lm] = [familyDims("coupler", "5x8")!, familyDims("lead_nut", "T8")!, familyDims("lm_uu", "LM8UU")!];
-    const gap = 1;
-    const grip = motorGrip(i, gap, 0.4 * dim(cp, "length"), "the coupler's lower bore");
+    // The motor sits on the screw's axis, under a.port: a's wall there is
+    // wallA. A wallMotor thicker than that is an offset drive's, not this.
+    const onAxis = { ...i, wallMotor: Math.min(i.wallMotor ?? i.wallA, i.wallA) };
+    // The coupler sits 1mm off a's face, or higher, centred on the shaft's
+    // tip, when a is thin enough that the shaft would run past its middle
+    // into the screw (asm-lead-screw-lift's 8mm base: G5, 46mm³).
+    const gap = r2(Math.max(1, nema("shaftL") - motorWall(onAxis) + 0.5 - dim(cp, "length") / 2));
+    const grip = motorGrip(onAxis, gap, 0.4 * dim(cp, "length"), "the coupler's lower bore");
     if (grip) return grip;
-    if (i.wallB < dim(lm, "length") + mw) return `wallB ${mm(i.wallB)} < LM8UU ${mm(dim(lm, "length"))} + ${mw} (the guide that stops b turning)`;
-    if (i.wallA < 8 + mw) return `wallA ${mm(i.wallA)} < guide rod socket 8 + ${mw}`;
+    // A platform thinner than the LM8UU (the brief's 8mm) keeps its wall and
+    // grows a boss under it, toward a, round the bearing.
+    const lmBoss = i.guided ? 0 : r2(Math.max(0, dim(lm, "length") + mw - i.wallB));
+    const lmBossD = r2(dim(lm, "od") + 2 * (mw + 2));
+    // An end plate too thin for the guide rod's socket (the brief's 3mm)
+    // keeps its wall and grows a boss on its face round the socket instead.
+    const boss = i.guided ? 0 : r2(Math.max(0, 8 + minWallA(i) - i.wallA));
     const z0 = r2(gap + dim(cp, "length") + dim(nut, "flangeT") + 1);
-    const need = z0 - (gap + dim(cp, "length") / 2) + stroke + i.wallB;
+    const screwStart = r2(gap + dim(cp, "length") / 2);
+    const need = z0 - screwStart + stroke + i.wallB;
     const L = pickLength("lead_screw", "T8", { min: need });
     if (L === undefined) return `stroke ${stroke} needs a ${mm(need)}mm T8 screw, longer than any stocked`;
-    const guide = Math.ceil(Math.max(dim(nut, "flangeD") / 2 + dim(lm, "od") / 2, nema("pilotD") / 2 + 4) + mw);
-    return decision("PL", "lead_screw", `T8×${L} lead screw from a NEMA 17, nut in b, Ø8 guide rod ${guide} off`, [
+    const guide = Math.ceil(Math.max(dim(nut, "flangeD") / 2 + dim(lm, "od") / 2, nema("pilotD") / 2 + 4, lmBoss ? dim(cp, "od") / 2 + lmBossD / 2 + 1 : 0) + mw);
+    if (lmBoss && z0 - lmBoss < boss + 1) return `wallB ${mm(i.wallB)}: the LM8UU's ${mm(lmBoss)} boss under b would reach a at stroke 0 (b sits ${mm(z0)} up)`;
+    return decision("PL", "lead_screw", `T8×${L} lead screw from a NEMA 17, nut in b${i.guided ? "" : `, Ø8 guide rod ${guide} off`}`, [
       `prismatic, driven, stroke ${stroke}, ${i.speedClass ?? "medium"} speed: lead screw`,
       "NEMA 17 under a, a 5→8 coupler, the screw standing from it",
-      `an Ø8 rod and LM8UU ${guide}mm off the screw stop b turning with it`,
+      i.guided ? "b already rides its own guide (wheels or a carriage), which stops it turning with the screw: no guide rod" : `an Ø8 rod and LM8UU ${guide}mm off the screw stop b turning with it`,
+      ...(boss ? [`wallA ${mm(i.wallA)} < the rod's socket 8 + ${minWallA(i)}: a Ø${mm(8 + 2 * (minWallA(i) + 2))} boss ${mm(boss)} tall on a's face holds it`] : []),
+      ...(lmBoss ? [`wallB ${mm(i.wallB)} < LM8UU ${mm(dim(lm, "length"))} + ${mw}: a Ø${mm(lmBossD)} boss ${mm(lmBoss)} tall under b holds it`] : []),
     ], {
       parts: [
         { role: "motor", family: "nema17", key: NEMA },
         { role: "coupler", family: "coupler", key: "5x8" },
         { role: "lead_screw", family: "lead_screw", key: "T8", length: L },
         { role: "lead_nut", family: "lead_nut", key: "T8" },
-        { role: "rod", family: "shaft", key: "8" },
-        { role: "linear_bearing", family: "lm_uu", key: "LM8UU" },
+        ...(i.guided ? [] : [{ role: "rod", family: "shaft", key: "8" }, { role: "linear_bearing", family: "lm_uu", key: "LM8UU" }]),
       ],
-      dims: { stroke, gap, z0, guide, lead: n("lead_screw", "T8", "lead"), screwStart: r2(gap + dim(cp, "length") / 2), socket: r2(i.wallA - mw), od: dim(lm, "od"), length: dim(lm, "length") },
+      dims: { stroke, gap, z0, guide, lead: n("lead_screw", "T8", "lead"), screwStart, socket: r2(i.wallA + boss - minWallA(i)), boss, bossD: r2(8 + 2 * (minWallA(i) + 2)), lmBoss, lmBossD, od: dim(lm, "od"), length: dim(lm, "length") },
     });
   },
 };
@@ -1270,12 +1459,17 @@ const PB: JointRule = {
 };
 
 /** First fit wins. Motion rules come first: a revolute joint is never bolted. */
-export const JOINT_RULES: JointRule[] = [D1, DB, DG, M1, M1h, M2pin, M2, M2d, PL, PB, P1, P2, W1, W2, W3, R1, R1b, R2, R3, R4, R7, R5, R6, R3f];
+export const JOINT_RULES: JointRule[] = [D1, DB, DG, M1f, M1, M1h, M1p, M2pin, M2, M2d, PL, PB, P1, P2, W1, W2, W4, W3, R8, R1, R1b, R2, R3, R4, R7, R5, R6, R3f];
 
 export function selectJoint(input: JointInput): JointDecision | { error: string } {
   const tag = input.id ? `${input.id}: ` : "";
   const p = input.prefer?.recipe || input.prefer?.family ? input.prefer : undefined;
   if (p) return selectStated(input, p, tag);
+  // Printed assembled: no other rule's hardware could go in.
+  if (input.printInPlace) {
+    const out = revolute(input) ? M2pin.fit(input) : "printInPlace is for revolute joints";
+    return typeof out === "string" ? { error: `${tag}print in place: ${out}` } : out;
+  }
   const shortfalls: string[] = [];
   for (const rule of JOINT_RULES) {
     if (!rule.when(input)) continue;
@@ -1306,6 +1500,7 @@ function selectStated(input: JointInput, p: NonNullable<CadJoint["prefer"]>, tag
   const say = `${tag}stated ${statedName(p)}`;
   if (p.family && !CATALOG.families[p.family]) return { error: `${say}: the catalog has no family "${p.family}" (${Object.keys(CATALOG.families).join(", ")})` };
   if (p.family && p.key && !canonicalKey(p.family, p.key)) return { error: `${say}: the catalog has no ${p.family} "${p.key}" (${Object.keys(CATALOG.families[p.family]!.dims).join(", ")})` };
+  if (p.family && !JOINT_RULES.some((r) => r.uses.some((f) => sameFamily(p.family!, f)))) return { error: `${say}: no joint rule supports ${p.family} yet` };
   const byId = JOINT_RULES.some((r) => r.id === p.recipe);
   const shortfalls: string[] = [];
   const tried = new Set<JointRule["fit"]>();
@@ -1330,6 +1525,7 @@ function selectStated(input: JointInput, p: NonNullable<CadJoint["prefer"]>, tag
  *  repair round can keep a wall the brief states. */
 export function jointEscapes(i: JointInput): string[] {
   const tries: [string, Partial<JointInput>][] = [
+    ["declare b's joint on its far support too (same b, its own coaxial b.port facing the other way)", { pairedB: true }],
     ["declare access both_sides", { access: "both_sides" }],
     ["set allowPrinted", { allowPrinted: true }],
   ];
