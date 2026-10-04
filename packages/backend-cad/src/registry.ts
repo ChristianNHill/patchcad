@@ -170,8 +170,8 @@ export function washerCode(thread: string): string {
  * ISO 2338 dowel pin, chamfered both ends. No seat: a dowel spans a joint, so
  * it is CENTRED on z = 0 along z and mates at the joint plane, half in each part.
  */
-export function dowelCode(size: string, defaultLength: number): string {
-  const r = familyDims("dowel", size)!;
+export function dowelCode(size: string, defaultLength: number, family = "dowel"): string {
+  const r = familyDims(family, size)!;
   const [d, c] = [dim(r, "d"), dim(r, "chamfer")];
   return module(`    L = p.get("length", ${defaultLength})
     body = Cylinder(${d / 2}, L - ${2 * c})
@@ -191,6 +191,81 @@ export function threadedRodCode(thread: string, defaultLength = 50): string {
   const pitchD = Math.round((major(thread) - 0.6495 * threadSpec(thread)!.pitch) * 1000) / 1000;
   return module(`    L = p.get("length", ${defaultLength})
     return Pos(0, 0, L / 2) * Cylinder(${pitchD / 2}, L)
+`);
+}
+
+/**
+ * Furniture fasteners. Wood threads are modelled at their core Ø, which is
+ * under the pilot hole, for the same reason threaded_rod is a pitch-Ø
+ * cylinder: one fast solid, and nothing for G5 to count as overlap.
+ *  - Confirmat: framed like a countersunk screw, the flush plane on z = 0,
+ *    90° head, shoulder and thread running -z.
+ *  - Cam housing: its face on z = 0 and the body +z into the panel, the bolt
+ *    head's cavity open toward +x (the panel edge the bolt comes through).
+ *  - Cam bolt: the collar's face on z = 0, thread -z into one panel, shank,
+ *    neck and head +z, the head centred on the drilling distance.
+ *  - Dowel screw: headless, centred on z = 0 along z, half in each part.
+ */
+export function confirmatCode(size: string, defaultLength: number): string {
+  const r = familyDims("confirmat", size)!;
+  const [d, headD, sl] = [dim(r, "d"), dim(r, "headD"), dim(r, "shoulderL")];
+  const hh = (headD - d) / 2;
+  return module(`    L = p.get("length", ${defaultLength})
+    head = Pos(0, 0, ${-hh / 2}) * Cone(${d / 2}, ${headD / 2}, ${hh})
+    shoulder = Pos(0, 0, ${-hh - sl / 2 + 0.01}) * Cylinder(${d / 2}, ${sl + 0.02})
+    tl = L - ${hh + sl}
+    thread = Pos(0, 0, ${-(hh + sl)} - tl / 2 + 0.01) * Cylinder(${dim(r, "core") / 2}, tl + 0.02)
+    return head + shoulder + thread - ${socket(dim(r, "socketAf"), 0, 2.5)}
+`);
+}
+
+export function camLockCode(size: string): string {
+  const r = familyDims("cam_lock", size)!;
+  const [rad, h, w] = [dim(r, "d") / 2 - 0.1, dim(r, "height"), dim(r, "edgeHole")];
+  return module(`    body = Pos(0, 0, ${h / 2}) * Cylinder(${rad}, ${h})
+    cavity = Pos(0, 0, ${(h + 2) / 2}) * Cylinder(${w / 2}, ${h - 4})
+    mouth = Pos(${rad / 2 + 0.5}, 0, ${(h + 2) / 2}) * Box(${rad + 1}, ${w}, ${h - 4})
+    slot = Pos(0, 0, 1) * Box(${rad * 1.2}, 1.2, 2.01)
+    return body - cavity - mouth - slot
+`);
+}
+
+export function camBoltCode(size: string): string {
+  const r = familyDims("cam_bolt", size)!;
+  const n = (k: string) => dim(r, k);
+  const [tl, ch, hh] = [n("threadL"), n("collarH"), n("headH")];
+  const neckTop = n("drillDistance") - hh / 2;
+  return module(`    thread = Pos(0, 0, ${-tl / 2 + 0.01}) * Cylinder(${n("core") / 2}, ${tl + 0.02})
+    collar = Pos(0, 0, ${ch / 2}) * Cylinder(${n("collarD") / 2}, ${ch})
+    shank = Pos(0, 0, ${(ch + neckTop - 2) / 2}) * Cylinder(${n("shankD") / 2}, ${neckTop - 2 - ch + 0.02})
+    neck = Pos(0, 0, ${neckTop - 1}) * Cylinder(${n("core") / 2}, 2.02)
+    head = Pos(0, 0, ${neckTop + hh / 2}) * Cylinder(${n("headD") / 2}, ${hh})
+    return thread + collar + shank + neck + head
+`);
+}
+
+export function dowelScrewCode(size: string, defaultLength: number): string {
+  return module(`    L = p.get("length", ${defaultLength})
+    return Cylinder(${dim(familyDims("dowel_screw", size)!, "core") / 2}, L)
+`);
+}
+
+/** Small pins. Filament stock is centred on z = 0 like a dowel; a wire nail
+ *  is framed like a screw, head on z ∈ [0, headH] and the pointed shank -z. */
+export function pinCode(family: string, size: string, defaultLength: number): string {
+  const r = familyDims(family, size)!;
+  const d = dim(r, "d");
+  if (family === "filament_pin") {
+    return module(`    L = p.get("length", ${defaultLength})
+    return Cylinder(${d / 2}, L)
+`);
+  }
+  const hh = dim(r, "headH");
+  return module(`    L = p.get("length", ${defaultLength})
+    head = Pos(0, 0, ${hh / 2}) * Cylinder(${dim(r, "headD") / 2}, ${hh})
+    shank = Pos(0, 0, -(L - ${d}) / 2 + 0.01) * Cylinder(${d / 2}, L - ${d} + 0.02)
+    point = Pos(0, 0, -L + ${d / 2}) * Cone(0, ${d / 2}, ${d})
+    return head + shank + point
 `);
 }
 
@@ -411,13 +486,16 @@ export function leadNutCode(size: string): string {
  *    boss, D-flat shaft on +x. `length` is the body length.
  *  - Brushless outrunner: base on z = 0, bell above, shaft up +z, M3 base holes.
  *  - N20: gearbox face on z = 0, shaft -z with its flat, two M1.6 holes.
- *  - SG90: the tab underside is the seat; the case hangs -z through a cutout
- *    and the output spline is on top, offset to one end as on the real part.
+ *  - SG90 / MG996R: the tab underside is the seat; the case hangs -z through
+ *    a cutout and the output spline is on top, offset to one end as on the
+ *    real part. MG996R has two holes per tab (holeRowPitch).
+ *  - STS3215: no tabs, the case bottom is the seat (tabZ 0) with four
+ *    self-tapping holes in it; the horn sits on the case over the output.
  */
 export function motorCode(family: string, size: string, defaultLength = 40): string {
   const r = familyDims(family, size)!;
   const n = (k: string) => dim(r, k);
-  if (family === "nema17") {
+  if (family === "nema17" || family === "nema14") {
     const [face, pitch, d] = [n("face"), n("holePitch"), n("shaftD")];
     return module(`    L = p.get("length", ${defaultLength})
     body = Pos(0, 0, L / 2) * Box(${face}, ${face}, L) & Pos(0, 0, L / 2) * Cylinder(${(face / 2) * 1.2}, L)
@@ -452,14 +530,28 @@ export function motorCode(family: string, size: string, defaultLength = 40): str
     return body + shaft
 `);
   }
-  // sg90
   const [bl, bw, bh, tz] = [n("bodyL"), n("bodyW"), n("bodyH"), n("tabZ")];
   const top = bh - tz;
   const sx = bl / 2 - n("bossD") / 2;
+  const rows = typeof r.holeRowPitch === "number" ? [-r.holeRowPitch / 2, r.holeRowPitch / 2] : [0];
+  if (family === "sts3215") {
+    const [hd, hh, pcd] = [n("splineD"), n("splineH"), n("hornPcd")];
+    return module(`    body = Pos(0, 0, ${bh / 2}) * Box(${bl}, ${bw}, ${bh})
+    for x in (${-n("holePitch") / 2}, ${n("holePitch") / 2}):
+        for y in (${rows.join(", ")},):
+            body = body - Pos(x, y, 2.5) * Cylinder(0.8, 5.01)
+    horn = Pos(${sx}, 0, ${bh + hh / 2 - 0.01}) * Cylinder(${hd / 2}, ${hh})
+    for i in range(4):
+        a = i * math.pi / 2
+        horn = horn - Pos(${sx} + ${pcd / 2} * math.cos(a), ${pcd / 2} * math.sin(a), ${bh + hh - 1.5}) * Cylinder(${tap(String(r.hornThread)) / 2}, 3.01)
+    return body + horn
+`);
+  }
   return module(`    body = Pos(0, 0, ${bh / 2 - tz}) * Box(${bl}, ${bw}, ${bh})
     tabs = Pos(0, 0, ${n("tabT") / 2}) * Box(${n("tabL")}, ${bw}, ${n("tabT")})
     for x in (${-n("holePitch") / 2}, ${n("holePitch") / 2}):
-        tabs = tabs - Pos(x, 0, ${n("tabT") / 2}) * Cylinder(${n("holeD") / 2}, ${n("tabT") * 2})
+        for y in (${rows.join(", ")},):
+            tabs = tabs - Pos(x, y, ${n("tabT") / 2}) * Cylinder(${n("holeD") / 2}, ${n("tabT") * 2})
     boss = Pos(${sx}, 0, ${top + n("bossH") / 2 - 0.01}) * Cylinder(${n("bossD") / 2}, ${n("bossH")})
     spline = Pos(${sx}, 0, ${top + n("bossH") + n("splineH") / 2 - 0.01}) * Cylinder(${n("splineD") / 2}, ${n("splineH")})
     return body + tabs + boss + spline
@@ -499,28 +591,26 @@ export function standoffCode(thread: string, defaultLength: number): string {
  *
  * Unlike the thread-driven hardware this is param-driven, so the code text is
  * constant and a param change needs no re-codegen — it just re-executes.
- * SpurGear centers on the origin, matching the part-local frame convention,
- * with a tooth on +x. `phase` turns the teeth (not the bore) by that many
+ * involute_gear (kernel gear.py, injected like the other registry classes)
+ * puts the axis on the origin, matching the part-local frame convention,
+ * with a tooth on +x, and builds any tooth count (bd_warehouse refused z >= 42
+ * at 20 degrees). `phase` turns the teeth (not the bore) by that many
  * degrees, so a meshing pair can put a gap opposite a tooth; `flat` makes the
  * bore a D, the flat that far from the axis along +x, like a D-shaft's.
  * `fit` is added to the bore Ø (see boreFit).
  */
-export function gearCode(fit = 0): string {
-  const bore = fit ? `(p.bore ${fit < 0 ? "-" : "+"} ${Math.abs(fit)})` : "p.bore";
+export function gearCode(fit = 0, flat = `p.get("flat", 0)`, nominal = "p.bore"): string {
+  const bore = fit ? `(nominal ${fit < 0 ? "-" : "+"} ${Math.abs(fit)})` : "nominal";
   return `from build123d import *
 
 def build(p):
-    gear = SpurGear(
-        module=p.module,
-        tooth_count=int(p.teeth),
-        pressure_angle=p.pressure_angle,
-        thickness=p.thickness,
-        rotation=(0, 0, p.get("phase", 0)),
-    )
-    if p.bore > 0:
+    gear = involute_gear(p.module, int(p.teeth), p.pressure_angle, p.thickness, p.get("phase", 0))
+    flat = ${flat}
+    nominal = ${nominal}
+    if nominal > 0:
         hole = Cylinder(${bore} / 2, p.thickness * 2)
-        if p.get("flat", 0) > 0:
-            hole = hole - Pos(p.flat + p.bore / 2, 0, 0) * Box(p.bore, p.bore * 2, p.thickness * 4)
+        if flat > 0:
+            hole = hole - Pos(flat + nominal / 2, 0, 0) * Box(nominal, nominal * 2, p.thickness * 4)
         gear = gear - hole
     return gear
 `;
@@ -576,6 +666,16 @@ const CODEGEN: Record<string, (key: string, sku: Sku, fit: number) => string> = 
   brushless: (k) => motorCode("brushless", k),
   n20: (k) => motorCode("n20", k),
   sg90: (k) => motorCode("sg90", k),
+  mg996r: (k) => motorCode("mg996r", k),
+  sts3215: (k) => motorCode("sts3215", k),
+  nema14: (k, s) => motorCode("nema14", k, lengthOf("nema14", k, s)),
+  wood_dowel: (k, s) => dowelCode(k, lengthOf("wood_dowel", k, s), "wood_dowel"),
+  confirmat: (k, s) => confirmatCode(k, lengthOf("confirmat", k, s)),
+  cam_lock: (k) => camLockCode(k),
+  cam_bolt: (k) => camBoltCode(k),
+  dowel_screw: (k, s) => dowelScrewCode(k, lengthOf("dowel_screw", k, s)),
+  filament_pin: (k, s) => pinCode("filament_pin", k, lengthOf("filament_pin", k, s)),
+  wire_nail: (k, s) => pinCode("wire_nail", k, lengthOf("wire_nail", k, s)),
   disc_magnet: (k) => magnetCode(k),
   oring: (k) => oringCode(k),
   standoff: (k, s) => standoffCode(k, lengthOf("standoff", k, s)),
@@ -597,6 +697,26 @@ function boreFit(node: NodeRecord): number {
   const ports = (node.contract.payload as { ports?: { type: string; params: Record<string, number | string> }[] } | undefined)?.ports;
   const hub = ports?.find((p) => p.type === "HUB_BORE");
   return hub ? fitOffset(hub, isMachined(sourcingOf(node).process)) : 0;
+}
+
+/**
+ * The D-flat a gear's own HUB_BORE declares, as Python. A joint mints it as
+ * `param(<gear>.<joint>_flat)`, not as the gear's `flat`, and hand-winch's
+ * gears were cut round and failed G3 ("the flat at 3.98mm, expected 3").
+ */
+function hubFlat(node: NodeRecord): string | undefined {
+  return hubParam(node, "flat", "0");
+}
+
+/** A param of a gear's own HUB_BORE, as Python. Its Ø is the joint's shaft
+ *  and wins over the gear's `bore` (hand-winch: bore 8.3 on a Ø8 press hub
+ *  measured 8.28 at G3). */
+function hubParam(node: NodeRecord, name: string, fallback: string): string | undefined {
+  const ports = (node.contract.payload as { ports?: { type: string; params: Record<string, number | string> }[] } | undefined)?.ports;
+  const v = ports?.find((p) => p.type === "HUB_BORE")?.params[name];
+  if (typeof v === "number") return String(v);
+  const ref = typeof v === "string" ? /^\s*param\(([^.()]+)\.(\w+)\)\s*$/.exec(v) : null;
+  return ref && ref[1] === node.id ? `p.get(${JSON.stringify(ref[2])}, ${fallback})` : undefined;
 }
 
 /**
@@ -644,7 +764,7 @@ function bySku(node: NodeRecord): string | null {
 const REGISTRY: Record<string, (node: NodeRecord) => string | null> = {
   ...Object.fromEntries(Object.values(CATALOG.families).map((f) => [f.kind, bySku])),
   // Param-driven: the code text is constant, see gearCode.
-  gear: (node) => gearCode(boreFit(node)),
+  gear: (node) => gearCode(boreFit(node), hubFlat(node), hubParam(node, "diameter", "p.bore")),
 };
 
 /** Kinds resolved from REGISTRY. Exported because the gates and lints need to
@@ -665,7 +785,7 @@ export const REGISTRY_SOLIDS: Record<string, number | null> = {};
  * gear rather than bolting to anything, and a bearing or motor is the thing
  * being held, so they are deliberately not in here.
  */
-export const FASTENING_HARDWARE = new Set(["fastener", "nut", "insert", "threaded_rod", "washer", "dowel", "standoff"]);
+export const FASTENING_HARDWARE = new Set(["fastener", "nut", "insert", "threaded_rod", "washer", "dowel", "standoff", "cam_lock", "cam_bolt", "dowel_screw", "pin"]);
 
 /**
  * Why a registry node names no catalog part, or null when it resolves (or is

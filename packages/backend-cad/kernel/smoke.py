@@ -221,7 +221,7 @@ def main() -> None:
     gear = (
         "from build123d import *\n\n"
         "def build(p):\n"
-        "    return SpurGear(module=1, tooth_count=12, pressure_angle=20, thickness=4)\n"
+        "    return involute_gear(1, 12, 20, 4)\n"
     )
     r4b = client.post("/execute", json={"code": gear, "params": {}}).json()
     check(
@@ -231,11 +231,11 @@ def main() -> None:
     )
     r4c = client.post(
         "/execute",
-        json={"code": "from bd_warehouse.gear import SpurGear\n" + gear, "params": {}},
+        json={"code": "from patchcad_kernel.gear import involute_gear\n" + gear, "params": {}},
     )
     body4c = r4c.json()
     check(
-        "G0 still rejects importing bd_warehouse",
+        "G0 still rejects importing the registry's gear",
         r4c.status_code == 422 and body4c.get("stage") == "G0",
         body4c.get("error", ""),
     )
@@ -1839,7 +1839,7 @@ def gear_mesh(client: httpx.Client) -> None:
     print("gear mesh")
     n = int(time.time())
     gear = ("from build123d import *\ndef build(p):\n    _ = p['nonce']\n"
-            "    g = SpurGear(module=1, tooth_count=int(p['teeth']), pressure_angle=20, thickness=8, rotation=(0, 0, p['phase']))\n"
+            "    g = involute_gear(1, int(p['teeth']), 20, 8, p['phase'])\n"
             "    return g - Cylinder(2.5, 16)\n")
     centre = 1 * (17 + 34) / 2
     allow = [{"a": "pinion", "b": "wheel", "volume_mm3": 0.2 * 0.1 * 1 * 8 * 1.5}]
@@ -1862,6 +1862,20 @@ def gear_mesh(client: httpx.Client) -> None:
           len(wrong) == 1 and wrong[0]["volume_mm3"] > 10, str(wrong)[:200])
     close = (pair(180 / 34, centre - 0.3).get("clash") or {}).get("clashes") or []
     check("G5 gear mesh: 0.3mm inside the centre distance is a clash", len(close) == 1, str(close)[:200])
+
+    # hand-winch: 15T driving 45T at m1.5, past bd_warehouse's z <= 41. An
+    # odd wheel already has a gap facing the pinion; turned half a tooth it does not.
+    big = gear.replace("involute_gear(1,", "involute_gear(1.5,")
+
+    def winch(phase: float) -> list:
+        return (client.post("/clash", json={"parts": [
+            {"key": "pinion", "code": big, "params": {"nonce": n, "teeth": 15, "phase": 0}, "matrix": []},
+            {"key": "wheel", "code": big, "params": {"nonce": n, "teeth": 45, "phase": phase}, "matrix": at(1.5 * 60 / 2)},
+        ], "allow": [{"a": "pinion", "b": "wheel", "volume_mm3": 0.2 * 0.1 * 1.5 * 8 * 1.5}], "sweeps": []}, timeout=120).json()
+            .get("clash") or {}).get("clashes")
+    meshed45, wrong45 = winch(0), winch(4)
+    check("G5 gear mesh: 15T on a 45T m1.5 wheel in phase is clean, half a tooth off clashes",
+          meshed45 == [] and len(wrong45 or []) == 1, f"{meshed45} / {wrong45}"[:300])
 
     def turn(ratio: float | None) -> dict:
         sweep = {"joint": "g1", "type": "revolute", "origin": [centre, 0, 0], "direction": [0, 0, 1], "limits": [0, 20], "moving": ["wheel"]}

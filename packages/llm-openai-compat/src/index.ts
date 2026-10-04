@@ -1,5 +1,5 @@
 import { zodToJsonSchema } from "zod-to-json-schema";
-import type { LlmProvider, LlmRequest, LlmResult, LlmRole } from "@patchcad/engine";
+import { parseJsonLoose, type LlmProvider, type LlmRequest, type LlmResult, type LlmRole } from "@patchcad/engine";
 
 /**
  * OpenAI-compatible adapter — one implementation covers OpenRouter, Ollama,
@@ -179,7 +179,7 @@ export class OpenAiCompatProvider implements LlmProvider {
       };
     }
     try {
-      const value: unknown = JSON.parse(match[0]);
+      const value: unknown = parseJsonLoose(raw);
       const result = req.schema.safeParse(value);
       if (result.success) return { success: true, data: result.data };
       return { success: false, error: result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") };

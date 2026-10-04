@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { LlmCallError, type LlmImage, type LlmProvider, type LlmRequest, type LlmResult, type LlmRole, type LlmUsage } from "@patchcad/engine";
+import { LlmCallError, parseJsonLoose, type LlmImage, type LlmProvider, type LlmRequest, type LlmResult, type LlmRole, type LlmUsage } from "@patchcad/engine";
 import { addUsage } from "./spend.js";
 
 /**
@@ -264,7 +264,7 @@ export function tryParse<T>(
     };
   }
   try {
-    const value: unknown = JSON.parse(match[0]);
+    const value: unknown = parseJsonLoose(raw);
     const result = req.schema.safeParse(value);
     if (result.success) return { success: true, data: result.data };
     return { success: false, error: result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") };

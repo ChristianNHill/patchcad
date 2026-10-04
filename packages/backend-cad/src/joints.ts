@@ -54,6 +54,8 @@ export const CadJoint = z.object({
   threadHint: z.string().optional(),
   shaftHint: z.number().positive().optional(),
   strokeMm: z.number().positive().optional(),
+  /** Prismatic on a rod held at both ends: the part holding its far end. */
+  far: End.optional().describe("prismatic on a rod held at both ends: the far end block (its own node, not a again), a FLAT_FACE port facing back along the rod; the rod runs into a socket there too"),
   /** Driven revolute: motor turns per output turn (2 = a 2:1 reduction).
    *  Asking for one, or for an offset motor, means a belt or a gear pair. */
   ratio: z.number().positive().optional(),
@@ -64,6 +66,13 @@ export const CadJoint = z.object({
    *  is thinner than wallA (a pocket in a's underside). Defaults to wallA. */
   wallMotor: Dim.optional(),
   allowPrinted: z.boolean().optional(),
+  /** Hardware the brief names. Binding: only rules that use it are tried, and
+   *  when it cannot fit the joint errors instead of substituting. */
+  prefer: z.object({
+    recipe: z.string().optional().describe("a rule id (R3) or recipe (through_bolt)"),
+    family: z.string().optional().describe("a catalog family: dowel, bearing, gt2_pulley, spur_gear, hex_nut, heatset_std, lm_uu, ..."),
+    key: z.string().optional().describe("that family's size: 4 (a Ø4 dowel), 608, M5, LM8UU"),
+  }).optional().describe("hardware the brief names, by type and size: it is used or the joint errors"),
   /** How b's hub takes a revolute joint's shaft: slip (a D-flat turns it) or
    *  press (b is pressed onto the shaft, a wheel onto its axle). */
   hubFit: z.enum(["slip", "press"]).optional().describe("revolute: press when b is pressed onto the shaft (a wheel onto an axle), else slip"),
@@ -109,6 +118,7 @@ export interface JointInput {
   centerMm?: number;
   wallMotor?: number;
   allowPrinted?: boolean;
+  prefer?: CadJoint["prefer"];
   lateral?: number;
   /** a is a catalog part (a rail, an idler), so no counterbore can be cut in it. */
   noRecess?: boolean;
@@ -129,6 +139,7 @@ export interface HardwarePick {
 }
 
 export type Recipe =
+  | "hub_bearings"
   | "dowel"
   | "peg"
   | "tapped"
@@ -147,7 +158,9 @@ export type Recipe =
   | "belt_drive"
   | "gear_drive"
   | "lead_screw"
-  | "belt_carriage";
+  | "belt_carriage"
+  | "confirmat"
+  | "cam_lock";
 
 /** ca·wallA + cb·wallB + k, mm: a length bound the expansion re-derives as a
  *  T1 binding, so a wall edit re-picks the screw length with no LLM call. */
@@ -173,6 +186,12 @@ export interface JointRule {
   id: string;
   /** Whether the rule speaks to this joint at all. */
   when: (i: JointInput) => boolean;
+  /** Whether the rule may serve a joint whose hardware the brief states:
+   *  `when` without the preferences that pick between rules. Default `when`. */
+  can?: (i: JointInput) => boolean;
+  /** Catalog families its decisions may hold, so a stated family tries only
+   *  the rules that can use it. */
+  uses: string[];
   /** A decision, or the shortfall that stopped it ("wallB 3.0 < insert 5.8 + 1.2"). */
   fit: (i: JointInput) => JointDecision | string;
 }
@@ -183,14 +202,25 @@ const mm = (n: number) => (Math.round(n * 10) / 10).toFixed(1);
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const minWallOf = (i: JointInput) => i.minWall ?? FDM_MIN_WALL_MM;
 const n = (family: string, key: string, field: string) => dim(familyDims(family, key)!, field);
+const SCREWS = ["shcs", "button", "csk"];
+const SPINDLE = ["bearing", "d_shaft", "shaft", "collar", "eclip"];
+
+/** "A 4mm steel pin" is any of these at Ø4: the rules decide which. */
+const PINS = ["shaft", "d_shaft", "dowel"];
+const sameFamily = (stated: string, family: string) => stated === family || (PINS.includes(stated) && PINS.includes(family));
+
+/** The size the brief states for `family`, when it names that family. */
+const statedKey = (i: JointInput, family: string) =>
+  i.prefer?.family && i.prefer.key && sameFamily(i.prefer.family, family) ? canonicalKey(family, i.prefer.key) : undefined;
 
 // ---------- Fasteners ----------
 
 /** threadHint wins; else light M3, medium M4, heavy M5, stepping up to M6 or
  *  M8 under a heavy load only when both walls are at least 3·d. */
 export function pickThread(i: JointInput): { thread: string; reason: string } {
-  const hint = i.threadHint && Object.keys(CATALOG.threads).find((t) => t.toUpperCase() === i.threadHint!.toUpperCase());
-  if (hint) return { thread: hint, reason: `thread ${hint} as hinted` };
+  const said = i.threadHint ?? i.prefer?.key;
+  const hint = said && Object.keys(CATALOG.threads).find((t) => t.toUpperCase() === said.toUpperCase());
+  if (hint) return { thread: hint, reason: `thread ${hint} as ${i.threadHint ? "hinted" : "stated"}` };
   if (i.load === "heavy") {
     for (const t of ["M8", "M6"]) {
       const need = 3 * majorDiameter(t);
@@ -249,19 +279,22 @@ const fastens = (i: JointInput) => fixed(i) && i.intent !== "alignment";
 const R1: JointRule = {
   id: "R1",
   when: (i) => fixed(i) && i.intent === "alignment",
+  uses: ["dowel"],
   fit: (i) => {
     const room = Math.min(i.wallA, i.wallB) - minWallOf(i) - 0.5;
-    const preferred = { none: 3, light: 3, medium: 4, heavy: 5 }[i.load];
-    const sizes = Object.keys(CATALOG.families.dowel!.dims).map(Number).filter((d) => d <= preferred).sort((a, b) => b - a);
+    const stated = statedKey(i, "dowel") ?? (i.shaftHint !== undefined ? canonicalKey("dowel", String(i.shaftHint)) : undefined);
+    const preferred = stated ? Number(stated) : { none: 3, light: 3, medium: 4, heavy: 5 }[i.load];
+    const sizes = stated ? [preferred] : Object.keys(CATALOG.families.dowel!.dims).map(Number).filter((d) => d <= preferred).sort((a, b) => b - a);
     for (const d of sizes) {
       const key = canonicalKey("dowel", String(d))!;
       const L = pickLength("dowel", key, { min: 3 * d, max: 2 * room });
       if (L === undefined) continue;
       return decision("R1", "dowel", `Ø${d}×${L} dowel, press in a, slip in b`, [
         `alignment: ISO 2338 dowel`,
-        `Ø${d}: the largest at or under the ${i.load}-load Ø${preferred} that fits ${mm(room)} each side`,
+        stated ? `Ø${d} as stated` : `Ø${d}: the largest at or under the ${i.load}-load Ø${preferred} that fits ${mm(room)} each side`,
       ], { parts: [{ role: "dowel", family: "dowel", key, length: L }], dims: { d, length: L, depth: L / 2 + 0.5 } });
     }
+    if (stated) return `walls ${mm(i.wallA)}/${mm(i.wallB)}: a Ø${preferred} dowel needs both ≥ 1.5·d + ${minWallOf(i)} + 0.5 = ${mm(1.5 * preferred + minWallOf(i) + 0.5)}`;
     return `walls ${mm(i.wallA)}/${mm(i.wallB)}: no dowel Ø${preferred} or smaller reaches 1.5·d into both with ${minWallOf(i)} left`;
   },
 };
@@ -270,6 +303,7 @@ const R1: JointRule = {
 const R1b: JointRule = {
   id: "R1b",
   when: (i) => fixed(i) && i.intent === "alignment" && i.allowPrinted !== false,
+  uses: [],
   fit: (i) => {
     const length = i.wallB - minWallOf(i);
     if (length < 1) return `wallB ${mm(i.wallB)} < printed peg 1.0 + ${minWallOf(i)}`;
@@ -284,7 +318,8 @@ const R1b: JointRule = {
  *  material's engagementMin and 1mm of wall left under the hole. */
 const R2: JointRule = {
   id: "R2",
-  when: (i) => fastens(i) && i.processB === "CNC",
+  when: (i) => fastens(i) && i.processB === "CNC" && !wood(i),
+  uses: SCREWS,
   fit: (i) => {
     const { thread, reason } = pickThread(i);
     const material = (i.materialB ?? "aluminum").toLowerCase().includes("steel") ? "steel" : "aluminum";
@@ -308,6 +343,8 @@ const R2: JointRule = {
 const R3: JointRule = {
   id: "R3",
   when: (i) => fastens(i) && i.access === "both_sides" && (i.load === "heavy" || i.processB === "CNC"),
+  can: (i) => fastens(i) && i.access === "both_sides",
+  uses: [...SCREWS, "hex_nut", "washer"],
   fit: (i) => {
     const { thread, reason } = pickThread(i);
     const h: Head | string = i.flush
@@ -339,6 +376,8 @@ const R3: JointRule = {
 const R4: JointRule = {
   id: "R4",
   when: (i) => fastens(i) && i.processB === "FDM" && (i.intent === "removable" || i.intent === "serviceable"),
+  can: (i) => fastens(i) && i.processB === "FDM",
+  uses: [...SCREWS, "heatset_std", "heatset_short"],
   fit: (i) => {
     const { thread, reason } = pickThread(i);
     const mw = minWallOf(i);
@@ -376,6 +415,7 @@ const R4: JointRule = {
 const R5: JointRule = {
   id: "R5",
   when: (i) => fastens(i) && i.processB === "FDM" && i.access === "both_sides",
+  uses: [...SCREWS, "hex_nut"],
   fit: (i) => {
     const { thread, reason } = pickThread(i);
     const nutH = n("hex_nut", thread, "height");
@@ -398,6 +438,7 @@ const R5: JointRule = {
 const R6: JointRule = {
   id: "R6",
   when: (i) => fastens(i) && i.processB === "FDM" && i.access === "one_side",
+  uses: [...SCREWS, "hex_nut"],
   fit: (i) => {
     const { thread, reason } = pickThread(i);
     const af = n("hex_nut", thread, "af");
@@ -424,6 +465,8 @@ const R6: JointRule = {
 const R3f: JointRule = {
   id: "R3",
   when: (i) => fastens(i) && i.access === "both_sides" && i.processB === "FDM" && i.load !== "heavy",
+  can: (i) => fastens(i) && i.access === "both_sides",
+  uses: [...SCREWS, "hex_nut", "washer"],
   fit: R3.fit,
 };
 
@@ -431,16 +474,123 @@ const R3f: JointRule = {
 const R7: JointRule = {
   id: "R7",
   when: (i) => fastens(i) && i.processB === "FDM" && i.intent === "permanent" && !atLeast(i.load, "medium"),
+  uses: [],
   fit: () => (SNAP_ENABLED ? decision("R7", "snap", "snap fit", ["permanent, light, printed: snap"]) : "snap fits are disabled until a probe can verify one"),
+};
+
+// ---------- Wood ----------
+
+/** Panel stock that takes wood screws, cam fittings and glued dowels, never a
+ *  tapped hole or an insert: material names a wood or a wood board. */
+const WOOD = /\b(wood|timber|mdf|hdf|ply(wood)?|particle ?board|chipboard|osb|melamine|oak|beech|birch|pine|spruce|maple|walnut|ash|poplar|bamboo)\b/i;
+export const isWood = (material?: string) => !!material && WOOD.test(material);
+const wood = (i: JointInput) => isWood(i.materialA) && isWood(i.materialB);
+/** Wood left behind a blind hole, so it never breaks through a face. */
+const WOOD_SKIN_MM = 3;
+
+/** The largest furniture dowel whose symmetric blind holes (L/2 + 0.5 deep)
+ *  leave WOOD_SKIN_MM in both walls, longest stocked first. */
+function woodDowel(i: JointInput): HardwarePick | undefined {
+  for (const d of [8, 6]) {
+    if (i.lateral !== undefined && i.lateral < 2 * d) continue;
+    const key = String(d);
+    const L = [...standardLengths("wood_dowel", key)].reverse().find((l) => l / 2 + 0.5 + WOOD_SKIN_MM <= Math.min(i.wallA, i.wallB));
+    if (L !== undefined) return { role: "dowel", family: "wood_dowel", key, length: L };
+  }
+  return undefined;
+}
+
+/** W1: wood panels align on glued furniture dowels. */
+const W1: JointRule = {
+  id: "W1",
+  when: (i) => fixed(i) && i.intent === "alignment" && wood(i),
+  uses: ["wood_dowel"],
+  fit: (i) => {
+    const p = woodDowel(i);
+    if (!p) return `walls ${mm(i.wallA)}/${mm(i.wallB)}: no Ø6 furniture dowel's half length + 0.5 leaves ${WOOD_SKIN_MM} in both`;
+    return decision("W1", "dowel", `Ø${p.key}×${p.length} wood dowel, glued in both`, ["wood alignment: glued fluted furniture dowels"], {
+      parts: [p], dims: { d: Number(p.key), length: p.length!, depth: p.length! / 2 + 0.5 },
+    });
+  },
+};
+
+/** W2: wood panels meant to come apart: a 15mm cam in b's face grips a bolt
+ *  screwed into a's face, through an Ø8 hole in b's edge, with a glued dowel
+ *  either side where the walls hold one. Needs b's panel thickness
+ *  (`lateral`); the cam opens on b's face toward b.port's +y. */
+const W2: JointRule = {
+  id: "W2",
+  when: (i) => fastens(i) && wood(i) && (i.intent === "removable" || i.intent === "serviceable"),
+  can: (i) => fastens(i) && wood(i),
+  uses: ["cam_lock", "cam_bolt", "wood_dowel"],
+  fit: (i) => {
+    const cam = familyDims("cam_lock", "15")!;
+    const [camD, panel] = [dim(cam, "d"), dim(cam, "minPanel")];
+    if (i.lateral === undefined) return `b's panel thickness (lateral) is not declared: a 15mm cam needs ${panel}`;
+    if (i.lateral < panel) return `lateral ${mm(i.lateral)} < 15mm cam panel ${panel}`;
+    const distance = [34, 24].find((t) => i.wallB >= t + camD / 2 + WOOD_SKIN_MM);
+    if (distance === undefined) return `wallB ${mm(i.wallB)} < cam drilling distance 24 + ${camD / 2} + ${WOOD_SKIN_MM}`;
+    const bolt = familyDims("cam_bolt", String(distance))!;
+    const threadL = dim(bolt, "threadL");
+    if (i.wallA < threadL + 1 + WOOD_SKIN_MM) return `wallA ${mm(i.wallA)} < cam bolt thread ${threadL} + 1 + ${WOOD_SKIN_MM}`;
+    // System 32: a dowel 32mm either side, where a's face holds them.
+    const dowel = i.roomA === undefined || i.roomA >= 2 * (32 + 4 + WOOD_SKIN_MM) ? woodDowel(i) : undefined;
+    return decision("W2", "cam_lock", `15mm cam lock on a ${distance}mm bolt${dowel ? ` + 2 Ø${dowel.key}×${dowel.length} dowels` : ""}`, [
+      `wood, ${i.intent}: cam lock, which comes apart and goes back`,
+      `${distance}mm drilling distance: the longest wallB ${mm(i.wallB)} holds`,
+      dowel ? `Ø${dowel.key} dowels 32mm either side carry the shear` : "no furniture dowel fits 32mm either side in these walls: the cam alone",
+    ], {
+      parts: [{ role: "cam", family: "cam_lock", key: "15" }, { role: "cam_bolt", family: "cam_bolt", key: String(distance) }, ...(dowel ? [dowel] : [])],
+      dims: {
+        distance, camD, camDepth: dim(cam, "drillDepth"), edgeHole: dim(cam, "edgeHole"), panel: i.lateral,
+        pilot: dim(bolt, "pilot"), pilotDepth: threadL + 1, ...(dowel ? { dowelLength: dowel.length!, dowelDepth: dowel.length! / 2 + 0.5, dowelOffset: 32 } : {}),
+      },
+    });
+  },
+};
+
+/** W3: any other wood panel joint: a 7×50 confirmat through a's face into
+ *  b's edge, its shoulder in a's Ø7 hole, its thread in b's Ø5 pilot. */
+const W3: JointRule = {
+  id: "W3",
+  when: (i) => fastens(i) && wood(i),
+  uses: ["confirmat"],
+  fit: (i) => {
+    const r = familyDims("confirmat", "7")!;
+    const L = standardLengths("confirmat", "7")[0]!;
+    const hh = (dim(r, "headD") - dim(r, "d")) / 2;
+    const thread = L - i.wallA;
+    if (i.wallA < hh + dim(r, "shoulderL") / 2) return `wallA ${mm(i.wallA)} < confirmat head ${mm(hh)} + half its shoulder ${mm(dim(r, "shoulderL") / 2)}`;
+    if (thread < L / 2) return `wallA ${mm(i.wallA)} leaves the ${L}mm confirmat only ${mm(thread)} of thread in b (needs ${L / 2})`;
+    if (i.wallB < thread + 1 + WOOD_SKIN_MM) return `wallB ${mm(i.wallB)} < confirmat reach ${mm(thread)} + 1 + ${WOOD_SKIN_MM}`;
+    if (i.lateral !== undefined && i.lateral < dim(r, "drillB") + 2 * WOOD_SKIN_MM) return `lateral ${mm(i.lateral)} < Ø${dim(r, "drillB")} pilot + 2·${WOOD_SKIN_MM}`;
+    return decision("W3", "confirmat", `7×${L} confirmat screw`, [`wood, ${i.intent}: a confirmat connector screw, never a tapped hole or an insert`], {
+      parts: [{ role: "screw", family: "confirmat", key: "7", length: L }],
+      dims: { headD: dim(r, "headD"), drillA: dim(r, "drillA"), drillB: dim(r, "drillB"), pilotDepth: r2(thread + 1) },
+    });
+  },
 };
 
 // ---------- Motion ----------
 
 const revolute = (i: JointInput) => i.motion === "revolute";
-const casual = (i: JointInput) => (i.duty ?? "occasional") === "occasional" && !atLeast(i.load, "medium");
+/** Pin or bushing Ø by load, unless hinted or stated. */
+const PIVOT_D = { none: 3, light: 5, medium: 8, heavy: 10 };
+
+/** A pivot that moves now and then (an idler arm, a latch, a lid) turns on a
+ *  pin or bushings up to a medium load; rolling bearings are for continuous
+ *  duty or a heavy load. */
+const casual = (i: JointInput) => (i.duty ?? "occasional") === "occasional" && !atLeast(i.load, "heavy");
 
 /** Shaft Ø from the load, unless hinted. */
-const shaftFor = (i: JointInput) => i.shaftHint ?? { none: 5, light: 5, medium: 8, heavy: 10 }[i.load];
+const shaftFor = (i: JointInput) => {
+  const bore = (family: string) => {
+    const key = statedKey(i, family);
+    return key ? dim(familyDims(family, key)!, "bore") : undefined;
+  };
+  const pin = statedKey(i, "shaft");
+  return i.shaftHint ?? bore("bearing") ?? bore("bushing") ?? (pin ? Number(pin) : undefined) ?? { none: 5, light: 5, medium: 8, heavy: 10 }[i.load];
+};
 
 /** Retention: a set-screw collar where one is stocked, else an e-clip (which
  *  needs a grooved shaft, so the shaft becomes a fabricated part). */
@@ -479,7 +629,9 @@ function spindleFor(i: JointInput): Spindle | string {
   const mw = minWallOf(i);
   const past = pastA(i);
   if (past) return past;
-  const all = Object.entries(CATALOG.families.bearing!.dims).filter(([, r]) => r.bore === d);
+  const stated = statedKey(i, "bearing");
+  const all = Object.entries(CATALOG.families.bearing!.dims).filter(([k, r]) => r.bore === d && (!stated || k === stated));
+  if (stated && all.length === 0) return `bearing ${stated} has a Ø${n("bearing", stated, "bore")} bore, not the Ø${d} shaft`;
   const candidates = all
     .filter(([, r]) => i.roomA === undefined || dim(r, "od") + 2 * mw <= i.roomA)
     .sort((a, b) => dim(b[1], "od") - dim(a[1], "od"));
@@ -526,6 +678,8 @@ function pastA(i: JointInput): string | undefined {
 const M1: JointRule = {
   id: "M1",
   when: (i) => revolute(i) && !i.driven && !casual(i),
+  can: (i) => revolute(i) && !i.driven,
+  uses: SPINDLE,
   fit: (i) => {
     const s = spindleFor(i);
     if (typeof s === "string") return s;
@@ -536,12 +690,37 @@ const M1: JointRule = {
   },
 };
 
+/** Bearings in b, on an axle fixed in a: a V-wheel or roller on a thin plate,
+ *  where M1's two seats in a do not fit (real-linear-actuator: 625s in the
+ *  wheel, a 3mm gantry plate). Only when a is thinner than the axle; the
+ *  axle is pressed into a at least half its Ø; a collar past b's far face
+ *  keeps b on it. */
+const M1h: JointRule = {
+  id: "M1h",
+  // Only for a plate thinner than the axle: anything thicker takes M1's seats.
+  when: (i) => revolute(i) && !i.driven && !casual(i) && i.wallA < shaftFor(i),
+  can: (i) => revolute(i) && !i.driven && i.wallA < shaftFor(i),
+  uses: SPINDLE,
+  fit: (i) => {
+    const s = spindleFor({ ...i, wallA: i.wallB, wallB: Infinity, roomA: undefined, depthA: undefined });
+    if (typeof s === "string") return s.replace("wallA", "wallB").replace(" in a ", " in b ");
+    if (i.wallA < s.d / 2) return `wallA ${mm(i.wallA)} < axle socket ${mm(s.d / 2)} (half its Ø)`;
+    const role: Record<string, string> = { bearing_a: "hub_bearing_a", bearing_b: "hub_bearing_b" };
+    return decision("M1h", "hub_bearings", `2×${s.key} bearings in b on a Ø${s.d} axle fixed in a`, [
+      `revolute, ${i.duty === "continuous" ? "continuous" : `${i.load} load`}: rolling bearings, seated in b because a is too thin for two`,
+      ...s.reasons.map((r) => r.replace("wallA", "wallB")),
+    ], { parts: s.parts.map((p) => ({ ...p, role: role[p.role] ?? `axle_${p.role}` })), dims: { d: s.d, od: s.od, width: s.width } });
+  },
+};
+
 /** Occasional and light: a printed pin when allowed, else bronze bushings.
  *  The pin runs through b and an e-clip in a groove past b's far face keeps b
  *  on it. */
 const M2pin: JointRule = {
   id: "M2p",
-  when: (i) => revolute(i) && !i.driven && casual(i) && !!i.allowPrinted,
+  when: (i) => revolute(i) && !i.driven && casual(i) && !atLeast(i.load, "medium") && !!i.allowPrinted,
+  can: (i) => revolute(i) && !i.driven && !!i.allowPrinted,
+  uses: ["eclip"],
   fit: (i) => {
     const d = i.shaftHint ?? (i.load === "none" ? 4 : 5);
     if (i.wallB < d) return `wallB ${mm(i.wallB)} < printed pin engagement ${d}`;
@@ -568,8 +747,11 @@ const M2pin: JointRule = {
 const M2d: JointRule = {
   id: "M2d",
   when: (i) => revolute(i) && !i.driven && casual(i),
+  can: (i) => revolute(i) && !i.driven,
+  uses: ["dowel"],
   fit: (i) => {
-    const preferred = i.shaftHint ?? (i.load === "none" ? 3 : 5);
+    const stated = statedKey(i, "dowel");
+    const preferred = i.shaftHint ?? (stated ? Number(stated) : PIVOT_D[i.load]);
     const stocked = Object.keys(CATALOG.families.dowel!.dims).map(Number);
     const loose = stocked.find((d) => i.boreA !== undefined && i.boreA > d && i.boreA - d <= FDM_SLIP_FIT_MM && (i.shaftHint ?? d) === d);
     if (loose !== undefined && i.wallA >= loose && i.wallB >= loose) {
@@ -578,13 +760,13 @@ const M2d: JointRule = {
       if (L !== undefined) {
         const run = r2(Math.min(i.wallB, L - loose));
         return decision("M2d", "pin", `Ø${loose}×${L} loose pin, turning in a and b`, [
-          "revolute, occasional, light: a separate pin, no bushings",
+          `revolute, occasional, ${i.load}: a separate pin, no bushings`,
           `a already declares a Ø${i.boreA} bore on the axis, a slip bore for a Ø${loose} pin: the pin turns in a as in b (a loose-pin hinge; cap or peen its ends to keep it)`,
           `${L}mm: the longest stocked that stays inside a ${mm(i.wallA)} + b ${mm(i.wallB)}`,
         ], { parts: [{ role: "pin", family: "dowel", key, length: L }], dims: { d: loose, length: L, press: r2(L - run), run, slipA: 1 } });
       }
     }
-    const sizes = i.shaftHint ? stocked.filter((d) => d === i.shaftHint) : stocked.filter((d) => d <= preferred).sort((a, b) => b - a);
+    const sizes = i.shaftHint || stated ? stocked.filter((d) => d === preferred) : stocked.filter((d) => d <= preferred).sort((a, b) => b - a);
     if (sizes.length === 0) return `no Ø${preferred} pin stocked`;
     for (const d of sizes) {
       if (i.wallA < 1.5 * d || i.wallB < d) continue;
@@ -593,7 +775,7 @@ const M2d: JointRule = {
       if (L === undefined) continue;
       const run = r2(Math.min(i.wallB, L - 1.5 * d));
       return decision("M2d", "pin", `Ø${d}×${L} pin pressed in a, turning in b`, [
-        "revolute, occasional, light: a separate pin, no bushings",
+        `revolute, occasional, ${i.load}: a separate pin, no bushings`,
         `Ø${d}: the largest${i.shaftHint ? " (hinted)" : ` at or under the ${i.load}-load Ø${preferred}`} pressed 1.5·d into a and bearing d in b`,
         `${L}mm: the longest stocked that stays inside a ${mm(i.wallA)} + b ${mm(i.wallB)}`,
       ], { parts: [{ role: "pin", family: "dowel", key, length: L }], dims: { d, length: L, press: r2(L - run), run } });
@@ -605,11 +787,14 @@ const M2d: JointRule = {
 const M2: JointRule = {
   id: "M2",
   when: (i) => revolute(i) && !i.driven && casual(i),
+  can: (i) => revolute(i) && !i.driven,
+  uses: ["bushing", "d_shaft", "shaft", "collar", "eclip"],
   fit: (i) => {
-    const d = i.shaftHint ?? (i.load === "none" ? 3 : 5);
+    const stated = statedKey(i, "bushing");
+    const d = i.shaftHint ?? (stated ? dim(familyDims("bushing", stated)!, "bore") : Number(statedKey(i, "shaft") ?? PIVOT_D[i.load]));
     const mw = minWallOf(i);
     const fam = CATALOG.families.bushing!;
-    const key = Object.keys(fam.dims).find((k) => fam.dims[k]!.bore === d);
+    const key = Object.keys(fam.dims).find((k) => fam.dims[k]!.bore === d && (!stated || k === stated));
     if (!key) return `no bushing with a Ø${d} bore`;
     const past = pastA(i);
     if (past) return past;
@@ -623,7 +808,7 @@ const M2: JointRule = {
     const keep = retention(d);
     if (!keep.key) return `no collar or e-clip for a Ø${d} shaft`;
     return decision("M2", "bushings", `Ø${d} shaft in 2×${key}×${length} bushings`, [
-      "revolute, occasional, light: plain bushings", shaft.note, keep.note,
+      `revolute, occasional, ${i.load}: plain bushings`, shaft.note, keep.note,
     ], {
       parts: [
         { role: "bushing_a", family: "bushing", key, length },
@@ -636,13 +821,26 @@ const M2: JointRule = {
   },
 };
 
-/** Which motor and how it couples: servo for occasional low speed, N20 for
- *  low speed and high torque, brushless for high speed, NEMA 17 when precise
- *  or in between. A heavy load never hangs on a motor's own bearings. */
+/** Hobby and serial-bus servos by torque class: SG90 1.8, MG996R 11,
+ *  STS3215 19.5 kg·cm (catalog `torqueKgCm`). */
+const SERVO_BY_TORQUE = { low: ["sg90", "SG90"], medium: ["mg996r", "MG996R"], high: ["sts3215", "STS3215"] } as const;
+const SERVOS: string[] = Object.values(SERVO_BY_TORQUE).map(([f]) => f);
+/** Motors a brief may name for a direct drive, picked as stated. */
+const STATED_DIRECT = [...SERVOS, "nema14"];
+
+/** Which motor and how it couples: a servo for occasional low speed (by
+ *  torque), N20 for continuous low speed and high torque, brushless for high
+ *  speed, NEMA 17 when precise or in between. A heavy load never hangs on a
+ *  motor's own bearings. A stated servo or NEMA 14 drives b directly. */
 export function pickDrive(i: JointInput): { motor: HardwarePick; coupling: "direct" | "gt2" | "gear"; reason: string } {
   const speed = i.speedClass ?? "medium";
   const torque = i.torqueClass ?? "low";
   const motor = (family: string, key: string): HardwarePick => ({ role: "motor", family, key });
+  const stated = i.prefer?.family;
+  if (stated && STATED_DIRECT.includes(stated)) {
+    const key = canonicalKey(stated, i.prefer?.key ?? "") ?? Object.keys(CATALOG.families[stated]!.dims)[0]!;
+    return { motor: motor(stated, key), coupling: "direct", reason: `${key} as stated, direct` };
+  }
   if (i.load === "heavy") return { motor: motor("nema17", "NEMA17"), coupling: "gear", reason: "heavy load: NEMA 17 through a gear pair, off the motor's bearings" };
   if ((i.ratio !== undefined && i.ratio !== 1) || i.centerMm !== undefined) {
     const asked = i.ratio !== undefined && i.ratio !== 1 ? `a ${i.ratio}:1 ratio` : "an offset motor";
@@ -651,15 +849,18 @@ export function pickDrive(i: JointInput): { motor: HardwarePick; coupling: "dire
   }
   if (i.precise) return { motor: motor("nema17", "NEMA17"), coupling: "direct", reason: "precise: NEMA 17 stepper, direct" };
   if (speed === "high") return { motor: motor("brushless", torque === "low" ? "2204" : "2306"), coupling: "direct", reason: "high speed: brushless outrunner, direct" };
-  if (speed === "low" && torque === "high") return { motor: motor("n20", "N20"), coupling: "direct", reason: "low speed, high torque: N20 gearmotor, direct" };
-  if (speed === "low" && (i.duty ?? "occasional") === "occasional") return { motor: motor("sg90", "SG90"), coupling: "direct", reason: "occasional, low speed: SG90 servo, direct" };
+  if (speed === "low" && (i.duty ?? "occasional") === "occasional") {
+    const [family, key] = SERVO_BY_TORQUE[torque];
+    return { motor: motor(family, key), coupling: "direct", reason: `occasional, low speed, ${torque} torque: ${key} servo (${n(family, key, "torqueKgCm")} kg·cm), direct` };
+  }
+  if (speed === "low" && torque === "high") return { motor: motor("n20", "N20"), coupling: "direct", reason: "continuous low speed, high torque: N20 gearmotor, direct" };
   if (speed === "low") return { motor: motor("nema17", "NEMA17"), coupling: "gear", reason: "continuous low speed: NEMA 17 through a reduction" };
   return { motor: motor("nema17", "NEMA17"), coupling: "direct", reason: `${speed} speed: NEMA 17, direct` };
 }
 
 /** How far a motor's output reaches past its mounting face, mm. */
 function motorReach(family: string, key: string): number {
-  if (family === "nema17") return n(family, key, "shaftL");
+  if (family === "nema17" || family === "nema14") return n(family, key, "shaftL");
   if (family === "n20") return n(family, key, "shaftL");
   if (family === "brushless") return n(family, key, "shaftL") - 0.5;
   return n(family, key, "splineH");
@@ -669,14 +870,15 @@ function motorReach(family: string, key: string): number {
 const D1: JointRule = {
   id: "D1",
   when: (i) => revolute(i) && !!i.driven && pickDrive(i).coupling === "direct",
+  uses: ["nema17", "brushless", "n20", ...STATED_DIRECT],
   fit: (i) => {
     const drive = pickDrive(i);
     const { family, key } = drive.motor;
-    const out = n(family, key, family === "sg90" ? "splineD" : "shaftD");
+    const out = n(family, key, SERVOS.includes(family) ? "splineD" : "shaftD");
     const reach = motorReach(family, key);
     // NEMA and N20 mount under a with the shaft up through it; the brushless
     // and the servo sit on a's face with the output above it.
-    const through = family === "nema17" || family === "n20" ? i.wallA + 1 : 0.5;
+    const through = family === "nema17" || family === "nema14" || family === "n20" ? i.wallA + 1 : 0.5;
     const engage = Math.min(i.wallB, reach - through);
     if (engage < Math.min(out, 3)) return `${key} shaft ${mm(reach)} < ${through > 1 ? `wallA ${mm(i.wallA)} + 1 + ` : ""}hub engagement ${mm(Math.min(out, 3))}`;
     return decision("D1", "direct_drive", `${key} driving b directly`, [`revolute, driven: ${drive.reason}`, "direct: the motor's own bearings carry b"], {
@@ -761,6 +963,8 @@ export const rimMid = (r: DimsRow) => (typeof r.hubL === "number" ? r.hubL : 0) 
 const DB: JointRule = {
   id: "DB",
   when: (i) => revolute(i) && !!i.driven && pickDrive(i).coupling === "gt2",
+  can: (i) => revolute(i) && !!i.driven,
+  uses: [...SPINDLE, "washer", "nema17", "gt2_pulley", "gt2_loop"],
   fit: (i) => {
     const ratio = i.ratio ?? 1;
     const s = drivenSpindle(i);
@@ -775,7 +979,7 @@ const DB: JointRule = {
     const L = pickLength("gt2_loop", "6", { min: beltLength(cMin, pm, pd) });
     if (L === undefined) return `centre ${mm(cMin)} needs a ${mm(beltLength(cMin, pm, pd))}mm GT2 loop, longer than any stocked (${standardLengths("gt2_loop", "6").join(", ")})`;
     const c = r2(beltCenter(L, pm, pd));
-    if (i.centerMm !== undefined && c > i.centerMm + 5) return `the shortest stocked loop that fits (${L}mm) puts the motor ${mm(c)} off, past the ${mm(i.centerMm)} asked`;
+    if (i.centerMm !== undefined && c > i.centerMm + 5) return `the shortest stocked loop that fits (${L}mm) puts the motor ${mm(c)} off, past the ${mm(i.centerMm)} asked: ask for centerMm ${mm(c)} or leave it out`;
     const small = Math.min(zm, zd);
     const inMesh = (small * (Math.PI - 2 * Math.asin(Math.abs(pd - pm) / (2 * c)))) / (2 * Math.PI);
     if (inMesh < 6) return `${inMesh.toFixed(1)} teeth in mesh on the ${small}T pulley at centre ${mm(c)}, 6 needed: ask for a longer centerMm`;
@@ -784,7 +988,7 @@ const DB: JointRule = {
     const grip = motorGrip(i, zMotor, dim(mr, "hubL"), `the ${zm}T pulley's hub`);
     if (grip) return grip;
     return decision("DB", "belt_drive", `NEMA 17, ${zm}T → ${zd}T GT2 on a ${L}mm loop at ${mm(c)}, Ø${s.d} shaft on 2×${s.key}`, [
-      `revolute, driven: ${pickDrive(i).reason}`,
+      `revolute, driven: ${pickDrive(i).coupling === "gt2" ? pickDrive(i).reason : "a GT2 belt, as stated"}`,
       `ratio ${ratio}: ${zm}T on the motor, ${zd}T driven (${(zd / zm).toFixed(2)})`,
       `centre ${mm(c)}: the stocked ${L}mm loop's, at least ${mm(cMin)} (motor clear of the spindle, flanges apart${i.centerMm ? ", as asked" : ""})`,
       ...s.reasons,
@@ -803,9 +1007,12 @@ const DB: JointRule = {
   },
 };
 
-/** bd_warehouse's SpurGear at 20°: past 41 teeth the base circle falls inside
- *  the root and it refuses; under 17 the teeth undercut. */
-export const GEAR_TEETH = [17, 41] as const;
+/** Teeth per gear: under 17 at 20° they undercut; the registry's involute
+ *  builder (kernel gear.py) goes to 150. The search keeps to 41 first, so a
+ *  bigger count never wins a smaller module: it only builds a ratio that
+ *  needs more than 41 teeth at every module the load allows. */
+export const GEAR_TEETH = [17, 150] as const;
+const GEAR_TEETH_FIRST = 41;
 /** Least module by load, stepping up the catalog's modules until a pair
  *  reaches the centre; the face width is 6 modules. */
 const GEAR_MODULE = { none: 0.8, light: 1, medium: 1.5, heavy: 2 } as const;
@@ -818,6 +1025,8 @@ const GEAR_MODULE = { none: 0.8, light: 1, medium: 1.5, heavy: 2 } as const;
 const DG: JointRule = {
   id: "DG",
   when: (i) => revolute(i) && !!i.driven && pickDrive(i).coupling !== "direct",
+  can: (i) => revolute(i) && !!i.driven,
+  uses: [...SPINDLE, "washer", "nema17", "spur_gear"],
   fit: (i) => {
     const drive = pickDrive(i);
     const ratio = i.ratio ?? (drive.coupling === "gear" ? 2 : 1);
@@ -826,18 +1035,18 @@ const DG: JointRule = {
     const cMin = motorClear(s, i);
     const modules = Object.values(CATALOG.families.spur_gear!.dims).map((r) => dim(r, "module")).filter((m) => m >= GEAR_MODULE[i.load]).sort((a, b) => a - b);
     let best: { m: number; zm: number; zd: number; c: number; score: number } | undefined;
-    for (const m of modules) {
+    search: for (const cap of [GEAR_TEETH_FIRST, GEAR_TEETH[1]]) for (const m of modules) {
       const roots = (z: number, bore: number) => m * (z - 2.5) >= bore + 2 * Math.max(minWallOf(i), m);
-      for (let zm = GEAR_TEETH[0]; zm <= GEAR_TEETH[1]; zm++) {
+      for (let zm = GEAR_TEETH[0]; zm <= cap; zm++) {
         const zd = Math.round(ratio * zm);
-        if (zd < GEAR_TEETH[0] || zd > GEAR_TEETH[1] || Math.abs(zd / zm - ratio) / ratio > 0.02) continue;
+        if (zd < GEAR_TEETH[0] || zd > cap || Math.abs(zd / zm - ratio) / ratio > 0.02) continue;
         if (!roots(zm, nema("shaftD")) || !roots(zd, s.d)) continue;
         const c = (m * (zm + zd)) / 2;
         if (c < cMin) continue;
         const score = i.centerMm ? Math.abs(c - i.centerMm) : c;
         if (!best || score < best.score - 1e-9) best = { m, zm, zd, c, score };
       }
-      if (best) break;
+      if (best) break search;
     }
     if (!best) return `no pair of m${modules.join("/m")} gears with ${GEAR_TEETH.join("..")} teeth within 2% of ratio ${ratio} reaches centre ${mm(cMin)} (the motor clear of the spindle)`;
     const m = best.m;
@@ -846,7 +1055,7 @@ const DG: JointRule = {
     if (grip) return grip;
     const key = canonicalKey("spur_gear", `m${m}`)!;
     return decision("DG", "gear_drive", `NEMA 17, ${best.zm}T → ${best.zd}T m${m} spur pair at ${mm(best.c)}, Ø${s.d} shaft on 2×${s.key}`, [
-      `revolute, driven: ${drive.coupling === "gear" ? drive.reason : "no stocked belt loop fits the centre asked: a spur pair"}`,
+      `revolute, driven: ${drive.coupling === "gear" ? drive.reason : i.prefer?.family === "spur_gear" ? "a spur pair, as stated" : "no stocked belt loop fits the centre asked: a spur pair"}`,
       `module ${m}, ${t}mm face: ${m === GEAR_MODULE[i.load] ? `the ${i.load} load's` : `the least whose pair reaches the motor's centre (a ${i.load} load needs m${GEAR_MODULE[i.load]})`}`,
       `ratio ${ratio}: ${best.zm}T on the motor, ${best.zd}T driven (${(best.zd / best.zm).toFixed(2)})`,
       `centre m·(z1+z2)/2 = ${mm(best.c)}${i.centerMm ? `, nearest the ${mm(i.centerMm)} asked` : `, the least clearing the motor (${mm(cMin)})`}`,
@@ -873,8 +1082,11 @@ const prismatic = (i: JointInput) => i.motion === "prismatic";
 const P1: JointRule = {
   id: "P1",
   when: (i) => prismatic(i) && !i.driven && (i.strokeMm ?? 50) <= 150 && !atLeast(i.load, "medium"),
+  can: (i) => prismatic(i) && !i.driven,
+  uses: ["shaft", "lm_uu"],
   fit: (i) => {
-    const key = i.load === "none" ? "LM6UU" : "LM8UU";
+    if ((i.count ?? 1) > 1) return onePerJoint(i, "rod");
+    const key = statedKey(i, "lm_uu") ?? (i.load === "none" ? "LM6UU" : "LM8UU");
     const lm = familyDims("lm_uu", key)!;
     const d = dim(lm, "bore");
     const mw = minWallOf(i);
@@ -943,11 +1155,16 @@ function railFor(i: JointInput): { reasons: string[]; parts: HardwarePick[]; dim
   };
 }
 
+/** Slides do not pattern: `count` would mint every copy on one axis. */
+const onePerJoint = (i: JointInput, what: string) => `one ${what} per joint, not count ${i.count}: declare a joint per ${what}, each on its own a.port and b.port`;
+
 /** Long or loaded: a profile rail on a and a carriage under b. */
 const P2: JointRule = {
   id: "P2",
   when: (i) => prismatic(i) && !i.driven,
+  uses: ["mgn_rail", "mgn_carriage", ...SCREWS, "heatset_std", "heatset_short"],
   fit: (i) => {
+    if ((i.count ?? 1) > 1) return onePerJoint(i, "rail");
     const r = railFor(i);
     if (typeof r === "string") return r;
     const [rail, car] = [r.parts[0]!, r.parts[1]!];
@@ -963,6 +1180,8 @@ const P2: JointRule = {
 const PL: JointRule = {
   id: "PL",
   when: (i) => prismatic(i) && !!i.driven && (i.speedClass ?? "medium") !== "high" && (i.strokeMm ?? 50) <= 300,
+  can: (i) => prismatic(i) && !!i.driven,
+  uses: ["nema17", "coupler", "lead_screw", "lead_nut", "shaft", "lm_uu"],
   fit: (i) => {
     const stroke = i.strokeMm ?? 50;
     const mw = minWallOf(i);
@@ -1007,6 +1226,7 @@ export function idlerScrews(i: JointInput, boss: number) {
 const PB: JointRule = {
   id: "PB",
   when: (i) => prismatic(i) && !!i.driven,
+  uses: ["mgn_rail", "mgn_carriage", ...SCREWS, "heatset_std", "heatset_short", "nema17", "gt2_pulley", "gt2_idler", "washer", "gt2_belt"],
   fit: (i) => {
     const r = railFor(i);
     if (typeof r === "string") return r;
@@ -1050,10 +1270,12 @@ const PB: JointRule = {
 };
 
 /** First fit wins. Motion rules come first: a revolute joint is never bolted. */
-export const JOINT_RULES: JointRule[] = [D1, DB, DG, M1, M2pin, M2, M2d, PL, PB, P1, P2, R1, R1b, R2, R3, R4, R7, R5, R6, R3f];
+export const JOINT_RULES: JointRule[] = [D1, DB, DG, M1, M1h, M2pin, M2, M2d, PL, PB, P1, P2, W1, W2, W3, R1, R1b, R2, R3, R4, R7, R5, R6, R3f];
 
 export function selectJoint(input: JointInput): JointDecision | { error: string } {
   const tag = input.id ? `${input.id}: ` : "";
+  const p = input.prefer?.recipe || input.prefer?.family ? input.prefer : undefined;
+  if (p) return selectStated(input, p, tag);
   const shortfalls: string[] = [];
   for (const rule of JOINT_RULES) {
     if (!rule.when(input)) continue;
@@ -1065,6 +1287,43 @@ export function selectJoint(input: JointInput): JointDecision | { error: string 
     return { error: `${tag}no joint rule covers ${input.motion ?? "fixed"} / ${input.intent} / ${input.load} / ${input.access} on ${input.processB}` };
   }
   return { error: `${tag}${shortfalls.join("; ")}` };
+}
+
+/** "R3", "bearing 608": what the brief named. */
+export const statedName = (p: NonNullable<CadJoint["prefer"]>) => [p.recipe, p.family, p.key].filter(Boolean).join(" ");
+
+/** Whether a decision is the hardware the brief named. */
+export function honours(d: JointDecision, p: NonNullable<CadJoint["prefer"]>): boolean {
+  if (p.recipe && p.recipe !== d.rule && p.recipe !== d.recipe) return false;
+  if (!p.family) return true;
+  return d.parts.some((x) => sameFamily(p.family!, x.family) && (!p.key || x.key === canonicalKey(x.family, p.key)));
+}
+
+/** The brief named the hardware: only the rules that can use it are tried,
+ *  and when none fits, the error says what the stated part needs. Never a
+ *  substitute. */
+function selectStated(input: JointInput, p: NonNullable<CadJoint["prefer"]>, tag: string): JointDecision | { error: string } {
+  const say = `${tag}stated ${statedName(p)}`;
+  if (p.family && !CATALOG.families[p.family]) return { error: `${say}: the catalog has no family "${p.family}" (${Object.keys(CATALOG.families).join(", ")})` };
+  if (p.family && p.key && !canonicalKey(p.family, p.key)) return { error: `${say}: the catalog has no ${p.family} "${p.key}" (${Object.keys(CATALOG.families[p.family]!.dims).join(", ")})` };
+  const byId = JOINT_RULES.some((r) => r.id === p.recipe);
+  const shortfalls: string[] = [];
+  const tried = new Set<JointRule["fit"]>();
+  // The rules that would serve this joint anyway come first, in their usual
+  // order (a light hinge pin stays a pin, not bearings); the stated part may
+  // then reach past a rule's preferences (an FDM through-bolt).
+  const order = [...JOINT_RULES.filter((r) => r.when(input)), ...JOINT_RULES.filter((r) => !r.when(input))];
+  for (const rule of order) {
+    if (tried.has(rule.fit) || !(rule.can ?? rule.when)(input)) continue;
+    if ((byId && rule.id !== p.recipe) || (p.family && !rule.uses.some((f) => sameFamily(p.family!, f)))) continue;
+    tried.add(rule.fit);
+    const out = rule.fit(input);
+    if (typeof out === "string") shortfalls.push(`${rule.id} ${out}`);
+    else if (honours(out, p)) return out;
+    else shortfalls.push(`${rule.id} would use ${out.summary}`);
+  }
+  if (shortfalls.length === 0) return { error: `${say}: no rule uses it on a ${input.motion ?? "fixed"} ${input.intent}${input.driven ? " driven" : ""} joint` };
+  return { error: `${say}: ${shortfalls.join("; ")}` };
 }
 
 /** Declarations other than a thicker wall under which a rule fits, so a

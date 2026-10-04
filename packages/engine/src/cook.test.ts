@@ -1333,6 +1333,14 @@ describe("cookOne backend throws (kernel unreachable)", () => {
     expect(deps.store.node("widget").statusDetail?.stage).toBe("registry");
   });
 
+  it("fails a registry-only node with no deterministic artifact closed, with no model call", async () => {
+    const backend: DomainBackend<unknown> = { ...mockBackend, deterministicArtifact: () => null, deterministicOnly: () => true };
+    const deps = makeDeps(makeGraph(), trapProvider, new MemoryLibrary(), backend);
+    await expect(cookOne(deps, "widget")).rejects.toThrow(/registry-only/);
+    const n = deps.store.node("widget");
+    expect([n.status, n.statusDetail?.stage, n.cost.calls]).toEqual(["error_code", "registry", 0]);
+  });
+
   it("settles a registry part whose kernel is down instead of leaving it building", async () => {
     const backend: DomainBackend<unknown> = {
       ...mockBackend,
@@ -1508,6 +1516,28 @@ describe("cookNodes: a clash pinned on one part's code", () => {
     expect([n.status, n.statusDetail?.stage, n.statusDetail?.attribution]).toEqual(["error_contract", ASSEMBLY_STAGE, "contract-infeasible"]);
   });
 
+  // belt-turntable: a G5 repair pinned on the registry shaft called the model.
+  it("never asks a model to repair a registry-only part", async () => {
+    const message = "G5 clash: widget and other";
+    const backend: DomainBackend<unknown> = {
+      ...mockBackend,
+      deterministicArtifact: () => ({ code: "screw" }),
+      deterministicOnly: () => true,
+      globalCheck: async () => ({
+        ok: false,
+        problems: [message],
+        findings: [{ nodeA: "widget", nodeB: "widget", kind: "clash", measured: 7, expected: 0, message, repair: { nodeId: "widget", report: "cut a relief" } }],
+      }),
+    };
+    const deps = makeDeps(makeGraph(), trapProvider, new MemoryLibrary(), backend);
+    await cookNodes(deps, ["widget"]);
+    const n = deps.store.node("widget");
+    expect([n.status, n.statusDetail?.stage, n.artifact?.code, n.history.at(-1)?.cause]).toEqual(["error_contract", ASSEMBLY_STAGE, "screw", "registry"]);
+    // And a seeded cook asked of it directly fails closed, still with no call.
+    await expect(cookOne(deps, "widget", undefined, { stage: ASSEMBLY_STAGE, report: "cut a relief" })).rejects.toThrow(/registry-only/);
+    expect([deps.store.node("widget").status, deps.store.node("widget").statusDetail?.stage]).toEqual(["error_code", "registry"]);
+  });
+
   it("keeps the committed part when the repair misses its own gates", async () => {
     const t = setup({ maxAttempts: 1, gatesPassRepair: false });
     await cookNodes(t.deps, ["widget"]);
@@ -1527,6 +1557,13 @@ describe("applyCheck", () => {
   it("releases a block the check no longer reports", () => {
     const store = blocked();
     applyCheck(store, { ok: true, problems: [], findings: [] });
+    expect(store.node("widget").status).toBe("ready");
+  });
+
+  it("blocks only the blamed nodes when a finding names them", () => {
+    const store = blocked();
+    store.setStatus("widget", "ready");
+    applyCheck(store, { ok: false, problems: ["gap"], findings: [{ nodeA: "widget", nodeB: "widget", kind: "gap", measured: 0.5, expected: 0, message: "gap", blame: [] }] });
     expect(store.node("widget").status).toBe("ready");
   });
 

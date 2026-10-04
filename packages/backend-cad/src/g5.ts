@@ -15,7 +15,7 @@ import type { GraphDoc, NodeRecord } from "@patchcad/shared";
 import type { CheckFinding } from "@patchcad/engine";
 import type { CadContractPayload } from "./index.js";
 import type { ClashResult } from "./kernel.js";
-import { METRIC, skuOf } from "./registry.js";
+import { METRIC, REGISTRY_HARDWARE, skuOf } from "./registry.js";
 import { familyDims } from "./catalog.js";
 import { isMachined, sourcingOf } from "./sourcing.js";
 import { resolveDim } from "./bindings.js";
@@ -207,6 +207,21 @@ export function hardwareAllowances(graph: GraphDoc): { a: string; b: string; vol
     const width = hwDim(bearing, bearing.kind === "bushing" ? "length" : "width");
     for (const shaft of shafts) push(shaft.id, bearing.id, ring(bore + PRESS_INTERFERENCE_MM, bore, width));
   }
+  // A wheel D-bored onto a motor's D-shaft turns WITH the shaft, but the
+  // sweep turns the wheel about a motor that holds still, so the bore's flat
+  // passes through the shaft's round side: one D-segment along the wheel
+  // (belt-turntable: Ø5 flat 2 × 9mm face = 9.2mm³, swept "clash").
+  const motors = Object.values(graph.nodes).filter((n) => n.kind === "motor");
+  for (const wheel of Object.values(graph.nodes).filter((n) => n.kind === "gear" || n.kind === "pulley")) {
+    for (const motor of motors) {
+      if (!graph.edges.some((e) => (e.from === wheel.id && e.to === motor.id) || (e.from === motor.id && e.to === wheel.id))) continue;
+      const r = hwDim(motor, "shaftD") / 2;
+      const f = r - hwDim(motor, "flatDepth");
+      const thickness = hwDim(wheel, "thickness");
+      const length = Number.isFinite(thickness) ? thickness : hwDim(wheel, "hubL") + 2 * hwDim(wheel, "flangeW") + hwDim(wheel, "toothWidth");
+      push(wheel.id, motor.id, (r ** 2 * Math.acos(f / r) - f * Math.sqrt(r ** 2 - f ** 2)) * length);
+    }
+  }
   // A spur pair in mesh touches along its flanks by design. Two exact
   // involutes at m·(z1+z2)/2 share nothing; brought GEAR_MESH_BAND_MM closer
   // (a backlash band's worth) an m1 × 8 pair shares 0.14mm³, and 0.3mm closer
@@ -237,17 +252,24 @@ export function contactQueries(
     const ends = [portOf(graph.nodes[e.from]!, e.fromPort), portOf(graph.nodes[e.to]!, e.toPort)];
     if (ends.some((p) => p?.params.standoff !== undefined)) return [];
     // Widen the ball to the mated features: a 40mm face may touch its partner
-    // nowhere near its centre, if a hole sits there.
-    const dims = [portOf(graph.nodes[e.from]!, e.fromPort), portOf(graph.nodes[e.to]!, e.toPort)]
-      .flatMap((p) => Object.values(p?.params ?? {}))
-      .map((v) => {
-        try {
-          return resolveDim(graph, v);
-        } catch {
-          return 0;
-        }
-      });
-    return [{ edge: e.id, a: e.from, b: e.to, at, radius: Math.max(CONTACT_RADIUS_MM, ...dims.map((d) => d / 2)) }];
+    // nowhere near its centre, if a hole sits there. And down to a recessed
+    // feature's floor: a counterbore's port is its mouth, but the head bears
+    // 5.4mm down, so a 5mm ball saw only the head's 0.5mm radial clearance
+    // and called a seated M5 a gap (pipe-clamp).
+    const dims = (key?: string) =>
+      ends
+        .flatMap((p) => Object.entries(p?.params ?? {}))
+        .filter(([k]) => !key || k === key)
+        .map(([, v]) => {
+          try {
+            return resolveDim(graph, v);
+          } catch {
+            return 0;
+          }
+        });
+    const widest = Math.max(0, ...dims()) / 2;
+    const depth = Math.max(0, ...dims("depth"));
+    return [{ edge: e.id, a: e.from, b: e.to, at, radius: Math.max(CONTACT_RADIUS_MM, Math.hypot(widest, depth)) }];
   });
 }
 
@@ -328,13 +350,25 @@ export function fitFindings(graph: GraphDoc): CheckFinding[] {
 /** Clearance a relief leaves around the partner's envelope. */
 const RELIEF_MM = 0.3;
 
+/** The pair's host part when exactly one side is catalog hardware. Hardware is
+ *  exact and gets no repair round, so a clash or gap on such a mate is the
+ *  host's to fix and the host's alone to answer for (pipe-clamp blocked two
+ *  registry screws; belt-turntable sent its registry shaft to the model). */
+function hostOf(graph: GraphDoc, a: string, b: string): { host: string; hw: string } | null {
+  const hw = [a, b].filter((id) => REGISTRY_HARDWARE.has(graph.nodes[id]?.kind ?? ""));
+  return hw.length === 1 ? { hw: hw[0]!, host: hw[0] === a ? b : a } : null;
+}
+
+const fmt = (v: number[]) => `[${v.join(", ")}]`;
+
 /**
  * Whose CODE a clash between two MATED parts is: when the shared material
  * lies inside one part's envelope and outside the other's, the other part's
  * material has left its own claim and entered its partner's (a hinge leaf's
  * plate running into the other leaf's knuckle). That part can be repaired
  * against its partner's envelope, which is contract data, so the repair stays
- * hermetic. Inside both or neither, the poses are what disagree.
+ * hermetic. Inside both or neither, the poses are what disagree. Against
+ * catalog hardware it is always the host: the hardware cannot change.
  */
 function clashRepair(graph: GraphDoc, instances: Record<string, Mat4[]>, c: { a: string; b: string; at: number[]; volume_mm3: number }) {
   const [a, b] = [nodeOf(c.a), nodeOf(c.b)];
@@ -343,15 +377,24 @@ function clashRepair(graph: GraphDoc, instances: Record<string, Mat4[]>, c: { a:
   const [wa, wb] = [worldOf(c.a), worldOf(c.b)];
   if (!wa || !wb) return undefined;
   const p = c.at as [number, number, number];
+  const localTo = (w: Mat4) => (q: readonly number[]) => transformPoint(invertRigid(w), q).map((v) => Math.round(v * 100) / 100);
+  const pair = hostOf(graph, a, b);
+  if (pair) {
+    const kind = graph.nodes[pair.hw]!.kind;
+    return {
+      nodeId: pair.host,
+      report:
+        `G5 clash with ${pair.hw}: ${c.volume_mm3.toFixed(1)} mm³ of this part sits inside the catalog ${kind} ${pair.hw} near ${fmt(localTo(pair.host === a ? wa : wb)(p))} (this part's frame). ` +
+        `${pair.hw} is exact and never changes, so this part makes room for it: cut the seat, bore or pocket it sits in to its full diameter and depth, and keep every port where it is.`,
+    };
+  }
   const holding = (id: string, w: Mat4) => posedEnvelope(graph, id, w).find((o) => contains(o, p));
   const [inA, inB] = [holding(a, wa), holding(b, wb)];
   if (!inA === !inB) return undefined;
   const [x, wx, y, prim] = inA ? [b, wb, a, inA] : [a, wa, b, inB!];
-  const inv = invertRigid(wx);
-  const local = (q: readonly number[]) => transformPoint(inv, q).map((v) => Math.round(v * 100) / 100);
+  const local = localTo(wx);
   const c0 = local(prim.c);
   const axis = (k: 0 | 1 | 2) => local(prim.c.map((v, i) => v + prim.axes[k][i]!)).map((v, i) => Math.round((v - c0[i]!) * 1000) / 1000);
-  const fmt = (v: number[]) => `[${v.join(", ")}]`;
   const shape = prim.round
     ? `a cylinder Ø${(2 * prim.half[0]).toFixed(1)} × ${(2 * prim.half[2]).toFixed(1)} centred at ${fmt(c0)}, axis ${fmt(axis(2))}`
     : `a box ${prim.half.map((h) => (2 * h).toFixed(1)).join(" × ")} centred at ${fmt(c0)}, its axes ${fmt(axis(0))}, ${fmt(axis(1))}, ${fmt(axis(2))}`;
@@ -368,6 +411,7 @@ export function clashFindings(graph: GraphDoc, report: NonNullable<ClashResult["
   const out: CheckFinding[] = [];
   for (const c of report.clashes) {
     const repair = clashRepair(graph, instances, c);
+    const pair = hostOf(graph, nodeOf(c.a), nodeOf(c.b));
     const shared = `G5 clash: ${c.a} and ${c.b} occupy the same space: ${c.volume_mm3.toFixed(1)} mm³ of shared material near [${c.at.join(", ")}].`;
     out.push({
       nodeA: nodeOf(c.a),
@@ -375,10 +419,13 @@ export function clashFindings(graph: GraphDoc, report: NonNullable<ClashResult["
       kind: "clash",
       measured: c.volume_mm3,
       expected: 0,
-      message: repair
-        ? `${shared} It lies in ${repair.nodeId === nodeOf(c.a) ? nodeOf(c.b) : nodeOf(c.a)}'s envelope and outside ${repair.nodeId}'s, so ${repair.nodeId}'s code reaches into its partner: it gets a repair round to cut a relief.`
-        : `${shared} Both parts pass their own gates, so the fault is in a mate offset or a port pose, not in either part's code.`,
+      message: pair
+        ? `${shared} ${pair.hw} is catalog hardware, exact by construction, so ${pair.host} must make room for it${repair ? ": it gets a repair round" : ""}.`
+        : repair
+          ? `${shared} It lies in ${repair.nodeId === nodeOf(c.a) ? nodeOf(c.b) : nodeOf(c.a)}'s envelope and outside ${repair.nodeId}'s, so ${repair.nodeId}'s code reaches into its partner: it gets a repair round to cut a relief.`
+          : `${shared} Both parts pass their own gates, so the fault is in a mate offset or a port pose, not in either part's code.`,
       ...(repair ? { repair } : {}),
+      ...(pair ? { blame: [pair.host] } : {}),
     });
   }
   // A moving part at some pose of its joint, not at rest: the joint is the
@@ -389,7 +436,9 @@ export function clashFindings(graph: GraphDoc, report: NonNullable<ClashResult["
     if (still.has([nodeOf(c.a), nodeOf(c.b)].sort().join("|"))) continue;
     const joint = graph.joints?.find((j) => j.id === c.joint);
     const unit = (joint as { motion?: string } | undefined)?.motion === "prismatic" ? "mm" : "°";
+    const pair = hostOf(graph, nodeOf(c.a), nodeOf(c.b));
     out.push({
+      ...(pair ? { blame: [pair.host] } : {}),
       nodeA: nodeOf(c.a),
       nodeB: nodeOf(c.b),
       kind: "swept",
@@ -402,13 +451,37 @@ export function clashFindings(graph: GraphDoc, report: NonNullable<ClashResult["
     const e = graph.edges.find((x) => x.id === g.edge);
     if (g.gap_mm <= contactTolerance(graph, e)) continue;
     const ports = e ? ` (${e.from}.${e.fromPort} → ${e.to}.${e.toPort})` : "";
+    const message = `G5 gap: ${g.a} and ${g.b} are mated${ports} but ${g.gap_mm.toFixed(2)}mm apart at [${g.at.join(", ")}], where their ports meet.`;
+    const pair = hostOf(graph, g.a, g.b);
+    if (pair && e) {
+      // The hardware's frame is exact, so the host's feature is what is off.
+      const port = pair.host === e.from ? e.fromPort : e.toPort;
+      const type = portOf(graph.nodes[pair.host]!, port)?.type ?? "port";
+      const kind = graph.nodes[pair.hw]!.kind;
+      out.push({
+        nodeA: g.a,
+        nodeB: g.b,
+        kind: "gap",
+        measured: g.gap_mm,
+        expected: 0,
+        message: `${message} ${pair.hw} is catalog hardware, exact by construction, so ${pair.host}'s ${port} is what is off: it gets a repair round.`,
+        blame: [pair.host],
+        repair: {
+          nodeId: pair.host,
+          report:
+            `G5 gap with ${pair.hw}: the catalog ${kind} mated at this part's ${type} port "${port}" sits ${g.gap_mm.toFixed(2)}mm off this part's material. ` +
+            `The ${kind} is exact and placed at the port, so the ${type}'s seat face must lie on it: cut the ${type} to exactly the depth and diameter its params declare, measured from the port origin along the port's axis, so the ${kind} sits flush on its seat. Keep every port where it is.`,
+        },
+      });
+      continue;
+    }
     out.push({
       nodeA: g.a,
       nodeB: g.b,
       kind: "gap",
       measured: g.gap_mm,
       expected: 0,
-      message: `G5 gap: ${g.a} and ${g.b} are mated${ports} but ${g.gap_mm.toFixed(2)}mm apart at [${g.at.join(", ")}], where their ports meet. One of the two ports is posed off its part's surface, so the part floats.`,
+      message: `${message} One of the two ports is posed off its part's surface, so the part floats.`,
     });
   }
   return out;

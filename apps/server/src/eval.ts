@@ -21,7 +21,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { cookNodes, EventBus, GraphStore, planGraph } from "@patchcad/engine";
-import { buildBom, CadBackend, CHEAT_SHEET, contactQueries, jointOwner, normalizeCadCode, transformPoint } from "@patchcad/backend-cad";
+import { buildBom, CadBackend, CHEAT_SHEET, contactQueries, jointOwner, normalizeCadCode, REGISTRY_HARDWARE, transformPoint } from "@patchcad/backend-cad";
 import type { CheckFinding, LlmProvider } from "@patchcad/engine";
 import { z } from "zod";
 import { GraphDoc, type NodeRecord, type RefView } from "@patchcad/shared";
@@ -431,8 +431,12 @@ function score(
       const declared = ((n.contract.payload as { ports?: { name?: string; type?: string }[] } | null)?.ports) ?? [];
       const data = (n.measurements?.data ?? null) as Measured | null;
       const probed = new Set((data?.ports ?? []).map((p) => p.key));
-      for (const d of declared)
+      for (const d of declared) {
+        // A registry part's face ports are mate frames on exact geometry (a
+        // magnet's seat), measured by nothing, as joint hardware's are.
+        if (REGISTRY_HARDWARE.has(n.kind) && d.type === "FLAT_FACE") continue;
         if (!probed.has(d.name)) misses.push(`${n.id}.${d.name}(${d.type}) declared but never probed`);
+      }
       // `ready` does not imply measurements exist. Three of the four ready
       // nodes in the pen-cup project have measurements: null, so four declared
       // ports were invisible and the catch survived on one node's two.
@@ -1020,6 +1024,14 @@ async function runCase(c: EvalCase, capUsd: number) {
   const plan = await planGraph({
     provider, backend, projectId: `eval-${c.id}`, goal: c.prompt,
     references: refs.map((r) => ({ image: r.image, view: r.ref.view, aspect: r.ref.aspect })),
+  }).catch((err: Error & { draft?: unknown }) => {
+    // A plan that failed its lints: keep the last draft to replay offline.
+    if (err.draft) {
+      const dir = path.join(repoRoot, "evals", "results", ".work", c.id);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "failed-plan.json"), JSON.stringify(err.draft, null, 1));
+    }
+    throw err;
   });
   const planMs = Date.now() - t0;
   plan.graph.brief.refs = refs.map((r) => r.ref);
@@ -1027,6 +1039,9 @@ async function runCase(c: EvalCase, capUsd: number) {
   const archCalls = 1 + plan.lintRounds.length;
 
   if (flag("dry")) {
+    const dir = path.join(repoRoot, "evals", "results", ".work", c.id);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "plan.json"), JSON.stringify(plan.graph, null, 1));
     const all = Object.values(plan.graph.nodes);
     const planned = all.map((n) => ({ id: n.id, kind: n.kind }));
     const designed = all.filter((n) => !jointHardware(plan.graph, n)).length;

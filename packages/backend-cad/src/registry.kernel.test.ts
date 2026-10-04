@@ -47,6 +47,23 @@ describe.skipIf(!live)("catalog parts build in the kernel", () => {
     expect(failures).toEqual([]);
   }, 300_000);
 
+  it("builds a gear of any tooth count as one valid solid", async () => {
+    // hand-winch: bd_warehouse raised "Invalid configuration" from z = 42 at 20°.
+    const code = resolveHardware({ kind: "gear", params: {}, contract: { params: [] } } as unknown as NodeRecord)!;
+    const failures: string[] = [];
+    for (const teeth of [15, 45, 60, 120]) {
+      const res = await fetch(`${base}/execute`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code, params: { ...GEAR, module: 1.5, teeth, bore: 8 }, solids: 1 }),
+      });
+      const body = (await res.json()) as { ok: boolean; stage?: string; error?: string; measurements?: { bbox: { size: number[] } } };
+      const od = body.measurements?.bbox.size[0] ?? 0;
+      if (!body.ok || Math.abs(od - 1.5 * (teeth + 2)) > 0.6) failures.push(`z${teeth}: ${body.stage ?? ""} ${body.error ?? `Ø${od}`}`);
+    }
+    expect(failures).toEqual([]);
+  }, 60_000);
+
   it("passes G3 for a gear and a pulley that declare their own HUB_BORE", async () => {
     // spur-gear-pair: the gear's port as the architect declared it, on the
     // bore's -z face. Registry parts get no repair round, so this is terminal.

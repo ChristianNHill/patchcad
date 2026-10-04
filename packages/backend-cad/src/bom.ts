@@ -1,6 +1,7 @@
 import type { GraphDoc, NodeRecord } from "@patchcad/shared";
 import type { CadContractPayload } from "./index.js";
 import { solveAssembly, type AssemblyNode } from "./assembly.js";
+import { graphMates } from "./expand.js";
 import { resolvePose } from "./bindings.js";
 import { CATALOG, skuFor, type Sku } from "./catalog.js";
 import { skuOf } from "./registry.js";
@@ -106,8 +107,7 @@ function instanceCounts(graph: GraphDoc): Record<string, number> {
     }
     return { id: n.id, ports };
   });
-  const mates = graph.edges.map((e) => ({ fromNode: e.from, fromPort: e.fromPort, toNode: e.to, toPort: e.toPort }));
-  const { instances } = solveAssembly(nodes, mates, graph.assembly.entryNodeId);
+  const { instances } = solveAssembly(nodes, graphMates(graph), graph.assembly.entryNodeId);
   return Object.fromEntries(Object.values(graph.nodes).map((n) => [n.id, Math.max(1, instances[n.id]?.length ?? 1)]));
 }
 
@@ -132,9 +132,20 @@ function skuAtLength(node: NodeRecord): Sku | null {
   return skuFor(sku.family, sku.key, len) ?? { ...sku, id: `${sku.id}x${len}`, length: len };
 }
 
+/** An architect's gear names module and teeth, not a sku: its row is the
+ *  module's spur_gear, one per tooth count (the winch's "15T pinion" was a
+ *  "15T" row, and its 45T gear merged into it). */
+function gearRow(node: NodeRecord): Omit<BuyRow, "qty" | "nodes"> | null {
+  const param = (name: string) => Number(node.params[name] ?? node.contract.params.find((p) => p.name === name)?.default);
+  const sku = node.kind === "gear" ? skuFor("spur_gear", `m${param("module")}`) : undefined;
+  if (!sku) return null;
+  const z = param("teeth");
+  return { sku: `${sku.id}-z${z}`, description: `spur_gear ${sku.key} z${z}`, standard: CATALOG.families.spur_gear!.standard ?? "—", vendors: UNVERIFIED_PN };
+}
+
 function buyRow(node: NodeRecord): Omit<BuyRow, "qty" | "nodes"> {
   const sku = skuAtLength(node);
-  if (!sku) return { sku: node.kind, description: node.title, standard: "—", vendors: UNVERIFIED_PN };
+  if (!sku) return gearRow(node) ?? { sku: node.kind, description: node.title, standard: "—", vendors: UNVERIFIED_PN };
   const family = CATALOG.families[sku.family]!;
   const vendors = Object.entries(sku.vendors ?? {}).map(([vendor, v]) => ({ vendor, pn: v.pn, url: v.url }));
   return {

@@ -139,7 +139,25 @@ pool = None  # set at startup; parent process stays OCP-free
 # corner (a drop slot, a crossing bolt hole, a squared-off floor) is a
 # breakout and only rays that meet a wall are graded; G4c fdm reports
 # bridge_span_mm and a "bridge" finding past 10mm.
-GATES_VERSION = 20
+# 20 -> 21: the registry namespace injects our own `involute_gear` (gear.py)
+# in place of bd_warehouse's SpurGear and IsoThread, so code that named those
+# no longer builds; gears past 41 teeth at 20 degrees build, centred on the axis.
+# 21 -> 22: a hole must stay round over half its circle (a 45 deg Box teardrop
+# widened a Ø10 channel to Ø14 at its equator and passed); hole circles are the
+# consensus of 16 exact rays, and a slice that is not round re-reads each ray's
+# nearest wall over a 4mm window, so a thread's crests set the centre and the
+# Ø (an M28 socket read 9.3 deg tilted); a SHAFT may be hollow, and takes each
+# ray's widest radius over that window (a threaded spigot read "not round");
+# in-plane marches intersect lines on a B-rep; a SLOT/GROOVE whose declared-
+# width channel lies in front of its origin says the pose is on its floor.
+# Roundness only blocks a CLEARANCE_HOLE or HOLE_PATTERN member that a catalog
+# screw clears (ISO 273) once the bulge reaches that screw's head Ø; short of it
+# the port report carries a `finding`.
+# 22 -> 23: G5's swept check skips a moving part that turns into itself about
+# its joint axis (37 and 113 deg, >= 99% shared) against parts that hold still:
+# a V-wheel or roller on its rail sweeps only its rest pose, which the static
+# clash check already judged.
+GATES_VERSION = 23
 # Tap drills and clearances come from the catalog, so a catalog edit changes
 # verdicts too. Keyed by content, not by remembering to bump GATES_VERSION.
 CATALOG_DIGEST = hashlib.sha256(

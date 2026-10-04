@@ -156,6 +156,58 @@
         "8": [16, 20, 25, 30, 40, 50, 60, 80]
       }
     },
+    "wood_dowel": {
+      "category": "fasteners", "kind": "dowel", "keyedBy": "size", "skuPrefix": "WDOWEL",
+      "standard": "DIN 68150 fluted beech furniture dowel (key is the nominal Ø; chamfer family-typical)", "dimsSource": "nominal",
+      "note": "glued into blind holes of the same Ø in both panels; not the steel ISO 2338 pin",
+      "dims": { "6": { "d": 6, "chamfer": 1 }, "8": { "d": 8, "chamfer": 1 } },
+      "lengths": { "6": [25, 30, 35, 40], "8": [30, 35, 40, 45] }
+    },
+    "confirmat": {
+      "category": "fasteners", "kind": "fastener", "keyedBy": "size", "skuPrefix": "CONFIRMAT",
+      "note": "one-piece furniture connector screw: 90° countersunk head with a 4 mm hex socket, plain shoulder, coarse wood thread modelled at its core Ø; drill drillA through the face panel and drillB into the edge", "dimsSource": "family-typical",
+      "dims": { "7": { "d": 7, "core": 4, "headD": 10, "shoulderL": 9, "socketAf": 4, "drillA": 7, "drillB": 5 } },
+      "lengths": { "7": [50] }
+    },
+    "cam_lock": {
+      "category": "fasteners", "kind": "cam_lock", "keyedBy": "size", "skuPrefix": "CAM",
+      "note": "flat-pack cam housing (Minifix-type 15): Ø15 bore drillDepth deep in the face of the panel, centred `drillDistance` of its cam bolt from the edge; the bolt enters through an Ø8 edge hole", "dimsSource": "family-typical",
+      "dims": { "15": { "d": 15, "height": 12, "drillDepth": 12.5, "edgeHole": 8, "minPanel": 15 } }
+    },
+    "cam_bolt": {
+      "category": "fasteners", "kind": "cam_bolt", "keyedBy": "size", "skuPrefix": "CAMBOLT",
+      "note": "cam connecting bolt, key is the drilling distance (cam centre to panel edge); collar face on the panel, euro wood thread (modelled at its core Ø) into a pilot of `pilot` Ø, `threadL` deep", "dimsSource": "family-typical",
+      "dims": {
+        "24": { "drillDistance": 24, "threadL": 11, "core": 4, "pilot": 5, "collarD": 10, "collarH": 1, "shankD": 6, "headD": 7, "headH": 3 },
+        "34": { "drillDistance": 34, "threadL": 11, "core": 4, "pilot": 5, "collarD": 10, "collarH": 1, "shankD": 6, "headD": 7, "headH": 3 }
+      }
+    },
+    "dowel_screw": {
+      "category": "fasteners", "kind": "dowel_screw", "keyedBy": "size", "skuPrefix": "DOWELSCREW",
+      "note": "headless double-ended wood screw, half in each part; key is the thread Ø, thread modelled at its core Ø, pilot Ø in both parts", "dimsSource": "family-typical",
+      "dims": { "6": { "d": 6, "core": 4.2, "pilot": 4.5 }, "8": { "d": 8, "core": 5.6, "pilot": 6 } },
+      "lengths": { "6": [40, 50, 60], "8": [50, 60, 80] }
+    },
+    "filament_pin": {
+      "category": "fasteners", "kind": "pin", "keyedBy": "size", "skuPrefix": "FILPIN",
+      "note": "3D-printer filament cut to length as a printed hinge's pin stock, centred on the joint like a dowel", "dimsSource": "nominal",
+      "dims": { "1.75": { "d": 1.75 }, "2.85": { "d": 2.85 } },
+      "lengths": { "1.75": [10, 15, 20, 30, 50], "2.85": [10, 15, 20, 30, 50] }
+    },
+    "wire_nail": {
+      "category": "fasteners", "kind": "pin", "keyedBy": "size", "skuPrefix": "DIN1151",
+      "standard": "DIN 1151 A round plain-head wire nail (shank Ø, head Ø min, lengths); head height family-typical", "dimsSource": "standard",
+      "note": "also a small axle: head on z = 0 like a screw head, shank -z",
+      "dims": {
+        "1.6": { "d": 1.6, "headD": 3.2, "headH": 0.6 },
+        "2": { "d": 2, "headD": 4, "headH": 0.8 },
+        "2.2": { "d": 2.2, "headD": 4.4, "headH": 0.9 },
+        "2.5": { "d": 2.5, "headD": 5, "headH": 1 },
+        "2.8": { "d": 2.8, "headD": 5.6, "headH": 1.1 },
+        "3.1": { "d": 3.1, "headD": 6.2, "headH": 1.2 }
+      },
+      "lengths": { "1.6": [25, 30, 35], "2": [40, 45], "2.2": [45, 50], "2.5": [55, 60], "2.8": [65], "3.1": [70, 80] }
+    },
     "threaded_rod": {
       "category": "fasteners", "kind": "threaded_rod", "keyedBy": "thread", "skuPrefix": "DIN976",
       "standard": "DIN 976-1 (cut to length)", "dimsSource": "standard",
@@ -172,7 +224,7 @@
     "bearing": {
       "category": "bearings", "kind": "bearing", "keyedBy": "size", "skuPrefix": "BRG",
       "standard": "ISO 15 boundary dimensions (deep groove 6xx, 68xx, 69xx)", "dimsSource": "standard",
-      "note": "684-689 are the shielded (ZZ/2Z) widths, ISO 15 width series 2 (628/4..628/9); the open 684-689 are narrower (2.5, 3, 4, 4)",
+      "note": "684-689, MR85 and MR105 are the shielded (ZZ/2Z) widths (open MR85 2, MR105 3), ISO 15 width series 2 (628/4..628/9); the open 684-689 are narrower (2.5, 3, 4, 4)",
       "dims": {
         "623": { "bore": 3, "od": 10, "width": 4 },
         "624": { "bore": 4, "od": 13, "width": 5 },
@@ -189,6 +241,8 @@
         "685": { "bore": 5, "od": 11, "width": 5 },
         "688": { "bore": 8, "od": 16, "width": 5 },
         "689": { "bore": 9, "od": 17, "width": 5 },
+        "MR85": { "bore": 5, "od": 8, "width": 2.5 },
+        "MR105": { "bore": 5, "od": 10, "width": 4 },
         "6800": { "bore": 10, "od": 19, "width": 5 },
         "6801": { "bore": 12, "od": 21, "width": 5 },
         "6802": { "bore": 15, "od": 24, "width": 5 },
@@ -354,7 +408,7 @@
     },
     "spur_gear": {
       "category": "transmission", "kind": "gear", "keyedBy": "size", "skuPrefix": "GEAR",
-      "note": "involute spur gear, built from params (module, teeth, thickness, bore) by bd_warehouse SpurGear", "standard": "ISO 54 module series", "dimsSource": "standard",
+      "note": "involute spur gear, built from params (module, teeth, thickness, bore) by the kernel's involute_gear", "standard": "ISO 54 module series", "dimsSource": "standard",
       "dims": {
         "m0.5": { "module": 0.5, "pressureAngle": 20 },
         "m0.8": { "module": 0.8, "pressureAngle": 20 },
@@ -393,6 +447,12 @@
       },
       "lengths": { "NEMA17": [34, 40, 48, 60] }
     },
+    "nema14": {
+      "category": "motors", "kind": "motor", "keyedBy": "size", "skuPrefix": "NEMA",
+      "standard": "NEMA 14 faceplate (35 square, 26 hole pitch, M3, Ø22 pilot, Ø5 shaft); shaft length and flat are typical; length is the body length", "dimsSource": "standard",
+      "dims": { "NEMA14": { "face": 35, "holePitch": 26, "holeThread": "M3", "holeDepth": 3.5, "pilotD": 22, "pilotH": 2, "shaftD": 5, "shaftL": 20, "flatDepth": 0.5 } },
+      "lengths": { "NEMA14": [28, 34, 52] }
+    },
     "brushless": {
       "category": "motors", "kind": "motor", "keyedBy": "size", "skuPrefix": "BLDC",
       "note": "outrunner, stator Ø x height in the key; 4 M3 base holes on pcd", "dimsSource": "family-typical",
@@ -412,7 +472,21 @@
       "category": "motors", "kind": "motor", "keyedBy": "size", "skuPrefix": "SERVO",
       "note": "9 g micro servo; tabZ is the tab underside above the case bottom", "dimsSource": "family-typical",
       "dims": {
-        "SG90": { "bodyL": 22.2, "bodyW": 11.8, "bodyH": 22.7, "tabL": 32, "tabT": 2.5, "tabZ": 15.9, "holePitch": 27, "holeD": 2, "bossD": 11.8, "bossH": 4, "splineD": 4.8, "splineH": 4.3 }
+        "SG90": { "bodyL": 22.2, "bodyW": 11.8, "bodyH": 22.7, "tabL": 32, "tabT": 2.5, "tabZ": 15.9, "holePitch": 27, "holeD": 2, "bossD": 11.8, "bossH": 4, "splineD": 4.8, "splineH": 4.3, "torqueKgCm": 1.8 }
+      }
+    },
+    "mg996r": {
+      "category": "motors", "kind": "motor", "keyedBy": "size", "skuPrefix": "SERVO",
+      "note": "standard-size metal-gear servo, 11 kg·cm at 6 V; tabZ is the tab underside above the case bottom, two holes per tab holeRowPitch apart", "dimsSource": "family-typical",
+      "dims": {
+        "MG996R": { "bodyL": 40.3, "bodyW": 20, "bodyH": 36.6, "tabL": 53.6, "tabT": 2.5, "tabZ": 24.1, "holePitch": 49.5, "holeRowPitch": 10, "holeD": 4.5, "bossD": 20, "bossH": 2.3, "splineD": 5.8, "splineH": 4, "torqueKgCm": 11 }
+      }
+    },
+    "sts3215": {
+      "category": "motors", "kind": "motor", "keyedBy": "size", "skuPrefix": "SERVO",
+      "note": "Feetech serial-bus servo, 19.5 kg·cm at 7.4 V, no tabs: the case bottom is the seat (tabZ 0) with four PA2.0 self-tapping holes at holePitch × holeRowPitch (scaled from the drawing, not dimensioned there); the output is the Ø19.95 aluminium horn (splineD/splineH) with 4×M3 on Ø14, its axis bossD/2 from one end", "dimsSource": "family-typical",
+      "dims": {
+        "STS3215": { "bodyL": 45.23, "bodyW": 24.73, "bodyH": 35, "tabZ": 0, "holePitch": 38.5, "holeRowPitch": 18, "holeD": 2, "bossD": 25, "bossH": 0, "splineD": 19.95, "splineH": 4.5, "hornPcd": 14, "hornThread": "M3", "torqueKgCm": 19.5 }
       }
     },
     "disc_magnet": {

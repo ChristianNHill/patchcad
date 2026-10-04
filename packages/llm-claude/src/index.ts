@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { LlmCallError, type LlmProvider, type LlmRequest, type LlmResult, type LlmRole, type LlmUsage } from "@patchcad/engine";
+import { LlmCallError, parseJsonLoose, type LlmProvider, type LlmRequest, type LlmResult, type LlmRole, type LlmUsage } from "@patchcad/engine";
 
 /**
  * Native Anthropic adapter. Structured output via output_config.format with
@@ -350,7 +350,9 @@ export class ClaudeProvider implements LlmProvider {
       };
     }
     try {
-      const value: unknown = JSON.parse(match[0]);
+      // A reply the token ceiling cut off is not repaired: half a code string
+      // would parse. The error below asks for a higher ceiling instead.
+      const value: unknown = stop === "max_tokens" ? JSON.parse(match[0]) : parseJsonLoose(raw);
       const result = req.schema.safeParse(value);
       if (result.success) return { success: true, data: result.data };
       return {

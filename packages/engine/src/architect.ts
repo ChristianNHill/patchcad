@@ -681,7 +681,8 @@ ${JSON.stringify(zodToJsonSchema(z.array(jointSchema), { target: "jsonSchema7", 
   if (problems.length > 0) {
     // Every round billed. A bare Error recorded a failed plan as $0 when it had
     // spent about $1.15, so the summed usage rides the throw.
-    throw new LlmCallError(`architect graph failed lints after ${maxRepairs} repairs:\n${problems.join("\n")}`, usage);
+    // The last draft rides along so a failed plan can be replayed offline.
+    throw Object.assign(new LlmCallError(`architect graph failed lints after ${maxRepairs} repairs:\n${problems.join("\n")}`, usage), { draft: out });
   }
   return {
     graph: architectOutputToGraph(out, opts.projectId, opts.backend.id, opts.goal, opts.backend.planning.paramUnit),

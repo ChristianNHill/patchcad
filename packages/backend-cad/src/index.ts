@@ -249,8 +249,8 @@ import { generatePrompt, repairPrompt } from "./prompts.js";
 import { FASTENING_HARDWARE, REGISTRY_HARDWARE, REGISTRY_SOLIDS, resolveDeterministic, skuOf, unresolvedHardware } from "./registry.js";
 import { CadJoint } from "./joints.js";
 import { CATALOG, skuFor } from "./catalog.js";
-import { cadJointRuleLint, expandJoints, gearMeshJoints, isJointHardware, jointAxes } from "./expand.js";
-import { kinematicJoints, poseToMat, solveAssembly, type AssemblyMate, type AssemblyNode } from "./assembly.js";
+import { cadJointRuleLint, expandJoints, gearMeshJoints, graphMates, isJointHardware, jointAxes } from "./expand.js";
+import { kinematicJoints, poseToMat, solveAssembly, type AssemblyNode } from "./assembly.js";
 import { resolveBinding, resolveDim, resolvePose } from "./bindings.js";
 import { DIAMETER_KEYS, clashFindings, contactQueries, fitFindings, hardwareAllowances, threadAllowances } from "./g5.js";
 import { cadPlanGeometryLint } from "./plan-geometry.js";
@@ -701,11 +701,18 @@ export const cadMateConnectivityLint = {
         if (!seen.has(n)) { seen.add(n); queue.push(n); }
       }
     }
+    // A gear meshing with another is still placed by what it turns on: the
+    // mesh couples their motion (gearMeshes), it positions neither. The
+    // extruder's pinion and main gear were dropped from the plan instead.
+    const gearHelp = (id: string) =>
+      graph.nodes[id]!.kind === "gear"
+        ? ` A gear is positioned by the shaft or hub it turns on, never by the gear it meshes with: give ${id} a HUB_BORE port and an edge from that shaft (a pinion on a motor: the motor's shaft → ${id}'s HUB_BORE), or make it a revolute joint's b. Keep it in the plan; the mesh with its partner follows from the centre distance.`
+        : "";
     return ids
       .filter((id) => !seen.has(id))
       .map(
         (id) =>
-          `${id}: no chain of edges connects it to the assembly entry "${entry}", so nothing positions it and it lands at the origin, inside whatever is there. Parts joined face to face need a FLAT_FACE mate edge between them — a hole wired to a fastener positions the FASTENER, not the plate.`,
+          `${id}: no chain of edges connects it to the assembly entry "${entry}", so nothing positions it and it lands at the origin, inside whatever is there. Parts joined face to face need a FLAT_FACE mate edge between them — a hole wired to a fastener positions the FASTENER, not the plate.${gearHelp(id)}`,
       );
   },
 };
@@ -719,12 +726,54 @@ export const cadHardwareResolvesLint = {
   },
 };
 
+/** Registry kinds whose bore is cut to its fit band (registry.ts boreFit),
+ *  so a HUB_BORE they declare is a feature of their own. */
+const BORED_HARDWARE = new Set(["gear", "pulley", "collar", "bushing", "bearing", "linear_bearing"]);
+
+/** A host feature (the pocket, seat or trap a catalog part goes INTO) declared
+ *  on the catalog part itself. magnetic-lid put a MAGNET_POCKET on the magnet:
+ *  the registry magnet has no hole, failed G3 with no repair round, and all 8
+ *  magnets left the BOM. G3 never probes one (kernelRequest), and the plan lint
+ *  sends it back to the host. */
+export function hostFeatureOnHardware(kind: string, type: string): boolean {
+  return REGISTRY_HARDWARE.has(kind) && HARDWARE_PORT_TYPES.has(type) && !(type === "HUB_BORE" && BORED_HARDWARE.has(kind));
+}
+
+/** Which of a node's ports G3 probes. On catalog hardware only what it owns
+ *  and the plan lints vouch for: a bored part's HUB_BORE, a fastener's seat
+ *  (cadHardwareSeatLint). Every other hardware port is a mate frame, as on
+ *  joint hardware: magnetic-lid's seat at mid-thickness failed G3 with
+ *  "material found above" and no repair round. G5 judges where it lands. */
+function probedPort(kind: string, type: string): boolean {
+  if (!REGISTRY_HARDWARE.has(kind)) return true;
+  return type === "HUB_BORE" ? BORED_HARDWARE.has(kind) : !!BEARING_DIAMETER[kind] && !HARDWARE_PORT_TYPES.has(type);
+}
+
 export const cadHardwareSeatLint = {
   run(graph: GraphDoc): string[] {
     const problems: string[] = [];
     for (const n of Object.values(graph.nodes)) {
       // Joint hardware's ports are mate frames (INSET_POSE), never probed.
-      if (!BEARING_DIAMETER[n.kind] || isJointHardware(graph, n.id)) continue;
+      if (!REGISTRY_HARDWARE.has(n.kind) || isJointHardware(graph, n.id)) continue;
+      for (const p of (n.contract.payload as CadContractPayload | undefined)?.ports ?? []) {
+        if (!hostFeatureOnHardware(n.kind, p.type)) continue;
+        problems.push(
+          `${n.id}: port "${p.name}" is a ${p.type}, the pocket a part goes INTO, so it belongs on the host part that holds this ${n.kind}, not on the ${n.kind}. A ${n.kind} is built from the catalog with no such feature and no repair round. Declare the ${p.type} on the host, and give this payload port type FLAT_FACE posed where the ${n.kind} meets the pocket (its contract requires entry may keep type ${p.type}, so the edge types still match).`,
+        );
+      }
+      if (n.kind === "magnet") {
+        // magnetic-lid posed the seat at [0, 0, 1.5]: half the magnet stood
+        // proud of its pocket. The registry magnet's faces are z = 0 and z = h.
+        for (const p of (n.contract.payload as CadContractPayload | undefined)?.ports ?? []) {
+          const o = p.pose.origin.map((v) => Number(v));
+          const z = p.pose.zAxis.map((v) => Number(v));
+          if (o.every((v) => v === 0) && z[0] === 0 && z[1] === 0 && Math.abs(z[2]!) === 1) continue;
+          problems.push(
+            `${n.id}: port "${p.name}" is posed origin [${o.join(", ")}] zAxis [${z.join(", ")}]. A magnet's face is at the origin with its body running +z, so pose its port at origin [0, 0, 0]: zAxis [0, 0, 1] sinks the body INTO the host's pocket from the pocket's mouth (face flush), zAxis [0, 0, -1] sits it ON a face.`,
+          );
+        }
+      }
+      if (!BEARING_DIAMETER[n.kind]) continue;
       // Hardware may name a sku rather than a thread; skuOf reads either.
       const thread = skuOf(n)?.key;
       // The band comes from grounding.ts rather than being recomputed here: the
@@ -1292,6 +1341,11 @@ function cadPlanning(meshAvailable: boolean) {
       "  to. Add params.depth only for a channel with a floor; omit it for a cut",
       "  that passes through, or the probe will look for a floor that is not there.",
       "  The channel RUNS ALONG the port's xAxis and its width is measured across.",
+      "  The origin sits on the MOUTH, the face the channel opens through, with +z",
+      "  out of it, and params.depth runs from the mouth INTO the material along",
+      "  -z to the floor — never on the floor itself. A keyway 4 wide whose floor",
+      "  is 8mm from a Ø12 bore's axis opens through the bore wall: origin",
+      "  [0, 6, z], zAxis [0, -1, 0] (out into the bore), depth 2.",
       "  The declared width is the NARROWEST gap over the channel's depth, since",
       "  that is what a mating tongue must pass, so keep channels prismatic — a",
       "  chamfered or drafted mouth is fine, a V-groove declared at its mouth is",
@@ -1399,9 +1453,30 @@ function cadPlanning(meshAvailable: boolean) {
       "  strokeMm (prismatic), shaftHint/threadHint (mm / M3..M8), allowPrinted",
       "  (a printed pin pivot), lateral (room for a side nut trap), hubFit press",
       "  (b pressed onto the shaft: a wheel onto its axle; default slip).",
+      "  STATED HARDWARE IS BINDING. When the brief names hardware (type, size,",
+      "  quantity), put it in `prefer` and its size in the hint too: \"two 4mm",
+      "  dowels\" = prefer {family: dowel, key: \"4\"}, shaftHint 4, count 2; \"M5",
+      "  through-bolts with nuts and washers\" = prefer {recipe: R3}, threadHint",
+      "  M5; \"a GT2 belt\" = prefer {family: gt2_pulley}; \"608 bearings\" =",
+      "  prefer {family: bearing, key: \"608\"}; \"a 3mm steel pin\" = prefer",
+      "  {family: shaft, key: \"3\"} (any Ø3 shaft or pin); also hex_nut, heatset_std,",
+      "  bushing, lm_uu, spur_gear, mgn_rail. Only rules that use it are tried;",
+      "  if it cannot fit, the lint names what it needs. Never drop it.",
+      "  limits (revolute): degrees about a.port's +z, right-handed; travel 0 is",
+      "  the pose the mates place (open flat, above). When the brief states a",
+      "  travel (\"opens 0 to 110°\", \"swings at least 120°\"), write limits that",
+      "  cover it in that frame: a lid modelled open flat behind its box is",
+      "  closed at 180, so \"opens 0 to 110°\" is [70, 180] (or [-180, -70] when",
+      "  -z turns it over the box; the travel lint names the clear side).",
       "  One part placed several times (four identical wheels) is one node whose",
       "  joints all name the SAME b.port; joints on opposite faces of a on one",
-      "  axis line share one axle.",
+      "  axis line share one axle. Never two joints on one a.port + b.port pair:",
+      "  it mints a second set of hardware on the same axes. A pattern of",
+      "  screws or dowels is one joint with count and pitch; two guide rods are",
+      "  two joints, each on its own a.port and b.port at its rod's axis.",
+      "  A rod held at both ends (two end blocks) is a on the near block and",
+      "  far: {node, port} on the far one: its own node, a FLAT_FACE facing back",
+      "  along the rod. Nothing places one node at both ends of a rod.",
       "  A driven revolute joint with ratio (motor turns per output turn) or",
       "  centerMm (motor axis to driven axis) gets a NEMA 17 beside the axis and a",
       "  GT2 belt, or a spur pair at high torque / low speed / a short centre;",
@@ -1608,6 +1683,11 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     return code ? { code } : null;
   }
 
+  /** Catalog hardware: no model ever writes it, not even as a G5 repair. */
+  deterministicOnly(node: NodeRecord): boolean {
+    return REGISTRY_HARDWARE.has(node.kind);
+  }
+
   /** Mesh nodes need their surface on disk before `meshNodeCode` builds:
    *  generated once (billed), re-fitted into the envelope when it moves. */
   prepareArtifact(node: NodeRecord, ws: Workspace, graph: GraphDoc, signal?: AbortSignal, log?: (line: string) => void) {
@@ -1710,7 +1790,7 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     const contract = {
       // A joint's hardware ports are mate frames the expansion derived, not
       // features of the part: the registry builds it exactly (expand.ts).
-      ports: isJointHardware(graph, node.id) ? [] : kernelPorts(graph, payload),
+      ports: isJointHardware(graph, node.id) ? [] : kernelPorts(graph, payload).filter((p) => probedPort(node.kind, p.type)),
       // Fastener geometry comes from the registry and is exact by construction,
       // so G4 would only be grading the architect's envelope guess — skip it.
       envelope: REGISTRY_HARDWARE.has(node.kind) ? [] : kernelEnvelope(graph, payload),
@@ -1898,15 +1978,13 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       }
       return { id: n.id, ports };
     });
-    const mates: AssemblyMate[] = graph.edges.map((e) => {
-      return { fromNode: e.from, fromPort: e.fromPort, toNode: e.to, toPort: e.toPort };
-    });
-    const { world, instances, problems, mateOrigins } = solveAssembly(nodes, mates, graph.assembly.entryNodeId);
+    const { world, instances, problems, mateOrigins } = solveAssembly(nodes, graphMates(graph), graph.assembly.entryNodeId);
     // Motion joints are kinematic, not rigid: the poses above are each joint
     // at 0, and this says which axis it turns or slides along, how far, and
     // which parts go with it (G5 sweeps them).
     // A gear pair meshed without a drive joint turns too (gearMeshes).
-    const joints = [...kinematicJoints(jointAxes(graph), world, instances), ...gearMeshJoints(graph, world)];
+    const kinematic = kinematicJoints(jointAxes(graph), world, instances);
+    const joints = [...kinematic, ...gearMeshJoints(graph, world, kinematic)];
     const scene = {
       nodes: Object.fromEntries(
         Object.values(graph.nodes).map((n) => [

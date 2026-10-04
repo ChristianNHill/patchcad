@@ -43,18 +43,12 @@ def _registry_namespace() -> dict[str, object]:
     G0's allowlist stays {build123d, math} on purpose: these are standards-exact
     part classes the SERVER codegens, and a generator reaching for them would be
     inventing calls it has no cheat sheet for — the exact failure the registry
-    exists to avoid. Injection lets registry code use them while an `import
-    bd_warehouse` in generated code is still rejected at G0.
-
-    bd_warehouse costs ~0.03s to import on top of build123d, and sys.modules
-    caches it after the first job.
+    exists to avoid. Injection lets registry code use them while generated code
+    cannot import them.
     """
-    try:
-        from bd_warehouse.gear import SpurGear
-        from bd_warehouse.thread import IsoThread
-    except Exception:  # noqa: BLE001 — absent dependency must not break plain parts
-        return {}
-    return {"SpurGear": SpurGear, "IsoThread": IsoThread}
+    from .gear import involute_gear
+
+    return {"involute_gear": involute_gear}
 
 
 def _namespace(job: dict) -> dict[str, object]:

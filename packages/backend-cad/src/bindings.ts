@@ -61,18 +61,18 @@ const HW_FIELDS: Record<string, { families: string[]; value: (r: DimsRow) => num
   cboreDepth: { families: ["shcs", "button"], value: (r) => dim(r, "headH") + 0.4 },
   cskD: { families: ["csk"], value: (r) => dim(r, "headD") },
   washerOd: { families: ["washer"], value: (r) => dim(r, "od") },
-  dowelHole: { families: ["dowel"], value: (r) => dim(r, "d") },
+  dowelHole: { families: ["dowel", "wood_dowel"], value: (r) => dim(r, "d") },
   bearingSeatD: { families: ["bearing", "bearing_flanged", "lm_uu", "bushing"], value: (r) => dim(r, "od") },
   bearingWidth: { families: ["bearing", "bearing_flanged"], value: (r) => dim(r, "width") },
   // The shaft a part takes: a rod's own Ø, or the bore of whatever rides on it.
   shaftD: {
-    families: ["shaft", "d_shaft", "bearing", "bearing_flanged", "bushing", "lm_uu", "collar", "gt2_pulley", "nema17", "brushless", "n20"],
+    families: ["shaft", "d_shaft", "bearing", "bearing_flanged", "bushing", "lm_uu", "collar", "gt2_pulley", "nema17", "nema14", "brushless", "n20"],
     value: (r) => dim(r, "d" in r ? "d" : "bore" in r ? "bore" : "shaftD"),
   },
-  motorPilot: { families: ["nema17"], value: (r) => dim(r, "pilotD") },
+  motorPilot: { families: ["nema17", "nema14"], value: (r) => dim(r, "pilotD") },
   // A square NEMA pattern's PCD is its diagonal.
   motorPcd: {
-    families: ["nema17", "brushless", "n20"],
+    families: ["nema17", "nema14", "brushless", "n20"],
     value: (r) => ("pcd" in r ? dim(r, "pcd") : dim(r, "holePitch") * Math.SQRT2),
   },
   magnetPocketD: { families: ["disc_magnet"], value: (r) => dim(r, "d") },

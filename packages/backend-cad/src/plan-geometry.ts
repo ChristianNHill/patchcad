@@ -24,7 +24,7 @@ import { HARDWARE_PORT_TYPES, type CadContractPayload } from "./index.js";
 import { IDENTITY, kinematicJoints, mul, poseToMat, solveAssembly, type JointAxisDef, type Mat4 } from "./assembly.js";
 import { resolveDim, resolvePose } from "./bindings.js";
 import { FASTENING_HARDWARE, REGISTRY_HARDWARE } from "./registry.js";
-import { isJointHardware, jointAxes } from "./expand.js";
+import { graphMates, isJointHardware, jointAxes, jointDecisions } from "./expand.js";
 
 /** Envelopes carry slack around the part; touching neighbours may overlap by it. */
 export const PLAN_OVERLAP_TOL_MM = 1.0;
@@ -71,7 +71,14 @@ export function posedEnvelope(graph: GraphDoc, nodeId: string, world: Mat4): Obb
 }
 
 function obb(graph: GraphDoc, world: Mat4, prim: Prim): Obb {
-  const m = mul(world, poseToMat(resolvePose(graph, prim.pose)));
+  const pose = resolvePose(graph, prim.pose);
+  // A cylinder's x is arbitrary, and one written along its own axis (a hinge
+  // knuckle, x = z = [1,0,0]) threw, which dropped the node's whole envelope
+  // and left the travel sweep blind to the box the lid closed into.
+  if (prim.kind === "cylinder" && Math.hypot(...cross(pose.zAxis, pose.xAxis)) < 1e-9 * Math.hypot(...pose.zAxis) * Math.hypot(...pose.xAxis)) {
+    pose.xAxis = Math.abs(pose.zAxis[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+  }
+  const m = mul(world, poseToMat(pose));
   const col = (i: number): Vec3 => [m[i * 4]!, m[i * 4 + 1]!, m[i * 4 + 2]!];
   const half: Vec3 =
     prim.kind === "box"
@@ -185,7 +192,12 @@ export function reachableTravel(graph: GraphDoc, def: JointAxisDef): [number, nu
   const still = prims(Object.keys(graph.nodes).filter((id) => !moving.has(id)));
   if (turning.length === 0 || still.length === 0) return [-180, 180];
   const offAxis = (c: Vec3) => sub(c, o).map((v, i) => v - dot(sub(c, o), d) * d[i]!) as Vec3;
-  const coaxial = [...turning, ...still].filter((c) => c.round && Math.abs(Math.abs(dot(c.axes[2], d)) - 1) < 1e-3 && Math.hypot(...offAxis(c.c)) < PLAN_OVERLAP_TOL_MM);
+  const onAxis = (c: Obb) => c.round && Math.abs(Math.abs(dot(c.axes[2], d)) - 1) < 1e-3 && Math.hypot(...offAxis(c.c)) < PLAN_OVERLAP_TOL_MM;
+  // A round part spinning about its own axis sweeps exactly its own shape (a
+  // V-wheel on its rail, a spool roller): every pose is the rest pose, whose
+  // contact the overlap lints judge with their tolerance.
+  if (turning.every(onAxis)) return [-180, 180];
+  const coaxial = [...turning, ...still].filter(onAxis);
   const r = Math.max(0, ...coaxial.map((c) => c.half[0]));
   const outside = (p: Vec3) => Math.hypot(...offAxis(p)) > r;
   const turn = (v: Vec3, deg: number): Vec3 => {
@@ -214,6 +226,17 @@ export function reachableTravel(graph: GraphDoc, def: JointAxisDef): [number, nu
   return [reach(-1), reach(1)];
 }
 
+/** The travel a brief states, degrees: "opens from 0 to 110 degrees" or
+ *  "swinging at least 120°". Undefined when it states none, or several
+ *  different ones (which joint each means is not ours to guess). */
+export function statedTravel(goal: string): number | undefined {
+  const deg = String.raw`\s*(?:°|deg(?:rees?)?\b)`;
+  const spans = new Set<number>();
+  for (const m of goal.matchAll(new RegExp(String.raw`(-?\d+(?:\.\d+)?)(?:${deg})?\s*(?:to|-|–|\.\.)\s*(-?\d+(?:\.\d+)?)${deg}`, "gi"))) spans.add(Number(m[2]) - Number(m[1]));
+  for (const m of goal.matchAll(new RegExp(String.raw`at least\s+(\d+(?:\.\d+)?)${deg}`, "gi"))) spans.add(Number(m[1]));
+  return spans.size === 1 ? [...spans][0] : undefined;
+}
+
 /** Solve the plan the same way the cook will (CadBackend.solveScene). */
 export function solvePlan(graph: GraphDoc) {
   const nodes = Object.values(graph.nodes).map((n) => {
@@ -227,8 +250,7 @@ export function solvePlan(graph: GraphDoc) {
     }
     return { id: n.id, ports };
   });
-  const mates = graph.edges.map((e) => ({ fromNode: e.from, fromPort: e.fromPort, toNode: e.to, toPort: e.toPort }));
-  return solveAssembly(nodes, mates, graph.assembly.entryNodeId);
+  return solveAssembly(nodes, graphMates(graph), graph.assembly.entryNodeId);
 }
 
 /** One envelope primitive, posed in the world: a unit box or unit cylinder
@@ -326,6 +348,103 @@ function matedOverlap(
   return `${a.key} and ${b.key} are mated, but once placed about ${shared.toFixed(0)}mm³ of their envelopes (${Math.round((100 * shared) / smaller)}% of the smaller) coincide away from the mate's axis: the mate lays one part on top of the other. For a revolute joint (a hinge), the two parts face away from each other at travel 0: flip the mated port's xAxis (or zAxis) on one of them so they sit on opposite sides of the axis. Otherwise fix that port's pose or the envelope.`;
 }
 
+/** Recipes that put b on a shaft or pin past a.port, never inside a. */
+const OFF_A_RECIPES = new Set(["bearings", "bushings", "pin", "hub_bearings"]);
+
+/**
+ * A revolute joint's two parts claiming one stretch of its axis. The
+ * near-axis zone is exempt from the mated-overlap check (envelopes all claim
+ * it), but b rides its shaft past a.port, a collar's width out, so b's
+ * envelope deep inside a's ON the axis is b running into a's far wall: the
+ * winch drum "filling the gap" between the plates, 8mm out past the collar.
+ */
+function axisClaims(graph: GraphDoc, instances: Record<string, Mat4[]>): string[] {
+  const problems: string[] = [];
+  const recipes = new Map(jointDecisions(graph).flatMap(({ joint, decision }) => ("error" in decision ? [] : [[joint.id, decision.recipe] as const])));
+  for (const def of jointAxes(graph)) {
+    const j = graph.joints?.find((x) => x.id === def.id);
+    if (def.type !== "revolute" || !j || !OFF_A_RECIPES.has(recipes.get(j.id) ?? "")) continue;
+    const [axis] = kinematicJoints([def], instances[def.node]?.[0] ? { [def.node]: instances[def.node]![0]! } : {}, {});
+    const [A, B] = [j.a.node, j.b.node].map((id) => posedEnvelope(graph, id, instances[id]?.[0] ?? IDENTITY));
+    if (!axis || !A?.length || !B?.length) continue;
+    const o = axis.origin as Vec3;
+    const d = axis.direction as Vec3;
+    // Only b's round parts on the axis (a hub, a drum, a knuckle): a box lid
+    // whose envelope runs along the hinge line claims the axis by its corner,
+    // and so does the box (real-magnet-hinged-box: "150mm" of the hinge).
+    const hubs = B.filter((b) => b.round && Math.abs(Math.abs(dot(b.axes[2], d)) - 1) < 1e-3 && Math.hypot(...cross(sub(b.c, o), d)) < PLAN_OVERLAP_TOL_MM);
+    if (!hubs.length) continue;
+    const ts = hubs.flatMap((b) => corners(b).map((p) => dot(sub(p, o), d)));
+    const deep = (prims: Obb[], p: Vec3) => prims.some((x) => contains(x, p, -PLAN_OVERLAP_TOL_MM));
+    let run = 0;
+    let worst = { run: 0, at: o };
+    for (let t = Math.min(...ts); t <= Math.max(...ts); t += 0.25) {
+      const p = [0, 1, 2].map((i) => o[i]! + t * d[i]!) as Vec3;
+      run = deep(A, p) && deep(hubs, p) ? run + 0.25 : 0;
+      if (run > worst.run) worst = { run, at: p };
+    }
+    if (worst.run > PLAN_OVERLAP_TOL_MM) {
+      problems.push(
+        `${j.b.node} and ${j.a.node} both claim ${(worst.run + 2 * PLAN_OVERLAP_TOL_MM).toFixed(1)}mm of joint ${j.id}'s axis, ending near [${worst.at.map((v) => v.toFixed(1)).join(", ")}]: ${j.b.node} rides the joint's ${recipes.get(j.id) === "pin" ? "pin" : "shaft"} past ${j.a.node}.${j.a.port} (its retaining collar or clip sits between them), so it runs into ${j.a.node} further along the axis. Shorten ${j.b.node} along the axis by that much, or give ${j.a.node} room there.`,
+      );
+    }
+  }
+  return problems;
+}
+
+const CHANNEL_PORTS = new Set(["SLOT", "GROOVE"]);
+const BORE_PORTS = new Set(["CLEARANCE_HOLE", "BORE", "SCREW_SEAT"]);
+
+/** A SLOT/GROOVE posed on its floor: material just in front of the origin,
+ *  open space params.depth further along +z, either outside the envelope or
+ *  inside one of the node's own bores (a keyway opens into its bore). The
+ *  keyway of t3-004 was posed on its floor 8mm from the axis, z-out toward
+ *  the bore, and the generator cut on past it to meet the probe. Null when
+ *  the port declares no depth or the origin is a mouth. */
+function slotMouth(
+  graph: GraphDoc,
+  payload: CadContractPayload,
+  port: CadContractPayload["ports"][number],
+  o: Vec3,
+  z: Vec3,
+  inside: (p: Vec3) => boolean,
+): { depth: number; open: string } | null {
+  let depth: number;
+  try {
+    depth = resolveDim(graph, (port.params as Record<string, unknown>).depth as string | number);
+  } catch {
+    return null;
+  }
+  if (!(depth > 0)) return null;
+  const bores: { name: string; o: Vec3; z: Vec3; r: number }[] = [];
+  for (const b of payload.ports) {
+    if (!BORE_PORTS.has(b.type)) continue;
+    try {
+      const pose = resolvePose(graph, b.pose);
+      const len = Math.hypot(...pose.zAxis);
+      bores.push({ name: b.name, o: pose.origin, z: pose.zAxis.map((c) => c / len) as Vec3, r: resolveDim(graph, (b.params as Record<string, unknown>).diameter as string | number) / 2 });
+    } catch {
+      // unresolvable or undeclared diameter: other lints say so
+    }
+  }
+  // Open: outside the envelope, or in a bore (behind its mouth, which faces +z).
+  const open = (p: Vec3): string | null => {
+    if (!inside(p)) return "outside the envelope";
+    for (const b of bores) {
+      const d = sub(p, b.o);
+      const w = dot(d, b.z);
+      const radial = Math.hypot(d[0] - w * b.z[0], d[1] - w * b.z[1], d[2] - w * b.z[2]);
+      if (w <= PORT_STEP_MM && radial < b.r) return `inside bore "${b.name}"`;
+    }
+    return null;
+  };
+  const len = Math.hypot(...z);
+  const at = (s: number): Vec3 => [0, 1, 2].map((i) => o[i]! + (s * z[i]!) / len) as Vec3;
+  if (open(at(PORT_STEP_MM)) !== null) return null;
+  const far = open(at(depth + PORT_STEP_MM));
+  return far === null ? null : { depth, open: far };
+}
+
 export const cadPlanGeometryLint = {
   run(graph: GraphDoc): string[] {
     const problems: string[] = [];
@@ -357,6 +476,12 @@ export const cadPlanGeometryLint = {
         if (inside(step(1)) && !inside(step(-1))) {
           problems.push(
             `${n.id}: port "${port.name}" (${port.type}) points INTO its own envelope — ${PORT_STEP_MM}mm along its +z [${z.join(", ")}] is inside the envelope and ${PORT_STEP_MM}mm behind it is outside. +z must point OUT of the mating face, away from the material: flip the zAxis, or the part mates on the wrong side of its partner.`,
+          );
+        }
+        const floor = CHANNEL_PORTS.has(port.type) ? slotMouth(graph, payload!, port, o, z, inside) : null;
+        if (floor) {
+          problems.push(
+            `${n.id}: ${port.type} port "${port.name}" sits on its channel's FLOOR, not its mouth — just in front of the origin along +z [${z.join(", ")}] is material, and ${floor.depth}mm further is open (${floor.open}). A ${port.type} origin is on the face the channel opens through, +z out of it, with params.depth running from there INTO the material along -z: move the origin ${floor.depth}mm along +z, onto the mouth. A keyway's mouth is the bore wall.`,
           );
         }
       }
@@ -409,6 +534,7 @@ export const cadPlanGeometryLint = {
         }
       }
     }
+    problems.push(...axisClaims(graph, instances));
     // Revolute travel the parts' envelopes cannot make: a rotor that cannot
     // spin a full turn, or stated limits past the stops.
     for (const def of jointAxes(graph)) {
@@ -416,10 +542,17 @@ export const cadPlanGeometryLint = {
       if (def.type !== "revolute" || !j) continue;
       const [lo, hi] = reachableTravel(graph, def);
       const full = lo <= -180 && hi >= 180;
+      const span = statedTravel(graph.brief?.goal ?? "");
+      const [jl, jh] = j.limits ?? [lo, hi];
+      if (span !== undefined && j.duty !== "continuous" && jh - jl < span - 1e-9) {
+        problems.push(`joint ${def.id}: the brief states ${span}° of travel, but its limits [${jl}, ${jh}]° cover ${jh - jl}°${j.limits && j.limitsSource !== "derived" ? "" : " (derived from where the envelopes meet)"}. Write limits that cover it, in degrees about ${def.node}'s joint port +z from the pose the mates place, and give ${def.moving[0]} room to make them.`);
+      }
       if (j.duty === "continuous" && !full) {
         problems.push(`joint ${def.id} is continuous, so ${def.moving.join(", ")} must turn a full circle, but its envelope meets a part that holds still past ${lo}°..${hi}° of travel. Give it room to spin (move or shrink what it sweeps into), or make the joint occasional with limits.`);
       } else if (j.limits && j.limitsSource !== "derived" && (j.limits[0] < lo || j.limits[1] > hi)) {
-        problems.push(`joint ${def.id} states limits [${j.limits.join(", ")}]°, but the parts' envelopes only reach [${lo}, ${hi}]° before they meet. State limits within that range, or leave limits out and expansion derives them.`);
+        const mirror = [-j.limits[1], -j.limits[0]];
+        const flip = mirror[0]! >= lo && mirror[1]! <= hi ? ` [${mirror.join(", ")}] is clear: travel is right-handed about the port's +z, so the sign may be flipped.` : "";
+        problems.push(`joint ${def.id} states limits [${j.limits.join(", ")}]°, but the parts' envelopes only reach [${lo}, ${hi}]° before they meet.${flip} State limits within that range, or leave limits out and expansion derives them.`);
       }
     }
     return problems;

@@ -60,7 +60,7 @@ export interface AssemblyStep {
    *  screws of a part placed in the same step) goes in after stage 0.
    *  `clearMm`: how far it rides a shaft already in place before it is free
    *  to move sideways. */
-  moving: { key: string; direction: Vec3; stage?: number; clearMm?: number }[];
+  moving: { key: string; direction: Vec3; stage?: number; clearMm?: number; held?: boolean }[];
 }
 
 export interface Subassembly {
@@ -82,6 +82,9 @@ export interface SequenceOptions {
   before?: [string, string][];
   /** Sub-assembly roots to build in place instead (their attach was blocked). */
   dissolve?: string[];
+  /** Parts that ride a shaft but cannot come in along it (a drum between two
+   *  frame walls): held in place first, and the shaft goes through them. */
+  held?: string[];
 }
 
 interface SceneLike {
@@ -269,8 +272,11 @@ function plan(graph: GraphDoc, scene: SceneLike, opts: SequenceOptions) {
   // Mates only: a joint's two parts may meet through a shaft, never directly.
   for (const l of links) join(l.self.node, l.other.node);
 
-  // The base: the made part the most others hang off, then the biggest.
-  const candidates = items.filter((n) => !isBuy(n));
+  // The base: a made part that holds still (nothing moving on a joint), the
+  // one the most others hang off, then the biggest.
+  const turning = new Set((scene.joints ?? []).flatMap((j) => [...j.moving, ...(j.coupled ?? []).flatMap((c) => c.moving)]).map((k) => k.split("#")[0]!));
+  const made = items.filter((n) => !isBuy(n));
+  const candidates = made.filter((n) => !turning.has(n.id)).length ? made.filter((n) => !turning.has(n.id)) : made;
   const score = (n: NodeRecord) => [nbrs.get(n.id)!.size, volumeOf(graph, n), n.id === graph.assembly.entryNodeId ? 1 : 0];
   const base = (candidates.length ? candidates : items).reduce<NodeRecord | undefined>((best, n) => {
     if (!best) return n;
@@ -326,6 +332,14 @@ function plan(graph: GraphDoc, scene: SceneLike, opts: SequenceOptions) {
         const far = [j.a.node, j.b.node].find((end) => !partners(m.id).includes(end));
         if (far) addDep(far, m.id);
       }
+    }
+  }
+  for (const x of opts.held ?? []) {
+    const shafts = [...(deps.get(x) ?? [])].filter((id) => byId[id]!.kind === "shaft");
+    for (const sh of shafts) {
+      deps.get(x)!.delete(sh);
+      for (const dep of deps.get(sh)!) addDep(x, dep);
+      addDep(sh, x);
     }
   }
   for (const [x, y] of opts.before ?? []) deps.get(y)?.add(x);
@@ -497,7 +511,7 @@ function plan(graph: GraphDoc, scene: SceneLike, opts: SequenceOptions) {
     const ns = ids.map((id) => byId[id]!);
     const mv = movingKeys(ids, within);
     const mated = [...new Set(mv.map((m) => m.host).filter((h): h is string => !!h && within.has(h)))];
-    const action = actionFor(ns[0]!, mated[0]);
+    const action = opts.held?.includes(ns[0]!.id) ? "place" : actionFor(ns[0]!, mated[0]);
     // Say what it goes on, not what its mate frame happens to touch: a collar
     // slides onto the shaft, a shaft goes through every bearing, a belt loops
     // over its pulleys.
@@ -512,15 +526,22 @@ function plan(graph: GraphDoc, scene: SceneLike, opts: SequenceOptions) {
     const fastenHw = hw.filter((h) => !own.includes(h));
     const things = [...madeIds.map((id) => counted(count(id), byId[id]!.title, "the")), ...own.map((h) => counted(h.qty, h.description, "the"))];
     const [verb, prep] = ns[0]!.kind === "belt" ? ["Loop", "over"] : VERB[fastenHw.length && action === "place" ? "attach" : action];
+    const held = ids.filter((id) => opts.held?.includes(id));
+    const through = held.flatMap((id) => [...deps.entries()].filter(([sh, ds]) => byId[sh]!.kind === "shaft" && ds.has(id)).map(([sh]) => sh));
     push({
-      title: `${verb} ${things.join(" and ")}${hosts.length ? ` ${prep} ${hostPhrase(hosts)}` : ""}${withPhrase(fastenHw)}`,
+      title: held.length
+        ? `Hold ${things.join(" and ")} in place: ${hostPhrase(through)} goes through ${held.length + own.length > 1 || count(held[0]!) > 1 ? "them" : "it"} next`
+        : `${verb} ${things.join(" and ")}${hosts.length ? ` ${prep} ${hostPhrase(hosts)}` : ""}${withPhrase(fastenHw)}`,
       action: fastenHw.length && action === "place" ? "screw" : action,
       parts: madeIds.map((id) => ({ nodeId: id, qty: count(id) })),
       hardware: hw,
       ...(sub ? { subassembly: sub.title } : {}),
-      notes: notesFor(ns, fs),
+      notes: held.length ? ["Line its bore up with the bearings and keep it there while the shaft goes in.", ...notesFor(ns, fs)] : notesFor(ns, fs),
       context: visible(),
-      moving: [...mv.map(({ key, direction }) => ({ key, direction })), ...fasten.map(({ key, direction }) => ({ key, direction, stage: 1 }))],
+      moving: [
+        ...mv.map(({ key, direction }) => ({ key, direction, ...(held.includes(key.split("#")[0]!) ? { held: true } : {}) })),
+        ...fasten.map(({ key, direction }) => ({ key, direction, stage: 1 })),
+      ],
     });
   };
 
@@ -695,6 +716,7 @@ export function insertionQueries(seq: AssemblySequence): InsertionQuery[] {
   return seq.steps.flatMap((s) => {
     const groups = new Map<string, InsertionQuery>();
     for (const m of s.moving) {
+      if (m.held) continue;
       const k = m.direction.join(",");
       const g = groups.get(k) ?? { id: `${s.n}:${groups.size}`, moving: [], still: s.context, direction: m.direction };
       g.moving.push(m.key);
@@ -713,7 +735,7 @@ export type InsertionCheck = (queries: InsertionQuery[]) => Promise<{ id: string
  * built in place instead. What no order fixes is reported, never hidden.
  */
 export async function feasibleSequence(graph: GraphDoc, scene: SceneLike, check: InsertionCheck): Promise<AssemblySequence> {
-  const opts: Required<SequenceOptions> = { before: [], dissolve: [] };
+  const opts: Required<SequenceOptions> = { before: [], dissolve: [], held: [] };
   const nodeOf = (key: string) => key.split("#")[0]!;
   for (let round = 0; ; round++) {
     const { seq, deps } = plan(graph, scene, opts);
@@ -747,7 +769,10 @@ export async function feasibleSequence(graph: GraphDoc, scene: SceneLike, check:
       }
       const pair = b.blocked.map((x) => [nodeOf(x.part), nodeOf(x.by)] as [string, string])
         .find(([x, y]) => deps.has(x) && deps.has(y) && y !== seq.base && !dependsOn(x, y) && !opts.before.some(([a, c]) => a === x && c === y));
-      return pair ? () => opts.before.push(pair) : null;
+      if (pair) return () => opts.before.push(pair);
+      // Riding a shaft it cannot slide along: hold it first, shaft through it.
+      const rider = b.blocked.map((x) => nodeOf(x.part)).find((x) => !opts.held.includes(x) && [...(deps.get(x) ?? [])].some((id) => graph.nodes[id]?.kind === "shaft"));
+      return rider ? () => opts.held.push(rider) : null;
     }).find((f) => f);
     if (fix) {
       fix();

@@ -75,6 +75,9 @@ export interface PortMeasurement {
   ring_hits?: number;
   /** SCREW_BOSS with a declared pilot. */
   measured_pilot?: number;
+  /** CLEARANCE_HOLE / HOLE_PATTERN member: not round (a Box teardrop), but
+   *  short of the screw head's bearing face, so advisory. */
+  finding?: string;
   /** Hole-like: does the hole pass through, or bottom out? */
   through?: boolean;
   /** GROOVE / SLOT: the gap actually cut, measured across the channel. This is

@@ -151,6 +151,9 @@ export interface CheckFinding {
    *  `report` as the failure, up to its attempt budget, before the block
    *  stands as contract-infeasible. */
   repair?: { nodeId: string; report: string };
+  /** The nodes applyCheck blocks, when not both: a part that cannot be at
+   *  fault (CAD: catalog hardware, exact by construction) stays ready. */
+  blame?: string[];
 }
 
 export interface CheckResult {
@@ -315,6 +318,11 @@ export interface DomainBackend<P = unknown> {
    * parts): return code and the cook commits it — verified, zero LLM calls —
    * with cause "registry". Return null to fall through to library/generator. */
   deterministicArtifact?(node: NodeRecord): { code: string; testCode?: string } | null;
+
+  /** Nodes that must NEVER reach a model (CAD: catalog hardware). No assembly
+   *  repair is asked of them, and one with no deterministic artifact lands in
+   *  error_code (stage "registry") with zero calls instead of the generator. */
+  deterministicOnly?(node: NodeRecord): boolean;
 
   /**
    * Work a node needs done before its deterministic artifact can build, such

@@ -10,6 +10,7 @@ import {
   cadFaceHoleConflictLint,
   cadPortConsistencyLint,
   cadHardwareSeatLint,
+  hostFeatureOnHardware,
   cadMateConnectivityLint,
   threadEngagementVolume,
   OUTER_DIAMETER_KEYS,
@@ -558,6 +559,16 @@ describe("cadMateConnectivityLint", () => {
   it("says nothing about a single-part graph", () => {
     expect(cadMateConnectivityLint.run(g(["only"], []))).toEqual([]);
   });
+
+  // real-extruder-cw2: the pinion and main gear were dropped after this lint.
+  it("tells a loose gear to sit on its shaft, not on the gear it meshes with", () => {
+    const doc = g(["body", "pinion"], []);
+    (doc.nodes as Record<string, { kind: string }>).pinion!.kind = "gear";
+    const [problem] = cadMateConnectivityLint.run(doc);
+    expect(problem).toMatch(/pinion: no chain of edges/);
+    expect(problem).toMatch(/never by the gear it meshes with: give pinion a HUB_BORE port/);
+    expect(problem).toMatch(/Keep it in the plan/);
+  });
 });
 
 describe("cadHardwareSeatLint", () => {
@@ -607,6 +618,29 @@ describe("cadHardwareSeatLint", () => {
 
   it("rejects a seat moved off the origin, where the bearing face is not", () => {
     expect(cadHardwareSeatLint.run(graph([posedHw("fastener", [0, 0, -1], [0, 0, 4])], []))).toHaveLength(1);
+  });
+
+  // magnetic-lid: MAGNET_POCKET on the magnet, G3 "no hole found", 0 calls, no BOM.
+  it("rejects a host feature declared on the hardware it hosts", () => {
+    const hosted = (kind: string, type: string) => {
+      const n = posedHw(kind, [0, 0, -1]);
+      (n.contract.payload as { ports: { type: string }[] }).ports[0]!.type = type;
+      return n;
+    };
+    for (const [kind, type] of [["magnet", "MAGNET_POCKET"], ["insert", "INSERT_POCKET"], ["nut", "NUT_TRAP"], ["bearing", "BEARING_SEAT"], ["dowel", "DOWEL_HOLE"]]) {
+      const out = cadHardwareSeatLint.run(graph([hosted(kind!, type!)], []));
+      expect(out.some((m) => m.includes(`${type}`) && m.includes("belongs on the host")), `${kind}/${type}`).toBe(true);
+    }
+    // A gear or pulley owns its HUB_BORE: the registry cuts it at the fit band.
+    expect(cadHardwareSeatLint.run(graph([hosted("gear", "HUB_BORE")], []))).toEqual([]);
+    expect(hostFeatureOnHardware("magnet", "MAGNET_POCKET")).toBe(true);
+    expect(hostFeatureOnHardware("part", "MAGNET_POCKET")).toBe(false);
+  });
+
+  it("holds a magnet's port to its face at the origin", () => {
+    // magnetic-lid: [0, 0, 1.5] left half the magnet standing out of its pocket.
+    expect(cadHardwareSeatLint.run(graph([posedHw("magnet", [0, 0, 1], [0, 0, 1.5])], []))[0]).toContain("origin [0, 0, 0]");
+    for (const z of [[0, 0, 1], [0, 0, -1]]) expect(cadHardwareSeatLint.run(graph([posedHw("magnet", z)], []))).toEqual([]);
   });
 
   it("rejects a sideways seat", () => {

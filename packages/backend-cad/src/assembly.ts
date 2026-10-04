@@ -91,6 +91,15 @@ export interface AssemblyMate {
   fromPort: string;
   toNode: string;
   toPort: string;
+  /** The revolute joint this mate puts its part on. A second such mate on a
+   *  part already placed (a lid on two hinges, a cradle on two bearings)
+   *  constrains only the axis: the lines must agree, and where each joint
+   *  sits along it, and the turn about it, stay free. */
+  axis?: string;
+  /** The turn about this mate's axis is free: it is chosen so another mate
+   *  onto the same part, whose other end is already placed, lines up (a far
+   *  end block on two rods). */
+  clockFree?: boolean;
 }
 
 /** How far two mates may disagree about where a part goes before it is a
@@ -98,6 +107,51 @@ export interface AssemblyMate {
  *  transforms, tight enough that a feature visibly missing its partner is
  *  reported. */
 const MATE_CONSISTENCY_TOL_MM = 0.05;
+
+/** sin of the angle under which two axes count as parallel. */
+const AXIS_PARALLEL_TOL = 1e-4;
+
+/** How far `p`'s z line is from `q`'s: the larger of q's origin off p's line
+ *  and the angle between them as an offset 100mm along. 0 when collinear. */
+function axisOffset(p: Mat4, q: Mat4): number {
+  const z = [p[8]!, p[9]!, p[10]!];
+  const d = [q[12]! - p[12]!, q[13]! - p[13]!, q[14]! - p[14]!];
+  const along = d[0]! * z[0]! + d[1]! * z[1]! + d[2]! * z[2]!;
+  const radial = Math.hypot(...d.map((v, i) => v - along * z[i]!));
+  const sin = Math.hypot(...cross([p[8]!, p[9]!, p[10]!], [q[8]!, q[9]!, q[10]!]));
+  return Math.max(radial, sin > AXIS_PARALLEL_TOL ? 100 * sin : 0);
+}
+
+/**
+ * Turn `placed` (a node just placed by a clock-free mate whose world frame is
+ * `axis`) about that mate's axis so the first other mate onto the node whose
+ * far end is already placed meets it. Unchanged when there is none.
+ */
+function clockTo(placed: Mat4, axis: Mat4, id: string, mates: AssemblyMate[], by: AssemblyMate, byId: Map<string, AssemblyNode>, world: Record<string, Mat4>): Mat4 {
+  for (const m of mates) {
+    if (m === by || (m.toNode !== id && m.fromNode !== id)) continue;
+    const [own, ownPort, other, otherPort] = m.toNode === id ? [m.toNode, m.toPort, m.fromNode, m.fromPort] : [m.fromNode, m.fromPort, m.toNode, m.toPort];
+    const p = byId.get(own)?.ports[ownPort];
+    const q = byId.get(other)?.ports[otherPort];
+    if (!p || !q || !(other in world)) continue;
+    const z = [axis[8]!, axis[9]!, axis[10]!];
+    const o = [axis[12]!, axis[13]!, axis[14]!];
+    const radial = (pt: number[]) => {
+      const d = pt.map((v, i) => v - o[i]!);
+      const along = d[0]! * z[0]! + d[1]! * z[1]! + d[2]! * z[2]!;
+      return d.map((v, i) => v - along * z[i]!);
+    };
+    const [u, w] = [radial(transformPoint(placed, p.origin)), radial(transformPoint(world[other]!, q.origin))];
+    if (Math.hypot(...u) < 1e-6 || Math.hypot(...w) < 1e-6) return placed;
+    const c = cross(u as [number, number, number], w as [number, number, number]);
+    const theta = Math.atan2(c[0] * z[0]! + c[1] * z[1]! + c[2] * z[2]!, u[0]! * w[0]! + u[1]! * w[1]! + u[2]! * w[2]!);
+    // Rz(theta) in the mate's frame, conjugated into the world.
+    const [cs, sn] = [Math.cos(theta), Math.sin(theta)];
+    const rz: Mat4 = [cs, sn, 0, 0, -sn, cs, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    return mul(mul(mul(axis, rz), invertRigid(axis)), placed);
+  }
+  return placed;
+}
 
 /**
  * BFS from the root: each mate places the consumer relative to its provider.
@@ -127,6 +181,7 @@ export function solveAssembly(
   const instances: Record<string, Mat4[]> = {};
   /** Which of a node's OWN ports the mate that placed it seated on. */
   const placedByPort: Record<string, string> = {};
+  const placedBy: Record<string, AssemblyMate> = {};
   const problems: string[] = [];
   const used = new Set<AssemblyMate>();
   const origins = new Map<AssemblyMate, [number, number, number]>();
@@ -160,8 +215,10 @@ export function solveAssembly(
       // Symmetric: A is always the already-placed side, so direction does not
       // change the transform.
       world[placingId] = mul(world[placedId]!, mateTransform(portA, portB));
+      if (mate.clockFree) world[placingId] = clockTo(world[placingId]!, mul(world[placedId]!, poseToMat(portA)), placingId, mates, mate, byId, world);
       origins.set(mate, transformPoint(world[placedId]!, portA.origin));
       placedByPort[placingId] = placingPortKey;
+      placedBy[placingId] = mate;
       queue.push(placingId);
     }
   }
@@ -197,11 +254,28 @@ export function solveAssembly(
       origins.set(mate, transformPoint(world[mate.toNode]!, portB.origin));
       continue;
     }
+    if (mate.axis) {
+      // Both port frames in the world, as the mate's two ends sit now.
+      const off = axisOffset(mul(world[mate.fromNode]!, poseToMat(portA)), mul(world[mate.toNode]!, poseToMat(portB)));
+      const first = placedBy[mate.toNode]?.axis ?? placedBy[mate.fromNode]?.axis;
+      // No contact query: the part need not reach this joint's hub point.
+      if (off > MATE_CONSISTENCY_TOL_MM) {
+        problems.push(
+          `${mate.axis} axis is ${off.toFixed(2)}mm off ${first ? `${first}'s axis` : `the axis already solved for ${mate.toNode}`} (mate ${mate.fromNode}.${mate.fromPort} → ${mate.toNode}.${mate.toPort}). Coaxial joints on one part must share one line: move ${mate.toNode}.${mate.toPort} or ${mate.fromNode}'s joint port onto it. Where each sits along the axis is free.`,
+        );
+      }
+      continue;
+    }
     const expected = mul(world[mate.fromNode]!, mateTransform(portA, portB));
     const actual = world[mate.toNode]!;
     // Positional disagreement only: it is the number a user can act on, and a
-    // pure rotation mismatch still moves the mated features apart.
-    const off = Math.hypot(expected[12]! - actual[12]!, expected[13]! - actual[13]!, expected[14]! - actual[14]!);
+    // pure rotation mismatch still moves the mated features apart. A
+    // clock-free mate's part was turned to meet another, so there the two
+    // port frames are compared, origin and line, not the part's pose.
+    const [pa, pb] = [mul(world[mate.fromNode]!, poseToMat(portA)), mul(world[mate.toNode]!, poseToMat(portB))];
+    const off = mate.clockFree
+      ? Math.max(axisOffset(pa, pb), Math.hypot(pa[12]! - pb[12]!, pa[13]! - pb[13]!, pa[14]! - pb[14]!))
+      : Math.hypot(expected[12]! - actual[12]!, expected[13]! - actual[13]!, expected[14]! - actual[14]!);
     if (off > MATE_CONSISTENCY_TOL_MM) {
       problems.push(
         `mate ${mate.fromNode}.${mate.fromPort} → ${mate.toNode}.${mate.toPort} disagrees with the placement already solved for ${mate.toNode} by ${off.toFixed(2)}mm. Both parts are positioned by another mate, so this one cannot be satisfied — the two features will not line up.`,
@@ -292,8 +366,13 @@ export function kinematicJoints(
   });
   // A node several joints move (one wheel node on two axles) goes copy by
   // copy to the nearest axis of any of them, so a rear wheel never swings
-  // about the front axle.
-  const claimants = (n: string) => defs.flatMap((d, k) => (d.moving.includes(n) ? built[k]! : []));
+  // about the front axle. A node placed once goes with every joint that moves
+  // it (a carriage on two rods slides with both), and a joint whose axis rides
+  // another's moving side (an elbow on a shoulder) never competes with it:
+  // the shoulder carries the whole forearm, and the elbow swings it too.
+  const nested = (k: number, m: number) => defs[k]!.moving.includes(defs[m]!.node) || defs[m]!.moving.includes(defs[k]!.node);
+  const claimants = (n: string, k: number) =>
+    (instances[n]?.length ?? 1) <= 1 ? built[k]! : defs.flatMap((d, m) => (d.moving.includes(n) && (m === k || !nested(k, m)) ? built[m]! : []));
   return defs.flatMap((d, k) => {
     const joints = built[k]!;
     const assign = (nodes: string[], group: (j: KinematicJoint) => Pick<KinematicJoint, "origin" | "direction" | "moving">, pool: (n: string) => KinematicJoint[]) => {
@@ -308,7 +387,7 @@ export function kinematicJoints(
       }
     };
     if (!joints.length) return [];
-    assign(d.moving, (j) => j, claimants);
+    assign(d.moving, (j) => j, (n) => claimants(n, k));
     d.coupled?.forEach((c, g) => assign(c.moving, (j) => j.coupled![g]!, () => joints));
     return joints;
   });

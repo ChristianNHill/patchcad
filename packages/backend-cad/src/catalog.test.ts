@@ -67,7 +67,8 @@ describe("catalog coverage", () => {
     expect(listFamilies("shafts")).toEqual(expect.arrayContaining(["shaft", "d_shaft", "collar", "eclip"]));
     expect(listFamilies("linear")).toEqual(expect.arrayContaining(["lm_uu", "mgn_rail", "mgn_carriage"]));
     expect(listFamilies("transmission")).toEqual(expect.arrayContaining(["gt2_pulley", "gt2_belt", "spur_gear"]));
-    expect(listFamilies("motors")).toEqual(expect.arrayContaining(["nema17", "brushless", "n20", "sg90"]));
+    expect(listFamilies("motors")).toEqual(expect.arrayContaining(["nema17", "nema14", "brushless", "n20", "sg90", "mg996r", "sts3215"]));
+    expect(listFamilies("fasteners")).toEqual(expect.arrayContaining(["wood_dowel", "confirmat", "cam_lock", "cam_bolt", "dowel_screw", "filament_pin", "wire_nail"]));
     expect(listFamilies("misc")).toEqual(expect.arrayContaining(["disc_magnet", "oring", "standoff"]));
   });
 
@@ -82,6 +83,8 @@ describe("catalog coverage", () => {
       expect(familyDims("bearing", k), k).toBeDefined();
     }
     for (const k of ["F623", "F625", "F608"]) expect(familyDims("bearing_flanged", k), k).toBeDefined();
+    expect(familyDims("bearing", "MR85")).toMatchObject({ bore: 5, od: 8, width: 2.5 });
+    expect(familyDims("bearing", "mr105")).toMatchObject({ bore: 5, od: 10, width: 4 });
   });
 
   it("orders every row sensibly", () => {
@@ -105,7 +108,8 @@ describe("catalog coverage", () => {
   });
 
   it("gives every family that is cut or sold by length a stocked length per size", () => {
-    const byLength = ["shcs", "button", "csk", "dowel", "threaded_rod", "bushing", "shaft", "d_shaft", "mgn_rail", "gt2_belt", "nema17", "standoff"];
+    const byLength = ["shcs", "button", "csk", "dowel", "threaded_rod", "bushing", "shaft", "d_shaft", "mgn_rail", "gt2_belt", "nema17", "standoff",
+      "wood_dowel", "confirmat", "dowel_screw", "filament_pin", "wire_nail", "nema14"];
     for (const family of byLength) {
       for (const key of Object.keys(CATALOG.families[family]!.dims)) {
         expect(standardLengths(family, key).length, `${family} ${key}`).toBeGreaterThan(0);
@@ -114,7 +118,8 @@ describe("catalog coverage", () => {
   });
 
   it("marks what was not transcribed from a standard", () => {
-    for (const f of ["heatset_std", "heatset_short", "mgn_rail", "mgn_carriage", "brushless", "n20", "sg90", "gt2_pulley"]) {
+    for (const f of ["heatset_std", "heatset_short", "mgn_rail", "mgn_carriage", "brushless", "n20", "sg90", "gt2_pulley",
+      "confirmat", "cam_lock", "cam_bolt", "dowel_screw", "mg996r", "sts3215"]) {
       expect(CATALOG.families[f]!.dimsSource, f).toBe("family-typical");
     }
     // A row can be less certain than its family.
@@ -128,6 +133,10 @@ describe("golden values", () => {
     expect(threadSpec("M3")).toMatchObject({ pitch: 0.5, clearance: 3.4, tapDrill: 2.5 });
     expect(threadSpec("M8")).toMatchObject({ pitch: 1.25, clearance: 9, tapDrill: 6.8 });
     expect(familyDims("shcs", "M3")).toMatchObject({ headD: 5.5, headH: 3 });
+    // DIN 1151 A, NEMA 14 faceplate, and the Feetech STS3215 drawing.
+    expect(familyDims("wire_nail", "2.2")).toMatchObject({ d: 2.2, headD: 4.4 });
+    expect(familyDims("nema14", "NEMA14")).toMatchObject({ face: 35, holePitch: 26, pilotD: 22, shaftD: 5 });
+    expect(familyDims("sts3215", "STS3215")).toMatchObject({ bodyL: 45.23, bodyW: 24.73, splineD: 19.95, hornPcd: 14 });
     expect(familyDims("button", "M4")).toMatchObject({ headD: 7.6, headH: 2.2 });
     expect(familyDims("csk", "M5")).toMatchObject({ headD: 11.2, headH: 3.1, angle: 90 });
     expect(familyDims("hex_nut", "M6")).toMatchObject({ af: 10, height: 5.2 });

@@ -102,10 +102,14 @@ describe("resolveHardware", () => {
     // spur-gear-pair: a Ø5 gear bore failed the slip band 5.05..5.25 for good.
     const hub = (params: Record<string, string | number>, sourcing?: object) =>
       ({ params: [], payload: { ports: [{ name: "bore", type: "HUB_BORE", params: { diameter: 5, ...params } }], ...(sourcing ? { sourcing } : {}) } }) as never;
-    expect(resolveHardware(node({ kind: "gear", contract: { params: [] } as never }))).toContain("Cylinder(p.bore / 2");
-    expect(resolveHardware(node({ kind: "gear", contract: hub({}) }))).toContain("Cylinder((p.bore + 0.15) / 2");
-    expect(resolveHardware(node({ kind: "gear", contract: hub({ fit: "press" }) }))).toContain("Cylinder((p.bore - 0.05) / 2");
-    expect(resolveHardware(node({ kind: "gear", contract: hub({}, { class: "fabricate", process: "cnc", material: "steel" }) }))).toContain("(p.bore + 0.025)");
+    expect(resolveHardware(node({ kind: "gear", contract: { params: [] } as never }))).toContain("nominal = p.bore\n");
+    expect(resolveHardware(node({ kind: "gear", contract: { params: [] } as never }))).toContain("Cylinder(nominal / 2");
+    expect(resolveHardware(node({ kind: "gear", contract: hub({}) }))).toContain("Cylinder((nominal + 0.15) / 2");
+    expect(resolveHardware(node({ kind: "gear", contract: hub({ fit: "press" }) }))).toContain("Cylinder((nominal - 0.05) / 2");
+    expect(resolveHardware(node({ kind: "gear", contract: hub({}, { class: "fabricate", process: "cnc", material: "steel" }) }))).toContain("(nominal + 0.025)");
+    // The hub's Ø, not the gear's bore: hand-winch's bore 8.3 on a Ø8 press hub measured 8.28.
+    expect(resolveHardware(node({ kind: "gear", contract: hub({}) }))).toContain("nominal = 5\n");
+    expect(resolveHardware(node({ id: "pinion" as never, kind: "gear", contract: hub({ diameter: "param(pinion.j_shaft_d)" }) }))).toContain('nominal = p.get("j_shaft_d", p.bore)');
     // Every bored catalog family: the pulley's Ø5 bore, cut at 5.15.
     expect(resolveHardware(node({ kind: "pulley", params: { sku: "GT2P-20T-5" }, contract: hub({}) }))).toContain("Cylinder(2.575, ");
     expect(resolveHardware(node({ kind: "pulley", params: { sku: "GT2P-20T-5" } }))).toContain("Cylinder(2.5, ");
@@ -135,9 +139,17 @@ describe("resolveHardware", () => {
     const a = resolveHardware(node({ kind: "gear", params: { teeth: 20 } }));
     const b = resolveHardware(node({ kind: "gear", params: { teeth: 40 } }));
     expect(a).toBe(b);
-    expect(a).toContain("SpurGear");
+    expect(a).toContain("involute_gear(");
     // Injected into the kernel namespace, never imported — G0 stays closed.
-    expect(a).not.toContain("bd_warehouse");
+    expect(a).not.toContain("import patchcad_kernel");
+  });
+
+  it("cuts a gear's D-flat where its own HUB_BORE says, as the joint minted it", () => {
+    // hand-winch: the flat was param(drum-gear.j_drum_gear_flat), the code read p.flat, the bore came out round.
+    const hub = (flat: number | string) => ({ params: [], payload: { ports: [{ type: "HUB_BORE", params: { diameter: 8, flat } }] } });
+    expect(resolveHardware(node({ id: "drum-gear" as never, kind: "gear", contract: hub("param(drum-gear.j_drum_gear_flat)") as never }))).toContain('flat = p.get("j_drum_gear_flat", 0)');
+    expect(resolveHardware(node({ kind: "gear", contract: hub(3) as never }))).toContain("flat = 3");
+    expect(resolveHardware(node({ kind: "gear" }))).toContain('flat = p.get("flat", 0)');
   });
 
   it("builds the threaded rod as one cylinder at its ISO pitch diameter", () => {

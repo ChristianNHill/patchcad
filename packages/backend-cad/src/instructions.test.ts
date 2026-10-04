@@ -115,6 +115,19 @@ describe("feasibleSequence", () => {
     expect(seq.sequenceProblems.some((p) => /runs into base/.test(p))).toBe(true);
   });
 
+  it("holds a shaft rider in place first when it cannot slide along the shaft", async () => {
+    const { g, scene } = example("cad-rotor");
+    // A rider walled in on its shaft (a drum between two frame walls): nothing
+    // can go before the base, so it is held and the shaft goes through it.
+    const seq = await feasibleSequence(g, scene, blocks([["rotor", "base"]]));
+    const held = stepOf(seq, "rotor");
+    expect(seq.steps[held]!.title).toBe("Hold the Rotor in place: the Ø5×34 D-shaft goes through it next");
+    expect(seq.steps[held]!.moving).toEqual([expect.objectContaining({ key: "rotor", held: true })]);
+    expect(held).toBeLessThan(stepOf(seq, "j1_shaft"));
+    expect(stepOf(seq, "j1_bearing_a")).toBeLessThan(held);
+    expect(seq.sequenceProblems).toEqual([]);
+  });
+
   it("says when the sweep did not run, rather than passing", async () => {
     const { g, scene } = example("cad-rotor");
     const seq = await feasibleSequence(g, scene, async () => {

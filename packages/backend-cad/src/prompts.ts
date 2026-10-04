@@ -101,7 +101,17 @@ RULES:
     subtracting a rotated Box — Rot(45,0,0) * Box(w, leg*2, leg*2) spans
     leg*1.414 in BOTH rotated axes, not leg, so a "small" lead-in sized against
     a wall thickness cuts the entire wall away and the slot probe then reports
-    "the channel is open".`;
+    "the channel is open".
+  - TEARDROP (a sideways hole printed without support): keep the WHOLE circle
+    and add only a 45° roof above it, tangent to the circle at ±45°. A channel
+    of radius r along X at height zc, length L:
+      part = part - Pos(0, 0, zc) * Rot(0, 90, 0) * Cylinder(r, L)
+      part = part - Pos(0, 0, zc + r / math.sqrt(2)) * Rot(45, 0, 0) * Box(L, r, r)
+    (along Y: Rot(90, 0, 0) on the cylinder, Rot(0, 45, 0) * Box(r, L, r)). The
+    roof is a square of side r turned 45° with one corner on the axis and one
+    r*1.414 above it. Never Rot(45,0,0) * Box(L, 2*r, 2*r) cut to its top half:
+    that diamond is r*1.414 wide at the axis, and the hole probe checks that the
+    bore is still round below its roof.`;
 
 /** Deterministic armor for weak-model code slop: markdown fences, modules
  * emitted as one line of literal \n escapes, and forgotten imports. */
@@ -200,7 +210,10 @@ function portLines(payload: CadContractPayload, graph?: GraphDoc, nodeId?: strin
             isMachined(cutProcess),
           )
         : null;
-      return `  - ${p.name} (${p.type}) at origin ${origin}, z-out ${vec(pose.zAxis)}, x ${vec(pose.xAxis)}${params ? ` — ${params}` : ""}${cut ? `; ${cutProcess}: ${cut}` : ""}`;
+      // The SLOT reading t3-004's generator got wrong: it took the origin for
+      // a floor and cut the keyway on past it by the depth.
+      const channel = p.type === "SLOT" || p.type === "GROOVE" ? "; origin at the mouth, depth runs into the material along -z" : "";
+      return `  - ${p.name} (${p.type}) at origin ${origin}, z-out ${vec(pose.zAxis)}, x ${vec(pose.xAxis)}${params ? ` — ${params}` : ""}${channel}${cut ? `; ${cutProcess}: ${cut}` : ""}`;
     })
     .join("\n");
 }

@@ -481,3 +481,26 @@ describe("fit cut targets on the generator's own ports", () => {
     expect(user).not.toContain(": cut");
   });
 });
+
+describe("channel and teardrop conventions", () => {
+  const userTurn = (ports: CadContractPayload["ports"]) => {
+    const base = ctx();
+    base.node.contract.payload.ports = ports;
+    return generatePrompt(base).messages[0]!.content;
+  };
+
+  it("tells the generator a SLOT's origin is its mouth and its depth runs into the material", () => {
+    const text = userTurn([
+      { name: "keyway", type: "SLOT", pose: { origin: [0, 6, 16], zAxis: [0, -1, 0], xAxis: [0, 0, 1] }, params: { width: 4, depth: 2 } },
+      { name: "seat", type: "FLAT_FACE", pose: { origin: [0, 0, 0], zAxis: [0, 0, 1], xAxis: [1, 0, 0] }, params: { size: 8 } },
+    ]);
+    expect(text).toMatch(/keyway \(SLOT\).*depth=2; origin at the mouth, depth runs into the material along -z/);
+    expect(text).not.toMatch(/seat \(FLAT_FACE\).*origin at the mouth/);
+  });
+
+  it("gives the teardrop recipe the probe accepts in the cached system block", () => {
+    const { system } = generatePrompt(ctx());
+    expect(system).toContain("Pos(0, 0, zc + r / math.sqrt(2)) * Rot(45, 0, 0) * Box(L, r, r)");
+    expect(system).toMatch(/Never Rot\(45,0,0\) \* Box\(L, 2\*r, 2\*r\)/);
+  });
+});

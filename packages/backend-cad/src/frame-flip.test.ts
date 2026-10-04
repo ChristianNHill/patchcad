@@ -54,7 +54,7 @@ describe("hinges on a bearing pivot", () => {
   const graphOf = (d: ArchitectOutput) => architectOutputToGraph(planning.expandPlan(structuredClone(d)), "t", "cad", "g", "mm");
   const bearingHinge = () => {
     const d = structuredClone(draft);
-    d.joints[0]!.load = "medium"; // not casual: the rules pick two bearings
+    d.joints[0]!.load = "heavy"; // not casual: the rules pick two bearings
     for (const n of d.nodes) for (const p of n.contract.params) {
       if (p.name === "length") (p as { default: number }).default = 60;
       if (p.name === "knuckle_od") (p as { default: number }).default = 14;
@@ -68,14 +68,16 @@ describe("hinges on a bearing pivot", () => {
     const g = graphOf(d);
     expect(g.joints[0]!.expanded).toMatch(/^M1\|/);
     expect(g.edges.some((e) => e.from === "leaf-a" && e.to === "leaf-b")).toBe(false);
-    expect(cadPlanGeometryLint.run(g)).toEqual([]);
+    // The bearing pivot seats leaf-b a collar's width past leaf-a's knuckle,
+    // which pushes leaf-b's far knuckle into it: true, and its own lint's.
+    expect(cadPlanGeometryLint.run(g)).toEqual([expect.stringMatching(/^leaf-b and leaf-a both claim .* of joint hinge's axis/)]);
     knuckle(d).pose.xAxis = [0, -1, 0];
-    expect(cadPlanGeometryLint.run(graphOf(d))).toEqual([expect.stringMatching(/^leaf-a and leaf-b are mated, but once placed/)]);
+    expect(cadPlanGeometryLint.run(graphOf(d))).toEqual([expect.stringMatching(/^leaf-a and leaf-b are mated, but once placed/), expect.stringMatching(/both claim/)]);
   }, 60_000);
 
   it("reports a wall longer than the knuckle instead of seating a bearing outside it", () => {
     const d = structuredClone(draft);
-    Object.assign(d.joints[0]!, { load: "medium", wallA: "param(leaf-a.length)" });
+    Object.assign(d.joints[0]!, { load: "heavy", wallA: "param(leaf-a.length)" });
     const problems = check(d);
     expect(problems.some((p) => /^joint hinge: .*M1 wallA 40\.0 runs past a: its envelope holds only 8\.0/.test(p))).toBe(true);
     expect(problems.some((p) => p.includes("hinge_seat_b"))).toBe(false);
@@ -83,7 +85,7 @@ describe("hinges on a bearing pivot", () => {
 
   it("reports a bearing too big for the knuckle", () => {
     const d = structuredClone(draft);
-    d.joints[0]!.load = "medium";
+    d.joints[0]!.load = "heavy";
     expect(check(d).some((p) => /M1 room around the axis in a Ø7\.0 < bearing OD 10\.0/.test(p))).toBe(true);
   });
 });

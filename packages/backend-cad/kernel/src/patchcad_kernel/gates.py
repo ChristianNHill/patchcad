@@ -594,10 +594,12 @@ def _march(shape: Any, frame, du: float, dv: float, w: float, max_r: float,
     # passes through". The depth path never had the guard and still has none.
     if dw == 0.0 and _in_material(shape, _at(o, x, y, z, 0.0, 0.0, w)) == want_material:
         return None
-    if dw != 0.0 and getattr(shape, "wrapped", None) is not None:
-        # The depth path on a B-rep: every face the axis meets, each crossing
-        # confirmed by the classifier just past it (a grazing hit changes nothing).
-        # 0.0 first, so a start already in the sought state reads ~0 as before.
+    if getattr(shape, "wrapped", None) is not None:
+        # On a B-rep: every face the line meets, each crossing confirmed by the
+        # classifier just past it (a grazing hit changes nothing). 0.0 first,
+        # so a depth march already in the sought state reads ~0 as before. In
+        # the plane too since GATES_VERSION 22: the helix-tolerant hole rays
+        # cast a few hundred lines, which stepping at 0.25mm made seconds.
         start = _at(o, x, y, z, 0.0, 0.0, w)
         d = [x[i] * du + y[i] * dv + z[i] * dw for i in range(3)]
         for t in [0.0, *_line_hits(shape, start, d, max_r)]:
@@ -658,7 +660,8 @@ def _fit_circle(pts: list[tuple[float, float]]) -> tuple[float, float, float] | 
 
 
 def _hole_slice(shape: Any, frame, max_r: float, w: float,
-                cu0: float = 0.0, cv0: float = 0.0) -> tuple[float, float, float] | None:
+                cu0: float = 0.0, cv0: float = 0.0,
+                window: tuple[float, float] | None = None) -> tuple[float, float, float] | None:
     """Circle fitted through the nearest void→material crossing of rays cast
     from (cu0, cv0) at depth w: (cu, cv, r) in the port frame, or None when
     fewer than 3 rays meet a wall.
@@ -671,45 +674,163 @@ def _hole_slice(shape: Any, frame, max_r: float, w: float,
     least-squares fit cannot absorb (one of 8 put a real socket 2.2mm off), so
     hits far from the median ray are dropped before fitting: the robustness the
     median had. The band is wide, so an off-centre origin keeps its rays, and
-    dropping a good point costs nothing because the rest still lie on the wall."""
+    dropping a good point costs nothing because the rest still lie on the wall.
+
+    `window` (depths, positive) is for a slice whose crossings do not all lie
+    on its circle: each ray then reads its NEAREST wall over that window. One
+    slice of a thread is crests on half the circle and groove on the rest,
+    and the circle through some of each read a straight M28 socket 9.3
+    degrees tilted; over half a pitch every ray meets a crest. A round slice
+    never pays for it."""
     o, x, y, z = frame
     start = (list(_at(o, x, y, z, cu0, cv0, 0.0)), x, y, z)
-    hits: list[tuple[float, float]] = []
-    for k in range(PROBE_DIRECTIONS):
-        theta = 2 * math.pi * k / PROBE_DIRECTIONS
-        hit = _march(shape, start, math.cos(theta), math.sin(theta), w, max_r)
-        if hit is not None:
-            hits.append((theta, hit))
-    if len(hits) < 3:
-        return None
-    med = sorted(h for _, h in hits)[len(hits) // 2]
-    pts = [(cu0 + h * math.cos(t), cv0 + h * math.sin(t)) for t, h in hits
-           if abs(h - med) <= max(1.0, med / 2)]
-    return _robust_circle(pts) if len(pts) >= 3 else None
+    thetas = _thetas(SLICE_RAYS if _brep(shape) else PROBE_DIRECTIONS)
 
+    def ray(theta: float, depths: list[float]) -> float | None:
+        hits = [h for h in (_march(shape, start, math.cos(theta), math.sin(theta), -d, max_r) for d in depths)
+                if h is not None]
+        return min(hits) if hits else None
 
-def _robust_circle(pts: list[tuple[float, float]]) -> tuple[float, float, float] | None:
-    """_fit_circle, refitted twice without the crossings whose radius strays
-    more than DIAMETER_TOL_MM from the median, and read as the INSCRIBED circle
-    (the smallest kept radius). A keyway's crossing pulled a plain fit 0.74mm
-    off centre and read a Ø12 bore as Ø12.52; a key, a flat or a D-bore now
-    moves neither the centre nor the diameter, and what a shaft must pass is
-    the smallest circle anyway."""
-    fit = _fit_circle(pts)
-    keep = pts
-    for _ in range(2):
-        if fit is None:
+    def fit(hits: list[tuple[float, float]]) -> tuple[float, float, float] | None:
+        if len(hits) < 3:
             return None
-        rs = [math.hypot(u - fit[0], v - fit[1]) for u, v in keep]
-        med = sorted(rs)[len(rs) // 2]
-        inliers = [p for p, r in zip(keep, rs) if abs(r - med) <= DIAMETER_TOL_MM]
-        if len(inliers) < 3 or len(inliers) == len(keep):
-            break
-        keep, fit = inliers, _fit_circle(inliers)
+        med = sorted(h for _, h in hits)[len(hits) // 2]
+        pts = [(cu0 + h * math.cos(t), cv0 + h * math.sin(t)) for t, h in hits
+               if abs(h - med) <= max(1.0, med / 2)]
+        return _robust_circle(pts, EXACT_FIT_TOL_MM if _brep(shape) else DIAMETER_TOL_MM) if len(pts) >= 3 else None
+
+    hits = [(t, h) for t in thetas if (h := ray(t, [-w])) is not None]
+    circle = fit(hits)
+    if circle is None or window is None or not _brep(shape):
+        return circle
+    cu, cv, r = circle
+    if all(math.hypot(cu0 + h * math.cos(t) - cu, cv0 + h * math.sin(t) - cv) <= r + DIAMETER_TOL_MM
+           for t, h in hits):
+        return circle
+    depths = sorted({-w, *_window(*window)})
+    return fit([(t, h) for t in thetas if (h := ray(t, depths)) is not None])
+
+
+EXACT_FIT_TOL_MM = 0.05
+"""How far a crossing may sit off the circle it votes for on a B-rep, where a
+round wall's crossings are exact. DIAMETER_TOL_MM let a circle 0.16mm wider
+gather a square-shouldered roof's corners and a round half at once."""
+
+
+def _robust_circle(pts: list[tuple[float, float]], tol: float) -> tuple[float, float, float] | None:
+    """The circle most crossings agree on (within `tol`), refitted through
+    them and read as the INSCRIBED circle (the smallest kept radius). A
+    keyway's crossing pulled a plain fit 0.74mm off centre and read a Ø12 bore
+    as Ø12.52; a key, a flat or a D-bore moves neither the centre nor the
+    diameter, and what a shaft must pass is the smallest circle anyway.
+
+    Consensus over every triple, not trimming from a first fit: a slice of a
+    thread has its groove over ~3 of 8 rays, the first fit through all 8 sat
+    0.8mm toward it, and trimming from there kept the groove and dropped the
+    crests, so a straight M28 socket read 9.3 degrees tilted. The circle wins
+    that the most crossings lie on, less the crossings well INSIDE it (fewest
+    squared residuals on a tie): a bore is the circle every other feature lies
+    outside of. 560 triples of 16 points."""
+    best: tuple[int, float, list[tuple[float, float]]] | None = None
+    for tri in itertools.combinations(pts, 3):
+        fit = _fit_circle(list(tri))
+        if fit is None:
+            continue
+        res = [math.hypot(u - fit[0], v - fit[1]) - fit[2] for u, v in pts]
+        keep = [p for p, e in zip(pts, res) if abs(e) <= tol]
+        inside = sum(e < -DIAMETER_TOL_MM for e in res)
+        score = (len(keep) - inside, -sum(e * e for e in res if abs(e) <= tol))
+        if best is None or score > best[:2]:
+            best = (*score, keep)
+    if best is None:
+        return None
+    fit = _fit_circle(best[2])
     if fit is None:
         return None
     cu, cv, _ = fit
-    return cu, cv, min(math.hypot(u - cu, v - cv) for u, v in keep)
+    return cu, cv, min(math.hypot(u - cu, v - cv) for u, v in best[2])
+
+
+HELIX_WINDOW_MM = 4.0
+"""Depth window a thread-tolerant measurement spans. Every ray of a slice
+meets a thread's crest within half a pitch, so this covers pitches to ~7mm
+(ISO coarse M30 is 3.5, t4-007's socket 4)."""
+HELIX_STEP_MM = 0.25
+"""Spacing of that window's slices: under half the finest pitch it must see
+(M3, 0.5)."""
+ROUND_RAYS = 24
+"""Rays around a bore for the roundness check, at half-step offsets so none
+lies on a teardrop's equator or apex."""
+SLICE_RAYS = 16
+"""Rays a hole slice fits its circle through on a B-rep."""
+
+
+def _brep(shape: Any) -> bool:
+    """A B-rep casts exact lines; an imported MeshPart steps a classifier and
+    cannot afford the windowed measurements."""
+    return getattr(shape, "wrapped", None) is not None
+
+
+def _thetas(n: int, offset: float = 0.0) -> list[float]:
+    return [2 * math.pi * (k + offset) / n for k in range(n)]
+
+
+def _window(lo: float, hi: float) -> list[float]:
+    """Depths lo..hi at HELIX_STEP_MM; just lo when the window is empty."""
+    if hi <= lo:
+        return [lo]
+    return [lo + k * HELIX_STEP_MM for k in range(int((hi - lo) / HELIX_STEP_MM + 1e-9) + 1)]
+
+
+def _bulge(shape: Any, frame, cu: float, cv: float, r: float, depth: float,
+           window: tuple[float, float], max_r: float) -> tuple[float, float] | None:
+    """None when the bore wall about (cu, cv) stays within r + DIAMETER_TOL_MM
+    over a contiguous half of the circle (13 of 24 rays, 180 degrees from the
+    first to the last), else (that longest arc in degrees, the widest wall
+    radius). A slice that fails is re-read with each ray at its NEAREST wall
+    over `window`: a thread's groove passes every ray within half a pitch, and
+    a teardrop is the same at every depth. A ray that meets no wall (a
+    crossing channel open to the outside) does not break the arc."""
+    o, x, y, z = frame
+    start = (list(_at(o, x, y, z, cu, cv, 0.0)), x, y, z)
+
+    def arc(depths: list[float]) -> tuple[float, float] | None:
+        walls: list[float | None] = []
+        for t in _thetas(ROUND_RAYS, 0.5):
+            hits = [h for h in (_march(shape, start, math.cos(t), math.sin(t), -d, max_r) for d in depths)
+                    if h is not None]
+            walls.append(min(hits) if hits else None)
+        good = [h is None or h <= r + DIAMETER_TOL_MM for h in walls]
+        if all(good):
+            return None
+        k = good.index(False)
+        run = longest = 0
+        for g in good[k:] + good[:k]:
+            run = run + 1 if g else 0
+            longest = max(longest, run)
+        if longest > ROUND_RAYS // 2:
+            return None
+        return max(longest - 1, 0) * 360 / ROUND_RAYS, max(h for h in walls if h is not None)
+
+    found = arc([depth])
+    return found if found is None else arc(sorted({depth, *_window(*window)}))
+
+
+FASTENER_HOLES = {"CLEARANCE_HOLE", "HOLE_PATTERN"}
+
+
+def _fastener_seat(d: float) -> tuple[str, float] | None:
+    """(thread, SHCS head Ø) for the catalog thread whose ISO 273 clearance a
+    Ø d hole is, or None for a hole no stocked screw clears that way (a Ø10
+    fluid channel), whose roundness is its function."""
+    from .meshpart import _catalog
+
+    cat = _catalog()
+    heads = cat["families"]["shcs"]["dims"]
+    for thread, row in cat["threads"].items():
+        if abs(float(row["clearance"]) - d) <= DIAMETER_TOL_MM and thread in heads:
+            return thread, float(heads[thread]["headD"])
+    return None
 
 
 def _axial_depth(shape: Any, frame, u: float, v: float, reach: float, find: str = "material") -> float | None:
@@ -816,11 +937,19 @@ def _probe_hole(shape: Any, port: dict[str, Any], band: tuple[float, float] | No
     # NARROWEST over several depths, the way _probe_channel measures a width:
     # a chamfered mouth reads wide at 0.6mm, and a hole too narrow under that
     # chamfer read exactly right at that one slice.
-    slices = [(PROBE_DEPTH_MM, mouth)]
-    for depth in sorted({max(PROBE_DEPTH_MM, span / 2), max(PROBE_DEPTH_MM, span - PROBE_DEPTH_MM)} - {PROBE_DEPTH_MM}):
-        fit = _hole_slice(shape, frame, max_r, -depth, cu, cv)
+    # Each slice may widen to a window of depths inside the hole when its
+    # crossings disagree (a thread: see _hole_slice), so the mouth is re-read.
+    def window(depth: float) -> tuple[float, float]:
+        lo = max(PROBE_DEPTH_MM, min(depth - HELIX_WINDOW_MM / 2, span - PROBE_DEPTH_MM - HELIX_WINDOW_MM))
+        return lo, max(lo, min(span - PROBE_DEPTH_MM, lo + HELIX_WINDOW_MM))
+
+    slices = []
+    for depth in sorted({PROBE_DEPTH_MM, max(PROBE_DEPTH_MM, span / 2), max(PROBE_DEPTH_MM, span - PROBE_DEPTH_MM)}):
+        fit = _hole_slice(shape, frame, max_r, -depth, cu, cv, window(depth))
         if fit is not None:
             slices.append((depth, fit))
+    if not slices:
+        slices = [(PROBE_DEPTH_MM, mouth)]
     at_depth, (_, _, r_min) = min(slices, key=lambda s: s[1][2])
     measured = 2 * r_min
     if band and not band[0] - FIT_EPS_MM <= measured <= band[1] + FIT_EPS_MM:
@@ -850,8 +979,43 @@ def _probe_hole(shape: Any, port: dict[str, Any], band: tuple[float, float] | No
             expected=0.0, measured=round(offset, 3),
         )
 
+    # ROUND ON AT LEAST HALF ITS CIRCLE. The diameter is the inscribed circle,
+    # so a bore cut wider than it on one side passes that check by design (a
+    # keyway, a D-flat, a teardrop roof). A 45-degree Box teardrop widened a
+    # Ø10 channel to Ø14 at its equator and passed three cooks running
+    # (t3-002). What must hold is the round side: the wall stays on the circle
+    # over a contiguous half of it. A teardrop or a flat roof bulges above the
+    # axis only; that Box bulged at both ends of the equator.
+    finding = hint = ""
+    if _brep(shape):
+        bulge = None
+        for depth, (su, sv, sr) in slices:
+            bulge = _bulge(shape, frame, su, sv, sr, depth, window(depth), max_r)
+            if bulge is None:
+                break
+        if bulge is not None:
+            arc, widest = bulge
+            error = (f'port "{key}" ({ptype}): not round — the wall stays on the Ø{measured:.2f} circle over only '
+                     f'{arc:.0f}° of it and reaches Ø{2 * widest:.2f} elsewhere; at least 180° must be round')
+            hint = ("cut the bore as a true circle. An FDM teardrop keeps the full circle and adds only a 45° roof "
+                    "above it, tangent to the circle at ±45°: union the round cutter with a square of side r turned "
+                    "45° about the bore axis whose corners sit on the axis and r·√2 above it. A Box rotated 45° "
+                    "spans r·√2 each side of the axis and widens the hole at its equator")
+            # A screw only passes a clearance hole: a bulge is slop until it
+            # reaches the head's bearing face. t3-010 and t5-002 cut M4/M5
+            # holes this way and CADClamp passed them.
+            seat = _fastener_seat(d) if ptype in FASTENER_HOLES else None
+            if seat is not None and 2 * widest < seat[1]:
+                finding = f"{error}, short of the {seat[0]} head's Ø{seat[1]:g} bearing face"
+            else:
+                if seat is not None:
+                    error += f", past the {seat[0]} head's Ø{seat[1]:g} bearing face"
+                raise GateError("G3", error, hint, expected=d, measured=round(2 * widest, 3))
+
     result: dict[str, Any] = {"key": key, "type": ptype, "measured_diameter": round(measured, 3),
                               "center_offset": round(offset, 3)}
+    if finding:
+        result["finding"] = f"{finding}. {hint}"
     (w0, (u0, v0, _)), (w1, (u1, v1, _)) = slices[0], max(slices, key=lambda s: s[0])
     if w1 - w0 >= TILT_BASELINE_MM:
         drift = math.hypot(u1 - u0, v1 - v0)
@@ -1069,22 +1233,47 @@ def _probe_shaft(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     # peg" for a peg that is simply short, which is a misleading message on a
     # real defect. The self-check pins that case.
     near = 0.25
+    # A HOLLOW peg is still a peg: a threaded spigot with a flow passage up its
+    # axis read "no material 0.25mm out, so there is no peg" (t4-007). Void on
+    # the axis is a tube when a wall surrounds it inside the declared Ø.
+    bore_r: float | None = None
     if not _in_material(shape, _at(o, x, y, z, 0.0, 0.0, near)):
-        raise GateError(
-            "G3",
-            f'port "{key}" (SHAFT): no material {near}mm out from the pose, so there is no peg',
-            f"grow a Ø{d:g} peg standing out of the mating face at the contract pose",
-        )
+        inner = [r for r in (_march(shape, frame, math.cos(t), math.sin(t), near, d / 2) for t in _thetas(8))
+                 if r is not None]
+        if len(inner) < 6:
+            raise GateError(
+                "G3",
+                f'port "{key}" (SHAFT): no material {near}mm out from the pose, so there is no peg',
+                f"grow a Ø{d:g} peg standing out of the mating face at the contract pose",
+            )
+        bore_r = sorted(inner)[len(inner) // 2]
+
+    def radius(theta: float, w: float) -> float | None:
+        """Where the peg's material ends along theta at depth w; on a tube,
+        past its bore wall."""
+        c, s = math.cos(theta), math.sin(theta)
+        if bore_r is None:
+            return _march(shape, frame, c, s, w, max_r=d * 2 + 4.0, find="void")
+        wall = _march(shape, frame, c, s, w, d / 2 + DIAMETER_TOL_MM)
+        if wall is None:
+            return None
+        t0 = wall + CROSSING_EPS_MM
+        out = _march(shape, (list(_at(o, x, y, z, c * t0, s * t0, 0.0)), x, y, z), c, s, w,
+                     max_r=d * 2 + 4.0, find="void")
+        return None if out is None else t0 + out
 
     # The tip first, so the diameter is measured at the middle of the ACTUAL peg
-    # rather than wherever the declaration guessed.
+    # rather than wherever the declaration guessed. A tube's tip is followed
+    # up its wall, the furthest of two lines a fifth and half way out from the
+    # bore: a thread's groove cut the outer line short 1.7mm up a 20mm spigot.
     reach = (declared_len * 2 + 4.0) if declared_len else (d * 4 + 20.0)
-    tip, step, t = None, 0.25, near
-    while t <= reach:
-        if not _in_material(shape, _at(o, x, y, z, 0.0, 0.0, t)):
-            tip = t
-            break
-        t += step
+    lines = [0.0]
+    if bore_r is not None:
+        outs = [r for r in (radius(t, near) for t in _thetas(8)) if r is not None]
+        lines = [bore_r + f * (min(outs) - bore_r) for f in (0.2, 0.5)] if outs else [bore_r]
+    rises = [_march(shape, (list(_at(o, x, y, z, u, 0.0, 0.0)), x, y, z), 0.0, 0.0, near, reach,
+                    find="void", dw=1.0) for u in lines]
+    tip = None if None in rises else near + max(rises)
     if tip is None and declared_len:
         # Reach exhausted with a declared length. Returning a diameter and no
         # length here was indistinguishable from "no length was declared", so a
@@ -1119,12 +1308,19 @@ def _probe_shaft(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     # practice on a slip fit. Still clear of a base fillet by PROBE_DEPTH_MM.
     w = min(near + PROBE_DEPTH_MM, tip / 2) if tip else max(near, PROBE_DEPTH_MM)
 
+    # Each ray's LARGEST radius over a window of depths, the envelope a socket
+    # must accept. One slice of a threaded spigot is a crest on half the circle
+    # and a root on the other, which read "not round" on a correct thread; over
+    # half a pitch or more every ray meets a crest. Draft only shrinks upward,
+    # so the base still sets the number, and a slab fused to the peg is wide at
+    # every depth and still fails.
+    top = (tip - PROBE_DEPTH_MM) if tip else w
+    depths = _window(w, min(w + HELIX_WINDOW_MM, top)) if _brep(shape) else [w]
     radii = []
-    for k in range(8):
-        theta = 2 * math.pi * k / 8
-        r = _march(shape, frame, math.cos(theta), math.sin(theta), w, max_r=d * 2 + 4.0, find="void")
-        if r is not None:
-            radii.append(r)
+    for theta in _thetas(8):
+        rs = [r for r in (radius(theta, dw_) for dw_ in depths) if r is not None]
+        if len(rs) == len(depths):
+            radii.append(max(rs))
     if len(radii) < 8:
         raise GateError(
             "G3",
@@ -1156,6 +1352,8 @@ def _probe_shaft(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {"key": key, "type": port["type"], "measured_diameter": round(measured, 3)}
     if tip is not None:
         result["measured_length"] = round(tip, 3)
+    if bore_r is not None:
+        result["bore_diameter"] = round(2 * bore_r, 3)
     # A peg shorter than declared cannot reach its socket, which a slip-fit joint
     # shows as a gap. Only enforced against a declaration.
     return result
@@ -1242,6 +1440,19 @@ def _probe_channel(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
         if not _in_material(shape, _at(o, x, y, z, 0, 0, -PROBE_EPS_MM)):
             raise GateError("G3", f'port "{key}" ({ptype}): the channel is shallower than the {PROBE_DEPTH_MM}mm this probe measures at',
                             f"cut the channel at least {PROBE_DEPTH_MM * 2:g}mm deep, or express a feature this shallow as a FLAT_FACE rather than a channel")
+        # A channel of the declared width in FRONT of the origin: the pose sits
+        # on its floor. t3-004's keyway port did, and the generator read the
+        # depth as running on past it and cut the keyway 2mm too deep.
+        reach = width * 3 + 2.0
+        left = _march(shape, frame, 0.0, 1.0, PROBE_DEPTH_MM, reach)
+        right = _march(shape, frame, 0.0, -1.0, PROBE_DEPTH_MM, reach)
+        if left is not None and right is not None and abs(left + right - width) <= DIAMETER_TOL_MM:
+            raise GateError("G3", f'port "{key}" ({ptype}): a {left + right:.2f}mm channel lies in front of the declared '
+                                  f"origin, which sits on its floor instead of at its mouth",
+                            "a SLOT/GROOVE origin is on the face the channel opens through, +z out of it, with "
+                            "params.depth running INTO the material along -z. If this channel is where the spec "
+                            "puts it, the pose is the contract's mistake: keep the channel as specified rather "
+                            "than cutting past its floor to meet the pose")
         raise GateError("G3", f'port "{key}" ({ptype}): no channel at the declared origin — material found where the gap should be',
                         f"cut a {width:g}mm-wide channel centred exactly on the contract pose, running along the port's xAxis")
 
@@ -1608,6 +1819,18 @@ def _sweep_groups(sweep: dict[str, Any], meshes: list[tuple[str, Any]]) -> tuple
     return [round(t, 2 if revolute else 3) for t in travels], groups, chord / n
 
 
+def _axisymmetric(solid: Any, mesh: Any, o: Any, d: Any) -> bool:
+    """Whether a part turned about (o, d) is itself: a revolved wheel or
+    roller sweeps exactly its rest pose, so the static check already judged
+    it (rolling contact on a rail is a contact, not a swept clash). Two odd
+    angles, so a part with 2-, 3-, 4- or 6-fold symmetry is not mistaken
+    for round."""
+    own = abs(float(mesh.volume))
+    if own <= 0:
+        return False
+    return all(_shared(solid.transform(_turn(o, d, deg)[:3, :].astype("float32")), solid)[0] >= 0.99 * own for deg in (37.0, 113.0))
+
+
 def _shared(a: Any, b: Any) -> tuple[float, float, list[float]]:
     """(volume, area, centroid) of two manifolds' intersection."""
     import trimesh
@@ -1659,6 +1882,14 @@ def g5_swept(meshes: list[tuple[str, Any]], sweeps: list[dict[str, Any]],
 
     for sweep in sweeps:
         travels, groups, chord = _sweep_groups(sweep, meshes)
+        axis = _axis(sweep)
+        symmetric: dict[str, bool] = {}
+
+        def round_key(key: str, mesh: Any, axis: Any = axis, symmetric: dict = symmetric) -> bool:
+            if key not in symmetric:
+                symmetric[key] = _axisymmetric(solid(key, mesh), mesh, *axis)
+            return symmetric[key]
+
         poses = [np.stack([move(t) for t in travels]) for _, move in groups]
         still = np.repeat(np.eye(4)[None], len(travels), axis=0)
 
@@ -1673,6 +1904,8 @@ def g5_swept(meshes: list[tuple[str, Any]], sweeps: list[dict[str, Any]],
                 g_o = group_of(key_o)
                 if g_o is not None and g_o <= g_m:
                     continue  # same group, or this pair was taken the other way round
+                if g_o is None and g_m == 0 and sweep["type"] == "revolute" and round_key(key_m, mesh_m):
+                    continue  # turns into itself: every pose is the rest pose
                 move_o = groups[g_o][1] if g_o is not None else None
                 ts_m, ts_o = poses[g_m], (poses[g_o] if g_o is not None else still)
                 (m_min, m_max), (o_min, o_max) = boxes(mesh_m, ts_m), boxes(mesh_o, ts_o)
@@ -2951,14 +3184,18 @@ if __name__ == "__main__":  # pragma: no cover
         Cone,
         Cylinder,
         GeomType,
+        Helix,
         Locations,
         Mode,
+        Plane,
+        Polygon,
         Pos,
         RegularPolygon,
         Rot,
         chamfer,
         extrude,
         fillet,
+        sweep,
     )
 
     fails: list[str] = []
@@ -3010,6 +3247,20 @@ if __name__ == "__main__":  # pragma: no cover
     expect("groove probed across its length",
            lambda: _probe_channel(grooved, {"key": "g", "type": "GROOVE", "pose": pose((0, 0, 5), x=(0, 1, 0)), "params": {"width": 3.0}}),
            "no wall")
+    expect("a groove posed on its floor says so",
+           lambda: _probe_channel(grooved, {"key": "g", "type": "GROOVE", "pose": pose((0, 0, 1)), "params": {"width": 3.0}}),
+           "sits on its floor")
+    # t3-004: a keyway 4 wide whose floor is 7.5 from a Ø12 bore's axis. The
+    # mouth is the bore wall, +z out into the bore, depth 1.5 into the hub.
+    keyed = (Pos(0, 0, 10) * Cylinder(20, 20) - Pos(0, 0, 10) * Cylinder(6, 22)) - Pos(0, 6, 10) * Box(4, 3, 22)
+
+    def keyway(part, y, depth=1.5):
+        return lambda: _probe_channel(part, {"key": "k", "type": "SLOT", "pose": pose((0, y, 10), (0, -1, 0), (0, 0, 1)),
+                                             "params": {"width": 4.0, "depth": depth}})
+    expect("a keyway posed at its mouth on the bore wall measures its depth to the floor", keyway(keyed, 6))
+    expect("posed on its floor it fails, naming the floor", keyway(keyed, 7.5), "sits on its floor")
+    expect("a missing keyway is not called a floor",
+           keyway(Pos(0, 0, 10) * Cylinder(20, 20) - Pos(0, 0, 10) * Cylinder(6, 22), 6), "no channel at the declared origin")
     # A cable clip burned its whole repair budget here. The generator faked a
     # mouth chamfer with Rot(45,0,0) * Box(w, leg*2, leg*2), whose footprint is
     # leg*sqrt(2) per rotated axis — sized against the wall it removed the wall
@@ -3517,6 +3768,68 @@ if __name__ == "__main__":  # pragma: no cover
             if r["center_offset"] > 0.05 or abs(r["measured_diameter"] - 12) > 0.05:
                 _raise_selfcheck(f"offset {r['center_offset']}, Ø{r['measured_diameter']}")
         expect(f"{label}: centre within 0.05, Ø12 within 0.05", _centred)
+
+    print("round where it must be — a teardrop roof passes, a 45 deg Box teardrop does not")
+    block, run = Box(40, 30, 30), Rot(0, 90, 0) * Cylinder(5, 50)
+    roof = Pos(0, 0, 5 / math.sqrt(2)) * Rot(45, 0, 0) * Box(50, 5, 5)  # the cheat sheet's
+    box_roof = Rot(45, 0, 0) * Box(50, 10, 10) & Pos(0, 0, 10) * Box(52, 20, 20)  # t3-002's
+
+    def channel(part):
+        return lambda: _probe_hole(part, {"key": "c", "type": "CLEARANCE_HOLE", "params": {"diameter": 10},
+                                          "pose": pose((20, 0, 0), (1, 0, 0), (0, 1, 0))})
+    expect("a round Ø10 channel passes", channel(block - run))
+    expect("a teardrop, circle plus a 45° roof from its tangents, passes", channel(block - run - roof))
+    expect("a square-shouldered roof keeps its lower half round and passes",
+           channel(block - run - Pos(0, 0, 2.5) * Box(50, 10, 5)))
+    expect("a teardrop crossed by a branch open at the top passes",
+           channel(block - run - roof - Pos(0, 0, 10) * Cylinder(5, 20)))
+    expect("a 45° Box teardrop, Ø14 at its equator, fails", channel(block - run - box_roof), "not round")
+    expect("so does a BORE cut that way",
+           lambda: _probe_hole(block - run - box_roof, {"key": "c", "type": "BORE", "params": {"diameter": 10},
+                                                         "pose": pose((20, 0, 0), (1, 0, 0), (0, 1, 0))}), "not round")
+    # A screw only passes a clearance hole, so its bulge is a finding until it
+    # reaches the head: t3-010's M5 hole, Ø6.93 at the equator under an Ø8.5 head.
+    m5 = Rot(0, 90, 0) * Cylinder(2.75, 50)
+    m5_roof = Rot(45, 0, 0) * Box(50, 5.5, 5.5) & Pos(0, 0, 5.5) * Box(52, 11, 11)
+
+    def m5_hole(part):
+        return _probe_hole(part, {"key": "m5", "type": "CLEARANCE_HOLE", "params": {"diameter": 5.5},
+                                  "pose": pose((20, 0, 0), (1, 0, 0), (0, 1, 0))})
+    expect("an M5 clearance hole with a Box teardrop passes with a finding",
+           lambda: None if "short of the M5 head" in m5_hole(block - m5 - m5_roof).get("finding", "")
+           else _raise_selfcheck("no finding"))
+    expect("a bulge past the M5 head's Ø8.5 bearing fails",
+           lambda: m5_hole(block - m5 - Pos(0, 0, 0.5) * Box(50, 9, 1)), "past the M5 head's Ø8.5")
+
+    print("threads — straight and round to the probes, from the cheat sheet's groove")
+    def groove(pitch, length, r_from, r_to, h=0.25, c=0.1):
+        s = 1 if r_to > r_from else -1
+        a, b = r_from - 0.3 * s, r_from + 0.05 * s
+        pts = [(a, -h * pitch), (b, -h * pitch), (r_to, -c * pitch), (r_to, c * pitch), (b, h * pitch), (a, h * pitch)]
+        return sweep(Plane.XZ * Polygon(*pts[::-s], align=None), Helix(pitch, length, a), is_frenet=True)
+
+    pitch, rmin = 2.5, 10 - 1.0825 * 2.5 + 0.1
+    nut = Pos(0, 0, 7.5) * Box(30, 30, 15) - Pos(0, 0, -pitch) * groove(pitch, 15 + 2 * pitch, rmin, 10.1)
+    nut = nut - Cylinder(rmin, 45)
+    expect("an M20 internal thread is a straight, centred BORE at its minor Ø",
+           lambda: _probe_hole(nut, {"key": "t", "type": "BORE", "pose": pose((0, 0, 15)),
+                                     "params": {"diameter": round(2 * rmin, 2)}}))
+
+    def spigot(d, pitch, length, bore=0.0):
+        r_maj, r_min = d / 2 - 0.1, d / 2 - 0.6134 * pitch - 0.1
+        shank = Pos(0, 0, -length / 2) * Cylinder(r_maj, length)
+        shank = shank - Pos(0, 0, -length - pitch) * groove(pitch, length + pitch - 0.5, r_maj, r_min)
+        shank = shank - Pos(0, 0, -length - pitch / 2) * groove(pitch, pitch, r_maj, r_min - 0.05, 0.48, 0.48)
+        part = Box(40, 40, 6) + Pos(0, 0, 3) * Rot(180, 0, 0) * shank
+        return part - Cylinder(bore / 2, 100) if bore else part
+
+    def threaded(part, d, length):
+        return lambda: _probe_shaft(part, {"key": "s", "type": "SHAFT", "pose": pose((0, 0, 3)),
+                                           "params": {"diameter": d, "length": length}})
+    expect("an M8 threaded spigot is a round Ø8 peg", threaded(spigot(8, 1.25, 12), 8, 12))
+    tube = spigot(24, 3, 20, bore=18)
+    expect("a hollow M24 x 3 spigot with a Ø18 passage is a peg (t4-007)", threaded(tube, 24, 20))
+    expect("and declared Ø30 it is still caught", threaded(tube, 30, 20), "expected Ø30")
 
     print("G0 — a stated feature may not be optional")
     sweep_guarded = ("from build123d import *\ndef build(p):\n    part = Box(10, 10, 10)\n    try:\n"

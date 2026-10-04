@@ -21,6 +21,8 @@ const ok = (i: Partial<JointInput>) => {
   if ("error" in d) throw new Error(d.error);
   return d as JointDecision;
 };
+/** Two MDF panels, machined: a CNC b that is wood is never tapped. */
+const WOOD: Partial<JointInput> = { processA: "CNC", processB: "CNC", materialA: "18mm MDF", materialB: "birch plywood" };
 const roles = (d: JointDecision) => d.parts.map((p) => `${p.role}:${p.family}:${p.key}${p.length ? `x${p.length}` : ""}`);
 
 describe("selectJoint: one row per rule", () => {
@@ -34,6 +36,7 @@ describe("selectJoint: one row per rule", () => {
     ["R5 axial nut trap", { intent: "permanent", load: "medium", wallA: 4, wallB: 8 }, "R5", ["screw:button:M4x12", "nut:hex_nut:M4"]],
     ["R6 side nut trap", { intent: "permanent", load: "medium", access: "one_side", wallA: 4, wallB: 10, lateral: 12 }, "R6", ["screw:button:M4x12", "nut:hex_nut:M4"]],
     ["M1 rotor on two bearings", { motion: "revolute", duty: "continuous", wallA: 14, wallB: 8 }, "M1", ["bearing_a:bearing:625", "bearing_b:bearing:625", "shaft:d_shaft:5", "collar:collar:5"]],
+    ["M1h V-wheel on its own bearings, axle in a 3mm plate", { motion: "revolute", duty: "continuous", wallA: 3, wallB: 12 }, "M1h", ["hub_bearing_a:bearing:625", "hub_bearing_b:bearing:625", "axle_shaft:d_shaft:5", "axle_collar:collar:5"]],
     ["M2 occasional pivot on bushings", { motion: "revolute", wallA: 12, wallB: 8 }, "M2", ["bushing_a:bushing:5x8x5", "bushing_b:bushing:5x8x5", "shaft:d_shaft:5", "collar:collar:5"]],
     ["M2p printed pin when allowed, e-clipped", { motion: "revolute", allowPrinted: true }, "M2p", ["pin_clip:eclip:4"]],
     ["M2d a separate pin when the walls are too thin for bushings", { motion: "revolute", wallA: 7.7, wallB: 7.7, shaftHint: 3 }, "M2d", ["pin:dowel:3x12"]],
@@ -57,6 +60,10 @@ describe("selectJoint: one row per rule", () => {
       "motor:nema17:NEMA17", "motor_pulley:gt2_pulley:20T-5", "idler:gt2_idler:20T-5", "idler_washer:washer:M5",
       "idler_screw:button:M5x20", "idler_insert:heatset_std:M5", "belt:gt2_belt:6x434",
     ]],
+    ["W1 wood panels align on glued furniture dowels", { ...WOOD, intent: "alignment", wallA: 18, wallB: 40 }, "W1", ["dowel:wood_dowel:6x25"]],
+    ["W2 a removable wood panel joint on a cam lock and two dowels", { ...WOOD, wallA: 18, wallB: 300, lateral: 18 }, "W2",
+      ["cam:cam_lock:15", "cam_bolt:cam_bolt:34", "dowel:wood_dowel:6x25"]],
+    ["W3 a permanent wood panel joint on a confirmat", { ...WOOD, intent: "permanent", wallA: 16, wallB: 300 }, "W3", ["screw:confirmat:7x50"]],
   ];
   for (const [label, input, rule, parts] of rows) {
     it(label, () => {
@@ -84,15 +91,32 @@ describe("selectJoint: one row per rule", () => {
     }
   });
 
+  it("wood is never tapped: a cam lock needs b's panel thickness, else a confirmat", () => {
+    const d = ok({ ...WOOD, wallA: 18, wallB: 300 });
+    expect(d.rule).toBe("W3");
+    expect(d.dims).toMatchObject({ drillA: 7, drillB: 5, pilotDepth: 33 });
+    expect(ok({ ...WOOD, wallA: 18, wallB: 300, lateral: 18, roomA: 40 }).parts.map((p) => p.family)).toEqual(["cam_lock", "cam_bolt"]);
+    expect(ok({ ...WOOD, wallA: 18, wallB: 40, lateral: 18 }).dims.distance).toBe(24);
+    for (const load of ["none", "light", "medium"] as const) expect(ok({ ...WOOD, load, wallA: 16, wallB: 300 }).recipe).not.toBe("tapped");
+  });
+
   it("flush asks for a countersunk head", () => {
     expect(ok({ flush: true, wallA: 6 }).head).toBe("csk");
   });
 
   it("M1 always takes two bearings and says why", () => {
-    const d = ok({ motion: "revolute", load: "medium", wallA: 20 });
+    const d = ok({ motion: "revolute", duty: "continuous", load: "medium", wallA: 20 });
     expect(d.parts.filter((p) => p.family === "bearing")).toHaveLength(2);
     expect(d.reasons.join(" ")).toMatch(/one cannot take a moment load/);
     expect(d.parts[0]!.key).toBe("628"); // Ø8 for medium, the largest OD that fits twice in 20
+  });
+
+  it("an occasional pivot under a medium load turns on a pin or bushings, not bearings", () => {
+    // extruder idler arm and latch: bearing×2 + collar + shaft for a pivot that barely moves
+    const d = ok({ motion: "revolute", load: "medium", wallA: 30, wallB: 10 });
+    expect(d.rule).toMatch(/^M2/);
+    expect(d.parts.some((p) => p.family === "bearing")).toBe(false);
+    expect(ok({ motion: "revolute", load: "heavy", wallA: 30, wallB: 12 }).rule).toBe("M1");
   });
 });
 
@@ -109,7 +133,13 @@ describe("thread and drive choice", () => {
   it("servo, N20, brushless and NEMA 17 by speed and torque", () => {
     const d = (i: Partial<JointInput>) => pickDrive({ ...base, motion: "revolute", driven: true, ...i });
     expect(d({ speedClass: "low", duty: "occasional" }).motor.family).toBe("sg90");
-    expect(d({ speedClass: "low", torqueClass: "high" }).motor.family).toBe("n20");
+    expect(d({ speedClass: "low", torqueClass: "high", duty: "continuous" }).motor.family).toBe("n20");
+    // An occasional servo joint picks its servo by torque.
+    expect(d({ speedClass: "low", torqueClass: "medium" }).motor).toMatchObject({ family: "mg996r", key: "MG996R" });
+    expect(d({ speedClass: "low", torqueClass: "high" }).motor).toMatchObject({ family: "sts3215", key: "STS3215" });
+    // A stated servo or NEMA 14 drives b directly, whatever the classes say.
+    expect(d({ speedClass: "high", prefer: { family: "sts3215" } })).toMatchObject({ motor: { family: "sts3215" }, coupling: "direct" });
+    expect(d({ prefer: { family: "nema14", key: "nema14" } }).motor).toMatchObject({ family: "nema14", key: "NEMA14" });
     expect(d({ speedClass: "high" }).motor.family).toBe("brushless");
     expect(d({ precise: true }).motor.family).toBe("nema17");
     expect(d({ speedClass: "medium" })).toMatchObject({ motor: { family: "nema17" }, coupling: "direct" });
@@ -213,8 +243,8 @@ describe("no rule fits", () => {
   });
 
   it("a bearing joint in a thin housing says how thick it must be", () => {
-    const r = selectJoint({ ...base, id: "rotor", motion: "revolute", duty: "continuous", wallA: 8 });
-    expect((r as { error: string }).error).toMatch(/^rotor: M1 wallA 8\.0 < 2 × bearing width 5\.0 \+ 1\.2/);
+    const r = selectJoint({ ...base, id: "rotor", motion: "revolute", duty: "continuous", wallA: 6 });
+    expect((r as { error: string }).error).toMatch(/^rotor: M1 wallA 6\.0 < 2 × bearing width 2\.5 \+ 1\.2/);
   });
 
   it("snap fits stay off behind their flag", () => {

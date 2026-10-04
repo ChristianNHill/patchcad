@@ -138,6 +138,40 @@ describe("G5 globalCheck: instances, contacts, allowances, attribution", () => {
     expect(res.findings![0]!.message).toContain("plate.top → arm.seat");
   });
 
+  // pipe-clamp: an M5 head 0.5mm off its counterbore blocked two registry
+  // screws, which have no repair round. The host's seat is what is off.
+  describe("a hardware↔host mate", () => {
+    const clamp = graph(
+      [
+        { id: "clamp", volumes: [box([60, 30, 15])], ports: [{ name: "head", type: "COUNTERBORE", at: [0, 0, -7.5], z: DOWN, params: { diameter: 9.5, depth: 5.4, through_diameter: 5.5 } }] },
+        { id: "screw", kind: "fastener", params: [{ name: "sku", default: "ISO4762-M5" }], ports: [{ name: "head", type: "FLAT_FACE", at: [0, 0, 5.4], z: DOWN }] },
+      ],
+      [["clamp", "head", "screw", "head"]],
+    );
+
+    it("reaches the counterbore's floor with the contact ball, not just its mouth", async () => {
+      const { kernel, calls } = stubKernel(empty);
+      await new CadBackend({ kernel }).globalCheck(clamp, ws);
+      const [q] = calls[0]!.opts.contacts as { radius: number }[];
+      expect(q!.radius).toBeCloseTo(Math.hypot(9.5 / 2, 5.4), 3);
+    });
+
+    it("pins a gap on the host, blocks only the host, and gives it a repair round", async () => {
+      const { kernel } = stubKernel({ ...empty, contacts: [{ edge: "e0", a: "clamp", b: "screw", gap_mm: 0.5, at: [0, 0, -7.5] }] });
+      const [f] = (await new CadBackend({ kernel }).globalCheck(clamp, ws)).findings!;
+      expect(f).toMatchObject({ kind: "gap", blame: ["clamp"], repair: { nodeId: "clamp" } });
+      expect(f!.repair!.report).toContain('COUNTERBORE port "head"');
+      expect(f!.repair!.report).toContain("sits flush");
+    });
+
+    it("pins a clash on the host, never on the hardware", () => {
+      const at: Vec = [0, 0, -5];
+      const [f] = clashFindings(clamp, { parts: 2, pairs_tested: 1, clashes: [{ a: "screw", b: "clamp", volume_mm3: 9, at }] }, solvePlan(clamp).instances);
+      expect(f).toMatchObject({ blame: ["clamp"], repair: { nodeId: "clamp" } });
+      expect(f!.repair!.report).toContain("catalog fastener screw");
+    });
+  });
+
   it("does not call a peg's designed slip clearance a gap", async () => {
     const pegged = graph(
       [
@@ -291,6 +325,33 @@ describe("plan-time geometry lint", () => {
     expect(cadPlanGeometryLint.run(graph([peg], []))).toEqual([]);
   });
 
+  // t3-004: a Ø12 bore with a keyway whose floor is 8 from the axis. Its
+  // mouth is the bore wall; posed on the floor, the generator cut 2mm past it.
+  const pulley = (y: number): Spec => ({
+    id: "pulley",
+    volumes: [cyl(60, 32, [0, 0, 16])],
+    ports: [
+      { name: "bore", type: "BORE", at: [0, 0, 32], params: { diameter: 12 } },
+      { name: "keyway", type: "SLOT", at: [0, y, 16], z: [0, -1, 0], x: [0, 0, 1], params: { width: 4, depth: 2 } },
+    ],
+  });
+
+  it("flags a SLOT posed on its floor, open into its bore a depth in front", () => {
+    const out = cadPlanGeometryLint.run(graph([pulley(8)], []));
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatch(/pulley: SLOT port "keyway" sits on its channel's FLOOR.*inside bore "bore".*move the origin 2mm along \+z/);
+  });
+
+  it("passes a keyway posed at its mouth on the bore wall", () => {
+    expect(cadPlanGeometryLint.run(graph([pulley(6)], []))).toEqual([]);
+  });
+
+  it("flags a face GROOVE posed on its floor and passes one at the face", () => {
+    const grooved = (z: number): Spec => ({ ...plate, ports: [{ name: "groove", type: "GROOVE", at: [0, 0, z], params: { width: 3, depth: 1.5 } }] });
+    expect(cadPlanGeometryLint.run(graph([grooved(0.5)], []))[0]).toMatch(/GROOVE port "groove" sits on its channel's FLOOR.*outside the envelope/);
+    expect(cadPlanGeometryLint.run(graph([grooved(2)], []))).toEqual([]);
+  });
+
   // The eval's hinge plan, resolved: both leaves 40×30×3 with a Ø7 knuckle
   // along x at y = 11.5, mated knuckle face to knuckle face with the same
   // xAxis, so leaf-b landed exactly on leaf-a (G5 measured 2678mm³).
@@ -429,6 +490,17 @@ describe("G5 hardware: designed overlap and fit bands", () => {
       { a: "g20", b: "g40", volume_mm3: expect.closeTo(0.2 * 0.1 * 1 * 6 * 1.5, 6) },
     ]);
     expect(hardwareAllowances(graph([gear("g20", 1), gear("g40", 1.5)], []))).toEqual([]);
+  });
+
+  // belt-turntable: the swept motor gear's D-bore turned through the NEMA's still D-shaft.
+  it("allows a wheel on a motor's D-shaft one D-segment along the wheel", () => {
+    const motor = part("motor", "motor", { size: "NEMA17" });
+    const gear = part("gear", "gear", { module: 1.5, teeth: 20, thickness: 9 });
+    const segment = 2.5 ** 2 * Math.acos(2 / 2.5) - 2 * Math.sqrt(2.5 ** 2 - 2 ** 2);
+    expect(hardwareAllowances(graph([motor, gear], [["motor", "seat", "gear", "seat"]]))).toEqual([
+      { a: "gear", b: "motor", volume_mm3: expect.closeTo(segment * 9 * 1.5, 6) },
+    ]);
+    expect(hardwareAllowances(graph([motor, gear], []))).toEqual([]);
   });
 
   it("sends the hardware allowances to the kernel beside the thread ones", async () => {

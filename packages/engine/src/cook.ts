@@ -172,8 +172,9 @@ export async function cookNodes(deps: CookDeps, nodeIds: string[]): Promise<Cook
   for (;;) {
     const reports = new Map<string, string[]>();
     for (const f of check.findings ?? []) {
-      if (!f.repair || !deps.store.doc.nodes[f.repair.nodeId] || (spent.get(f.repair.nodeId) ?? 0) >= budget) continue;
-      reports.set(f.repair.nodeId, [...(reports.get(f.repair.nodeId) ?? []), f.repair.report]);
+      const target = f.repair && deps.store.doc.nodes[f.repair.nodeId];
+      if (!target || deps.backend.deterministicOnly?.(target) || (spent.get(target.id) ?? 0) >= budget) continue;
+      reports.set(target.id, [...(reports.get(target.id) ?? []), f.repair!.report]);
     }
     if (reports.size === 0 || deps.signal?.aborted) break;
     await Promise.all(
@@ -223,7 +224,7 @@ export const ASSEMBLY_STAGE = "assembly";
 export function applyCheck(store: GraphStore, check: CheckResult): void {
   const blamed = new Map<string, string[]>();
   for (const f of check.findings ?? []) {
-    for (const id of new Set([f.nodeA, f.nodeB])) blamed.set(id, [...(blamed.get(id) ?? []), f.message]);
+    for (const id of new Set(f.blame ?? [f.nodeA, f.nodeB])) blamed.set(id, [...(blamed.get(id) ?? []), f.message]);
   }
   for (const n of Object.values(store.doc.nodes)) {
     const message = blamed.get(n.id)?.join("\n");
@@ -494,6 +495,16 @@ async function cookBody(deps: CookDeps, nodeIdValue: string, token: number, seed
       attribution: "code-invalid",
     });
     throw new Error(`${nodeIdValue}: registry artifact failed gates`);
+  }
+  // Fail closed: past this point lie the library and the generator.
+  if (backend.deterministicOnly?.(store.node(nodeIdValue))) {
+    const why = seeded ? `an assembly repair (${seed!.stage}) was asked of it` : "it resolved no deterministic artifact";
+    setStatus("error_code", {
+      stage: "registry",
+      message: `${store.node(nodeIdValue).kind} parts are built only by the registry, never generated, and ${why}.`,
+      attribution: "code-invalid",
+    });
+    throw new Error(`${nodeIdValue}: registry-only node would reach the model`);
   }
 
   // -- regate: a dirty wave re-checks what the node already has --
