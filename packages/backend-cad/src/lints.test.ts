@@ -1075,6 +1075,25 @@ describe("contract assertions", () => {
     expect(out[2]).toContain("larger than the envelope");
   });
 
+  // real-magnet-hinged-box: y max 116 for a 112 body whose Ø6.4 knuckle
+  // cylinders stand outside the back wall; G4b measured 118.4 on base and lid.
+  it("rejects an overall max that leaves out a port-holding feature outside the body", () => {
+    const hinged = (max: number, knuckleHoldsPort = true) => {
+      const g = withAssertions([{ kind: "bbox_axis", axis: "y", min: 111.5, max }]);
+      const knuckle = { origin: [-50, 59.2, 14], zAxis: [1, 0, 0], xAxis: [0, 1, 0] };
+      const p = g.nodes.p!.contract.payload as { ports: unknown[]; envelope: { volumes: unknown[] } };
+      p.envelope = { ...p.envelope, volumes: [{ kind: "box", pose, dims: [150, 112, 28] }, { kind: "cylinder", pose: knuckle, d: 6.4, h: 10 }] };
+      p.ports = [{ name: "hinge", type: "FLAT_FACE", pose: knuckleHoldsPort ? knuckle : pose, params: { ring_diameter: 4.15 } }];
+      return cadAssertionsCoherentLint.run(g);
+    };
+    const [out] = hinged(116);
+    expect(out).toContain("cylinder volume 1 holding port hinge");
+    expect(out).toContain("raise max to at least 118.4");
+    expect(hinged(119)).toEqual([]);
+    // A volume with no port in it is not known to be a feature the part must have.
+    expect(hinged(116, false)).toEqual([]);
+  });
+
   it("rejects a hole_count its own hole-like ports already meet, naming them", () => {
     const rotor = (assertions: unknown[], ports: unknown[]) => {
       const g = withAssertions(assertions);

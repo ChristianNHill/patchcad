@@ -169,6 +169,7 @@
       "dims": { "7": { "d": 7, "core": 4, "headD": 10, "shoulderL": 9, "socketAf": 4, "drillA": 7, "drillB": 5 } },
       "lengths": { "7": [50] }
     },
+    "chipboard": {"category": "fasteners", "kind": "fastener", "keyedBy": "size", "skuPrefix": "DIN7505", "standard": "DIN 7505 A", "note": "countersunk chipboard / wood screw, Pozi PZ2, 90° head (headD, DIN 7505 A dk); thread modelled at its core Ø (d2 max), which is under pilotHard, so a pilot drilled at pilotHard shares nothing with it. pilotSoft/pilotHard are the usual softwood/hardwood pilots (trade table, not the standard). DIN 7505 is withdrawn and heads vary by maker: k is 2.0-3.65 across sources, so the head is modelled as the 90° cone from d to headD. Sources: globalfastener.com DIN 7505 table; fasten.it; lengths from finescrews.com", "dimsSource": "standard", "dims": {"3.5": {"d": 3.5, "core": 2.15, "pitch": 1.6, "headD": 7, "pilotSoft": 2, "pilotHard": 2.5}, "4": {"d": 4, "core": 2.5, "pitch": 1.8, "headD": 8, "pilotSoft": 2.5, "pilotHard": 3}, "4.5": {"d": 4.5, "core": 2.7, "pitch": 2, "headD": 9, "pilotSoft": 3, "pilotHard": 3.5}, "5": {"d": 5, "core": 3, "pitch": 2.2, "headD": 10, "pilotSoft": 3, "pilotHard": 3.5}}, "lengths": {"3.5": [12, 16, 20, 25], "4": [16, 20, 25, 30, 35, 40, 45, 50], "4.5": [20, 25, 30, 35, 40, 45, 50], "5": [30, 35, 40, 45, 50, 60, 70, 80]}},
     "cam_lock": {
       "category": "fasteners", "kind": "cam_lock", "keyedBy": "size", "skuPrefix": "CAM",
       "note": "flat-pack cam housing (Minifix-type 15): Ø15 bore drillDepth deep in the face of the panel, centred `drillDistance` of its cam bolt from the edge; the bolt enters through an Ø8 edge hole", "dimsSource": "family-typical",
@@ -368,6 +369,7 @@
         "MGN12C": { "rail": "MGN12", "width": 27, "length": 34.7, "height": 13, "gap": 3, "mountX": 15, "mountY": 20, "mountThread": "M3" }
       }
     },
+    "v_wheel": {"category": "linear", "kind": "v_wheel", "keyedBy": "size", "skuPrefix": "VWHEEL", "note": "OpenBuilds Delrin Solid V Wheel kit as one solid: the wheel, two 625 bearings (bearing) with a 10x5x1 shim between them, so the inner races stand `proud` past each face. Rides a 20-series V-slot rail at centre-to-centre = rail depth + 20 (OpenBuilds forum rule; design at +20.3); M5 bolt. od, width, bore, the shim and the kit are from Rat Rig's kit page; the V profile (vAngle, hubD) and the race Ø are not published and are family-typical. Seat on z = 0 (an inner race face), body +z.", "dimsSource": "family-typical", "dims": {"SOLID": {"od": 23.9, "width": 10.23, "seatD": 16, "bearing": "625", "bore": 5, "shim": 1, "proud": 0.385, "raceD": 8, "hubD": 19, "vAngle": 90, "boltThread": "M5", "railOffset": 10}}},
     "gt2_pulley": {
       "category": "transmission", "kind": "pulley", "keyedBy": "size", "skuPrefix": "GT2P",
       "note": "2 mm pitch GT2 timing pulley for 6 mm belt; pitch Ø = teeth x 2 / pi, tip Ø = pitch Ø - 0.508. A 16T rim is too small for an 8 mm bore", "dimsSource": "family-typical",

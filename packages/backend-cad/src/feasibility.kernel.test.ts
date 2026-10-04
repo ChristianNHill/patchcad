@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { GraphDoc } from "@patchcad/shared";
 import { reexpandGraph, type Workspace } from "@patchcad/engine";
-import { CadBackend } from "./index.js";
+import { CadBackend, assemblyInstructions } from "./index.js";
 import { KernelClient } from "./kernel.js";
 
 /**
@@ -74,6 +74,27 @@ describe.skipIf(!live)("assembly feasibility in globalCheck", () => {
     const g = reexpanded(stand(), { printInPlace: true });
     expect(g.nodes.hinge_pin_clip).toBeUndefined();
     expect(await assembly(g)).toEqual([]);
+  }, 120_000);
+
+  const winch = () => GraphDoc.parse(JSON.parse(readFileSync(new URL("fixtures/asm-hand-winch-graph-2.json", import.meta.url), "utf8")));
+
+  it("winch: a bearing in a U-frame's inner face is pressed in from inside the frame", async () => {
+    const g = winch();
+    expect(await assembly(g)).toEqual([]);
+    const { sequence } = await assemblyInstructions(g, backend.solveScene(g), backend.kernel, { render: false });
+    expect(sequence.steps.flatMap((s) => s.notes)).toContainEqual(expect.stringMatching(/press .*from inside the frame/i));
+  }, 120_000);
+
+  it("the same bearing in a closed box, no opening it fits through, cannot go in", async () => {
+    const g = winch();
+    const frame = g.nodes.frame!.artifact!;
+    // A lid over the U and walls across both open ends.
+    frame.code = frame.code.replace(
+      "body = base + pl + pr\n",
+      "body = base + pl + pr + Pos(0, 0, top - tb / 2) * Box(L, W, tb) + Pos(0, -(W / 2 - tp / 2), top / 2) * Box(L, tp, top) + Pos(0, W / 2 - tp / 2, top / 2) * Box(L, tp, top)\n",
+    );
+    const found = await assembly(g);
+    expect(found.some((f) => f.nodeA === "j-drum_bearing_a" && f.nodeB === "frame")).toBe(true);
   }, 120_000);
 
   it.each(["cad-rotor", "cad-joints", "cad-belt-drive"])("%s still goes together", async (name) => {

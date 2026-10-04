@@ -286,7 +286,13 @@ export interface ExportResult {
 export interface InsertionResult {
   ok: boolean;
   insertions?: {
-    checks: { id: string; blocked: { part: string; by: string; depth_mm: number; volume_mm3: number; travel_mm: number; at: number[] }[] }[];
+    checks: {
+      id: string;
+      /** `enclosed`: its start pose is shut in, reachable neither along its axis nor sideways. */
+      blocked: { part: string; by: string; depth_mm: number; volume_mm3: number; travel_mm: number; at: number[]; enclosed?: boolean }[];
+      /** Reached sideways (inside-out insertion): the way it travels to its start pose. */
+      enters?: number[];
+    }[];
     errors: string[];
   };
   stage?: string;

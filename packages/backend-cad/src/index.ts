@@ -253,10 +253,10 @@ import { CadJoint } from "./joints.js";
 import { CATALOG, skuFor } from "./catalog.js";
 import { cadJointRuleLint, expandJoints, gearMeshJoints, graphMates, isJointHardware, jointAxes } from "./expand.js";
 import { gearHubName, mintDefaultGearPorts, mintNamedGearPorts } from "./gear-ports.js";
-import { kinematicJoints, poseToMat, solveAssembly, type AssemblyNode } from "./assembly.js";
+import { IDENTITY, kinematicJoints, poseToMat, solveAssembly, type AssemblyNode } from "./assembly.js";
 import { resolveBinding, resolveDim, resolvePose } from "./bindings.js";
 import { DIAMETER_KEYS, clashFindings, contactQueries, fitFindings, hardwareAllowances, threadAllowances } from "./g5.js";
-import { cadPlanGeometryLint } from "./plan-geometry.js";
+import { cadPlanGeometryLint, contains, posedEnvelope } from "./plan-geometry.js";
 import { silhouetteAdvisories } from "./silhouette.js";
 import { geometrySourceGuidance, isMeshNode, meshNodeCode, meshSourceLint, prepareMeshNode, type MeshSource } from "./mesh-source.js";
 import { Sourcing, cadSourcingLint, markCncSetups, sourcingOf } from "./sourcing.js";
@@ -1026,6 +1026,39 @@ function portHoles(graph: GraphDoc, p: CadContractPayload["ports"][number]): num
   }
 }
 
+/**
+ * An envelope volume holding a port that stands past the rest of the envelope
+ * along axis `i`, when `max` covers the rest but not it. real-magnet-hinged-box:
+ * y max 116 for a 112 body, its Ø6.4 knuckles outside the back wall (their own
+ * cylinders, holding the hinge ports), measured 118.4 on base and lid alike.
+ * A padded single box never fires: nothing stands past the rest.
+ */
+function featurePastMax(graph: GraphDoc, n: NodeRecord, boxes: Aabb[], i: number, max: number): { volume: string; port: string; span: number } | undefined {
+  if (boxes.length < 2) return undefined;
+  const lo = Math.min(...boxes.map((b) => b.min[i]!));
+  const hi = Math.max(...boxes.map((b) => b.max[i]!));
+  if (hi - lo <= max + ENVELOPE_LINT_MARGIN) return undefined;
+  const payload = n.contract.payload as CadContractPayload;
+  let prims: ReturnType<typeof posedEnvelope> = [];
+  let origins: { name: string; o: [number, number, number] }[] = [];
+  try {
+    prims = posedEnvelope(graph, n.id, IDENTITY);
+    origins = payload.ports.map((p) => ({ name: p.name, o: resolvePose(graph, p.pose).origin as [number, number, number] }));
+  } catch {
+    return undefined; // unresolvable expression — cadExpressionsResolveLint's
+  }
+  if (prims.length !== boxes.length) return undefined;
+  // The body is the volume widest along the axis; the max must at least hold it.
+  const body = boxes.reduce((w, b) => (b.max[i]! - b.min[i]! > w.max[i]! - w.min[i]! ? b : w));
+  if (body.max[i]! - body.min[i]! > max + ENVELOPE_LINT_MARGIN) return undefined;
+  for (const [k, b] of boxes.entries()) {
+    if (b.max[i]! <= body.max[i]! + ENVELOPE_LINT_MARGIN && b.min[i]! >= body.min[i]! - ENVELOPE_LINT_MARGIN) continue;
+    const port = origins.find((p) => contains(prims[k]!, p.o, 0.01));
+    if (port) return { volume: `${payload.envelope.volumes[k]!.kind} volume ${k}`, port: port.name, span: hi - lo };
+  }
+  return undefined;
+}
+
 /** Assertions no geometry can satisfy, caught before a cook pays to find out.
  *  Only true contradictions: a bbox_axis MAX beyond the envelope is merely
  *  loose (G4 is the tighter bound and still holds), but a MIN beyond it asks
@@ -1076,6 +1109,12 @@ export const cadAssertionsCoherentLint = {
           if (a.min !== undefined && a.max !== undefined && a.min > a.max)
             problems.push(`${n.id}: assertion bbox_axis ${a.axis} has min ${a.min} > max ${a.max} mm.`);
           const i = { x: 0, y: 1, z: 2 }[a.axis];
+          const past = a.max === undefined ? undefined : featurePastMax(graph, n, boxes, i, a.max);
+          if (past)
+            problems.push(
+              `${n.id}: assertion bbox_axis ${a.axis} max ${a.max} mm covers the body but not the ${past.volume} holding port ${past.port}, which stands past the body: the part spans ${past.span.toFixed(1)} mm along ${a.axis} with it. ` +
+                `An overall size includes every feature outside the body (hinge knuckles, tabs, bosses): raise max to at least ${past.span.toFixed(1)}, or shrink that volume if it is bigger than the feature.`,
+            );
           if (boxes.length > 0 && a.min !== undefined) {
             const extent = Math.max(...boxes.map((b) => b.max[i]!)) - Math.min(...boxes.map((b) => b.min[i]!));
             if (a.min > extent + 2 * ENVELOPE_LINT_MARGIN)

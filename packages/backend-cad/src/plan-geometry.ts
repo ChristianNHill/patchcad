@@ -353,6 +353,39 @@ function matedOverlap(
   return `${a.key} and ${b.key} are mated, but once placed about ${shared.toFixed(0)}mm³ of their envelopes (${Math.round((100 * shared) / smaller)}% of the smaller) coincide away from the mate's axis: the mate lays one part on top of the other. For a revolute joint (a hinge), the two parts face away from each other at travel 0: flip the mated port's xAxis (or zAxis) on one of them so they sit on opposite sides of the axis. Otherwise fix that port's pose or the envelope.`;
 }
 
+/**
+ * A made part's round envelope running through a catalog gear or pulley
+ * wider than its bore (asm-hand-winch: the rope drum's Ø14 hub boss ran
+ * through the 45T gear's Ø8 bore, 805mm³ at rest). The catalog part cannot
+ * make room and the made part's contract demands the boss, so G5 sends a
+ * repair round that cannot succeed: say it at plan time.
+ */
+function throughBores(graph: GraphDoc, instances: Record<string, Mat4[]>): string[] {
+  const problems: string[] = [];
+  const unitv = (v: Vec3): Vec3 => v.map((c) => c / Math.hypot(...v)) as Vec3;
+  for (const h of Object.values(graph.nodes)) {
+    if (h.kind !== "gear" && h.kind !== "pulley") continue;
+    const bore = Number(h.params?.bore ?? h.contract.params.find((p) => p.name === "bore")?.default);
+    const [wheel] = posedEnvelope(graph, h.id, instances[h.id]?.[0] ?? IDENTITY);
+    if (!(bore > 0) || !wheel?.round) continue;
+    const z = unitv(wheel.axes[2]);
+    for (const p of Object.values(graph.nodes)) {
+      if (p.id === h.id || REGISTRY_HARDWARE.has(p.kind) || FASTENING_HARDWARE.has(p.kind) || isJointHardware(graph, p.id)) continue;
+      for (const v of posedEnvelope(graph, p.id, instances[p.id]?.[0] ?? IDENTITY)) {
+        if (!v.round || Math.abs(Math.abs(dot(unitv(v.axes[2]), z)) - 1) > 1e-3) continue;
+        const off = sub(v.c, wheel.c);
+        const along = dot(off, z);
+        if (Math.hypot(...off.map((c, i) => c - along * z[i]!)) > PLAN_OVERLAP_TOL_MM) continue;
+        const overlap = Math.min(along + v.half[2], wheel.half[2]) - Math.max(along - v.half[2], -wheel.half[2]);
+        if (overlap <= PLAN_OVERLAP_TOL_MM || v.half[0] <= bore / 2 + 0.2) continue;
+        problems.push(`${p.id} runs Ø${(2 * v.half[0]).toFixed(1)} through ${h.id}'s Ø${bore} bore for ${overlap.toFixed(1)}mm along its axis. ${h.id} is catalog hardware and cannot make room: end ${p.id} at ${h.id}'s face (mate them face to face) and let the shaft, not ${p.id}, run through the bore.`);
+        break;
+      }
+    }
+  }
+  return problems;
+}
+
 /** Recipes that put b on a shaft or pin past a.port, never inside a. */
 const OFF_A_RECIPES = new Set(["bearings", "bushings", "pin", "hub_bearings", "flanged_bearing"]);
 
@@ -540,6 +573,7 @@ export const cadPlanGeometryLint = {
       }
     }
     problems.push(...axisClaims(graph, instances));
+    problems.push(...throughBores(graph, instances));
     // Revolute travel the parts' envelopes cannot make: a rotor that cannot
     // spin a full turn, or stated limits past the stops.
     for (const def of jointAxes(graph)) {

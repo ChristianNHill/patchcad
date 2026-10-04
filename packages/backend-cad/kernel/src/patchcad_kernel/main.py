@@ -508,7 +508,8 @@ class InsertionBody(BaseModel):
     parts: list[ClashPart] = Field(default_factory=list)
     import_dir: str = ""
     """{id, moving: [key], still: [key], direction, clear_mm?, travel_mm?}: direction is the way the moving
-    parts travel IN; clear_mm how far they ride a placed shaft before they are free; travel_mm a fixed sweep."""
+    parts travel IN; clear_mm how far they ride a placed shaft before they are free; travel_mm a fixed sweep.
+    A free start inside something must be reachable sideways (`enters`), or the check is blocked."""
     checks: list[dict[str, Any]] = Field(default_factory=list)
     allow: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -518,7 +519,7 @@ async def insertions_endpoint(body: InsertionBody):
     """Can each assembly step's new parts reach their pose? Each is swept in
     from outside along its approach against the parts already placed (G5's
     prismatic sweep); only overlap beyond what the pair shares at rest blocks."""
-    digest = job_hash(GATES_VERSION, "insertion-v2", [p.model_dump() for p in body.parts], body.import_dir,
+    digest = job_hash(GATES_VERSION, "insertion-v3", [p.model_dump() for p in body.parts], body.import_dir,
                       import_stamp(body.import_dir, *(p.code for p in body.parts)), body.checks, body.allow)
     cached_file = anyio.Path(CACHE_ROOT / digest / "insertions.json")
     if await cached_file.exists():

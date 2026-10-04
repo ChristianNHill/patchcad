@@ -72,6 +72,28 @@ describe("catalog coverage", () => {
     expect(listFamilies("misc")).toEqual(expect.arrayContaining(["disc_magnet", "oring", "standoff"]));
   });
 
+  // real-step-stool: furniture screws were M6 SHCS. Wood screws are their own
+  // family, and the thread is modelled at its core so a hardwood pilot clears it.
+  it("stocks DIN 7505 chipboard screws 3.5-5 apart from SHCS, core under the hardwood pilot", () => {
+    for (const k of ["3.5", "4", "4.5", "5"]) {
+      const r = familyDims("chipboard", k)!;
+      expect(r.d, k).toBe(Number(k));
+      expect(r.headD, k).toBe(2 * Number(k));
+      expect(r.core as number, k).toBeLessThanOrEqual(r.pilotHard as number);
+      expect(standardLengths("chipboard", k).length, k).toBeGreaterThan(0);
+    }
+    expect(CATALOG.families.chipboard!.kind).toBe("fastener");
+  });
+
+  it("seats a V-slot wheel kit on two catalog 625 bearings", () => {
+    const w = familyDims("v_wheel", "SOLID")!;
+    const b = familyDims("bearing", String(w.bearing))!;
+    expect(w.seatD).toBe(b.od);
+    expect(w.bore).toBe(b.bore);
+    // Two 5mm bearings and the 1mm shim stand past the 10.23 wheel, half each side.
+    expect(2 * (b.width as number) + (w.shim as number)).toBeCloseTo((w.width as number) + 2 * (w.proud as number), 6);
+  });
+
   it("gives every thread-keyed fastener family M3, M4 and M5", () => {
     for (const f of ["shcs", "button", "csk", "hex_nut", "washer", "heatset_std", "heatset_short"]) {
       for (const t of ["M3", "M4", "M5"]) expect(familyDims(f, t), `${f} ${t}`).toBeDefined();

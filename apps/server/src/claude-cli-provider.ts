@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { LlmCallError, parseJsonLoose, type LlmImage, type LlmProvider, type LlmRequest, type LlmResult, type LlmRole, type LlmUsage } from "@patchcad/engine";
 import { addUsage } from "./spend.js";
@@ -91,6 +93,7 @@ export class ClaudeCliProvider implements LlmProvider {
 
     let out = await attempt([]);
     let parsed = tryParse(req, out.raw);
+    dumpRejected(req.label, out.raw, parsed);
     if (!parsed.success) {
       // One repair reprompt, carrying the rejected answer so the model can see
       // what it just did rather than guessing from the error alone.
@@ -106,6 +109,7 @@ export class ClaudeCliProvider implements LlmProvider {
       }
       out = { ...out, usage: addUsage(first, out.usage) };
       parsed = tryParse(req, out.raw);
+      dumpRejected(req.label, out.raw, parsed);
       if (!parsed.success) {
         throw new LlmCallError(`${this.id}: schema validation failed twice for "${req.label}": ${parsed.error}`, out.usage);
       }
@@ -249,6 +253,16 @@ export function parseCliOutput(stdout: string, streamJson: boolean): CliResult |
 }
 
 const ZERO: LlmUsage = { inputTokens: 0, outputTokens: 0, usd: 0 };
+
+/** `PATCHCAD_LLM_DUMP=<dir>` keeps every reply that failed to parse, raw, so a
+ *  malformed plan can be replayed against the parser instead of re-bought. */
+function dumpRejected(label: string, raw: string, parsed: { success: boolean; error?: string }) {
+  const dir = process.env.PATCHCAD_LLM_DUMP;
+  if (!dir || parsed.success) return;
+  mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${label.replace(/[^\w.-]+/g, "_")}-${Date.now()}.txt`);
+  writeFileSync(file, `${parsed.error}\n---\n${raw}`);
+}
 
 /** Fence- and prose-tolerant, because a CLI turn has no JSON mode to enforce:
  *  a plain `claude -p` asked for one object still answered inside ```json. */

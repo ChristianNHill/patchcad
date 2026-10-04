@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { GraphDoc } from "@patchcad/shared";
 import { architectOutputToGraph, reexpandGraph, type ArchitectOutput } from "@patchcad/engine";
 import { CadBackend, type CadContractPayload } from "./index.js";
+import { familyDims } from "./catalog.js";
 import { cadJointRuleLint, expandJoints, graphMates, jointAxes, jointErrors, jointInput, staleJoints } from "./expand.js";
 import { reachableTravel } from "./plan-geometry.js";
 import { solveAssembly } from "./assembly.js";
@@ -281,6 +282,7 @@ describe("every recipe expands to a plan the CAD lints accept", () => {
     ["a dowel through a thin b", { intent: "alignment", prefer: { family: "dowel", key: "5" } }, 20, 6],
     ["threaded-rod stud as stated", { intent: "serviceable", prefer: { family: "threaded_rod", key: "M6" } }, 40, 40],
     ["wood: dowel screw as stated", { prefer: { family: "dowel_screw", key: "6" } }, 50, 60],
+    ["wood: chipboard screw as stated", { prefer: { family: "chipboard", key: "4" } }, 18, 40],
     ["wood: glued furniture dowels", { intent: "alignment" }, 18, 40],
     ["wood: confirmat", { intent: "permanent" }, 16, 60],
     ["wood: cam lock and dowels", { lateral: 18 }, 18, 60],
@@ -290,6 +292,8 @@ describe("every recipe expands to a plan the CAD lints accept", () => {
       const plan = plates(joint, wb, wa);
       // A rail's screws sit along its whole length, inside the part it is on.
       if (label.startsWith("rail")) Object.assign((plan.nodes[0]!.contract.payload as CadContractPayload).envelope.volumes[0]!, { d: 300 });
+      // The STS3215's case screws reach ~30 from its axis: a plate that holds it.
+      if (label.startsWith("STS3215")) Object.assign((plan.nodes[0]!.contract.payload as CadContractPayload).envelope.volumes[0]!, { d: 80 });
       if (label.startsWith("wood")) {
         for (const n of plan.nodes) {
           const p = n.contract.payload as CadContractPayload;
@@ -968,6 +972,54 @@ function twoHinges(lidR: [number, number, number]) {
   return { ...plates({}), nodes: [box, lid] as never, entryNodeId: "box", joints: [joint("hinge-left", "l"), joint("hinge-right", "r")] } as ArchitectOutput;
 }
 
+describe("a servo's face ring", () => {
+  const sts = () => {
+    const plan = plates({ motion: "revolute", driven: true, speedClass: "low", torqueClass: "high" }, 6, 4);
+    Object.assign((plan.nodes[0]!.contract.payload as CadContractPayload).envelope.volumes[0]!, { d: 80 });
+    return expandJoints(plan);
+  };
+  it("stays inside the STS3215's nearest case screw (real-robot-arm)", () => {
+    // 2 × (nearest M2 clearance hole from the axis − 1.2 − 0.6), from the catalog row
+    const r = familyDims("sts3215", "STS3215")!;
+    const sx = Number(r.bodyL) / 2 - Number(r.bossD) / 2;
+    const cx = Number(r.holeX ?? 0) - sx;
+    const near = Math.min(...[-1, 1].flatMap((a) => [-1, 1].map((b) => Math.hypot(cx + (a * Number(r.holePitch)) / 2, (b * Number(r.holeRowPitch)) / 2))));
+    const face = (sts().nodes[0]!.contract.payload as CadContractPayload).ports.find((p) => p.name === "lid_face")!;
+    expect(face.params.ring_diameter).toBeCloseTo(Math.min(Number(r.splineD) + 4, 2 * (near - 1.2 - 0.6)), 3);
+  });
+  it("screws b to the horn and the case to a, and seats b on the horn's face (real-robot-arm)", () => {
+    const out = sts();
+    const screws = (role: string) => out.nodes.find((n) => n.id === `j1_${role}`)!;
+    expect(param(out, "j1_case_screw", "sku")).toMatch(/M2/);
+    expect(param(out, "j1_horn_screw", "sku")).toMatch(/M3/);
+    expect(out.edges.filter((e) => e.to === "j1_case_screw")).toHaveLength(4);
+    expect(out.edges.filter((e) => e.to === "j1_horn_screw")).toHaveLength(4);
+    expect(screws("horn_screw").contract.payload).toBeDefined();
+    expect(ports(out, "lid")).toEqual(expect.arrayContaining(["j1_horn_head_1:CLEARANCE_HOLE"]));
+    expect((out.nodes[1]!.contract.payload as CadContractPayload).ports.find((p) => p.name === "j1_hub")!.type).toBe("FLAT_FACE");
+    expect(lintAll(out)).toEqual([]);
+  });
+});
+
+describe("a screw pattern on a narrow face", () => {
+  // real-round-stool: 3 screws at pitch 35 as a triangle put tap_1 on the edge
+  // of a 110×40 leg arm ("needs 10.5mm of depth, measured 0.60").
+  const arm = (lidBox: [number, number]) => {
+    const plan = plates({ count: 3, pitch: 35, load: "medium" }, 30, 20);
+    const box = (dims: [number, number], h: number, z: number) => ({ volumes: [{ kind: "box", pose: { origin: [0, 0, z], zAxis: [0, 0, 1], xAxis: [1, 0, 0] }, dims: [...dims, h] }], clearance: 0.4 });
+    (plan.nodes[0]!.contract.payload as CadContractPayload).envelope = box([110, 40], 20, 10) as never;
+    (plan.nodes[1]!.contract.payload as CadContractPayload).envelope = box(lidBox, 30, 15) as never;
+    const out = expandJoints(plan);
+    return (out.nodes[0]!.contract.payload as CadContractPayload).ports.filter((p) => p.name.startsWith("j1_head")).map((p) => (p.pose.origin as number[]).slice(0, 2));
+  };
+  it("lays them in a row along the face's long side", () => {
+    expect(arm([110, 40])).toEqual([[-35, 0], [0, 0], [35, 0]]);
+  });
+  it("keeps the ring where the row does not fit either", () => {
+    expect(arm([40, 40]).map(([x, y]) => Math.round(Math.hypot(x!, y!) * 100) / 100)).toEqual([20.21, 20.21, 20.21]);
+  });
+});
+
 describe("a shaft whose length is an expression", () => {
   it("gets an envelope as long as the shaft, not a 2mm stub (two-link-arm)", () => {
     const out = expandJoints(plates({ motion: "revolute", wallA: 14, wallB: 8 }, 8, 14));
@@ -1067,17 +1119,67 @@ describe("real-product leftovers", () => {
   });
 
   /** A tilt cradle between a yoke's two arms on x, one stated F623 a side. */
-  const yoke = () => {
+  const yoke = (prefer: Record<string, string> = { family: "bearing_flanged", key: "F623" }, duty = "occasional", half = 38.5) => {
     const at = (name: string, x: number, dir: 1 | -1) => ({ name, type: "FLAT_FACE" as const, pose: { origin: [x, 0, 0], zAxis: [dir, 0, 0] as [number, number, number], xAxis: [0, 1, 0] as [number, number, number] }, params: { size: 12 } });
     const box = (o: number[], dims: number[]) => ({ kind: "box" as const, pose: { origin: o, zAxis: [0, 0, 1], xAxis: [1, 0, 0] }, dims });
     const frame = part("yoke", 10, [at("arm_l", -40, 1), at("arm_r", 40, -1)], { envelope: { volumes: [box([-45, 0, 0], [10, 30, 30]), box([45, 0, 0], [10, 30, 30]), box([0, 0, -19], [100, 30, 10])], clearance: 0.4 } as never });
-    const cradle = part("cradle", 8, [at("end_l", -38.5, -1), at("end_r", 38.5, 1)], { envelope: { volumes: [box([0, 0, 0], [77, 16, 16])], clearance: 0.4 } as never });
+    const cradle = part("cradle", 8, [at("end_l", -half, -1), at("end_r", half, 1)], { envelope: { volumes: [box([0, 0, 0], [2 * half, 16, 16])], clearance: 0.4 } as never });
     const joint = (s: "l" | "r") => ({
       id: `tilt-${s}`, a: { node: "yoke", port: `arm_${s}` }, b: { node: "cradle", port: `end_${s}` },
-      intent: "serviceable", motion: "revolute", load: "light", wallA: 10, wallB: 8, prefer: { family: "bearing_flanged", key: "F623" },
+      intent: "serviceable", motion: "revolute", duty, load: "light", wallA: 10, wallB: 8, prefer,
     });
     return expandJoints({ ...plates({}), nodes: [frame, cradle] as never, entryNodeId: "yoke", joints: [joint("l"), joint("r")] } as ArchitectOutput);
   };
+
+  it("puts one 608 in each support, a collar each side of each wall, the shaft through the web (asm-hand-winch)", () => {
+    // an 8mm collar inside each arm: the drum is 64 long between the collars
+    const out = yoke({ family: "bearing", key: "608" }, "continuous", 32);
+    expect(out.joints!.map((j) => (j as { expanded?: string }).expanded)).toEqual([
+      "M1p|bearing_a=bearing:608|shaft=d_shaft:8|collar=collar:8",
+      "M1p|bearing_a=bearing:608|shaft=d_shaft:8|collar=collar:8",
+    ]);
+    expect(ports(out, "yoke")).toEqual(expect.arrayContaining(["tilt_l_seat_a:BEARING_SEAT", "tilt_l_keep:FLAT_FACE", "tilt_l_shaft_bore:BORE"]));
+    const { instances, problems } = solved(out);
+    expect(problems).toEqual([]);
+    // the outer collar on the arm's outer face, x = -50
+    expect(instances["tilt-l_collar"]!.map(at3)).toEqual(expect.arrayContaining([[-50, 0, 0]]));
+    expect(instances["cradle"]!.map(at3)).toEqual([[0, 0, 0]]);
+    expect(lintAll(out)).toEqual([]);
+  });
+
+  it("a b held on two faces turns the other face's shaft with it, never its bearings", () => {
+    const g = graphOf(yoke({ family: "bearing", key: "608" }, "continuous", 32));
+    const left = jointAxes(g).find((a) => a.id === "tilt-l")!;
+    expect(left.moving).toEqual(expect.arrayContaining(["cradle", "tilt-l_shaft", "tilt-r_shaft"]));
+    expect(left.moving).not.toContain("tilt-r_bearing_a");
+  });
+
+  it("asm-hand-winch: a drum boss through the gear's bore is a plan problem, not a repair round", () => {
+    const lint = (file: string) => {
+      const g = GraphDoc.parse(JSON.parse(readFileSync(new URL(file, import.meta.url), "utf8")));
+      return new CadBackend().planning.graphLints.flatMap((l) => l.run(g)).filter((p) => p.includes("bore for"));
+    };
+    // 10-19 cook: G5 805mm³ rope-drum/drum-gear at rest
+    expect(lint("./fixtures/asm-hand-winch-graph-2.json")).toEqual([expect.stringMatching(/^rope-drum runs Ø14\.0 through drum-gear's Ø8 bore for .*mm along its axis/)]);
+    // 09-50 cook: the gear on the shaft past the drum's end, nothing through it
+    expect(lint("./fixtures/asm-hand-winch-graph.json")).toEqual([]);
+  });
+
+  it("asm-hand-winch: both drum joints turn the pinion, and cranking turns the drum's both shafts", () => {
+    // The 2026-10-04 cook: j-pinion swept the drum into j-drum-l's (frozen) shaft.
+    const g = GraphDoc.parse(JSON.parse(readFileSync(new URL("./fixtures/asm-hand-winch-graph.json", import.meta.url), "utf8")));
+    const joints = new CadBackend().solveScene(g).scene.joints;
+    const coupledTo = (id: string) => joints.find((j) => j.id === id)!.coupled?.flatMap((c) => c.moving) ?? [];
+    expect(coupledTo("j-drum-l")).toContain("pinion-gear");
+    expect(coupledTo("j-drum-r")).toContain("pinion-gear");
+    expect(coupledTo("j-pinion")).toEqual(expect.arrayContaining(["rope-drum", "big-gear", "j-drum-l_shaft", "j-drum-r_shaft"]));
+    // j-drum-r turns about -y, the big gear's own z is +y: the pinion's ratio
+    // flips with it. At -3 the kernel sweep met teeth every 20° (the "-122°" and
+    // "118°" clashes); at +3 it clears a full turn.
+    const drumR = joints.find((j) => j.id === "j-drum-r")!;
+    expect(drumR.direction).toEqual([0, -1, 0]);
+    expect(drumR.coupled!.find((c) => c.moving.includes("pinion-gear"))!.ratio).toBe(3);
+  });
 
   it("seats one flanged bearing in each arm and hangs the cradle between them (real-pan-tilt-head)", () => {
     const out = yoke();

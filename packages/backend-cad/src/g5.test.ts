@@ -154,7 +154,24 @@ describe("G5 globalCheck: instances, contacts, allowances, attribution", () => {
       const { kernel, calls } = stubKernel(empty);
       await new CadBackend({ kernel }).globalCheck(clamp, ws);
       const [q] = calls[0]!.opts.contacts as { radius: number }[];
-      expect(q!.radius).toBeCloseTo(Math.hypot(9.5 / 2, 5.4), 3);
+      expect(q!.radius).toBeCloseTo(Math.hypot(9.5 / 2 + 0.45, 5.4), 3);
+    });
+
+    // real-robot-arm: a Ø19.95 horn in a hub cut at the slip band (Ø20.1)
+    // read as a 10.05mm gap, because a ball of the nominal r 9.975 held no
+    // bore wall and the gap fell back to the distance from the mate point.
+    it("reaches a fit-cut bore wall past the nominal radius", async () => {
+      const hub = graph(
+        [
+          { id: "bracket", volumes: [box([40, 40, 4])], ports: [{ name: "hub", type: "HUB_BORE", at: [0, 0, -2], z: DOWN, params: { diameter: 19.95 } }] },
+          { id: "servo", kind: "motor", params: [{ name: "sku", default: "SERVO-STS3215" }], ports: [{ name: "shaft", type: "FLAT_FACE", at: [0, 0, 35.5], params: { ring_diameter: 9.975 } }] },
+        ],
+        [["servo", "shaft", "bracket", "hub"]],
+      );
+      const { kernel, calls } = stubKernel(empty);
+      await new CadBackend({ kernel }).globalCheck(hub, ws);
+      const [q] = calls[0]!.opts.contacts as { radius: number }[];
+      expect(q!.radius).toBeGreaterThan((19.95 + 0.25) / 2 + 0.25);
     });
 
     it("pins a gap on the host, blocks only the host, and gives it a repair round", async () => {
@@ -211,12 +228,43 @@ describe("G5 globalCheck: instances, contacts, allowances, attribution", () => {
       [plate, hw("j1_screw", "fastener", "ISO4762-M4x12"), hw("j1_insert", "insert", "HEATSET-S-M4"), hw("j2_nut", "nut", "ISO4032-M4")],
       [],
     );
-    (g as { joints?: unknown }).joints = [{ id: "j1" }, { id: "j2" }];
+    const ends = { a: { node: "plate", port: "top" }, b: { node: "plate", port: "top2" } };
+    (g as { joints?: unknown }).joints = [{ id: "j1", ...ends }, { id: "j2", ...ends }];
     // Only its own joint's insert: j2's nut is unrelated, so it stays clash-checked.
     const allow = threadAllowances(g);
     expect(allow.map((x) => [x.a, x.b])).toEqual([["j1_screw", "j1_insert"]]);
     // heatset_short M4 is 4mm long, not the standard 8.1.
     expect(allow[0]!.volume_mm3).toBeCloseTo(threadEngagementVolume("M4", 4) * 1.5, 6);
+  });
+
+  // A servo's M2 case screws self-tap Ø1.6 pilots in the catalog motor; only
+  // the joint that minted both may share that thread.
+  it("allows a joint screw's thread in its own joint's motor, not another joint's", () => {
+    const hw = (id: string, kind: string, sku: string, length?: number): Spec => ({ id, kind, ports: [], params: [{ name: "sku", default: sku }, ...(length ? [{ name: "length", default: length }] : [])] });
+    const g = graph([plate, hw("j1_mount_screw", "fastener", "ISO4762-M2", 6), hw("j1_motor", "motor", "SERVO-STS3215"), hw("j2_motor", "motor", "SERVO-STS3215")], []);
+    const ends = { a: { node: "plate", port: "top" }, b: { node: "plate", port: "top2" } };
+    (g as { joints?: unknown }).joints = [{ id: "j1", ...ends }, { id: "j2", ...ends }];
+    const allow = threadAllowances(g);
+    expect(allow.map((x) => [x.a, x.b])).toEqual([["j1_mount_screw", "j1_motor"]]);
+    expect(allow[0]!.volume_mm3).toBeCloseTo(threadEngagementVolume("M2", 6) * 1.5, 6);
+  });
+
+  // real-step-stool: R2 mates the screw by its head in a's counterbore; the
+  // tapped hole in b has no edge, and all 11 M6 screws clashed 98.4mm³.
+  it("allows a joint screw's thread in the tapped hole its joint minted on b", () => {
+    const g = graph(
+      [
+        { id: "frame", ports: [{ name: "j1_head", type: "COUNTERBORE", at: [0, 0, 2], params: { diameter: 11, depth: 6.4, through_diameter: 6.6 } }] },
+        { id: "rail", ports: [{ name: "j1_tap", type: "THREADED_HOLE", at: [0, 0, -2], z: DOWN, params: { thread: "M6", depth: "param(rail.tap_depth)" } }], params: [{ name: "tap_depth", default: 11.9 }] },
+        { id: "j1_screw", kind: "fastener", ports: [{ name: "head", type: "FLAT_FACE", at: [0, 0, 6.4], z: DOWN }], params: [{ name: "sku", default: "ISO4762-M6" }, { name: "length", default: 35 }] },
+      ],
+      [["frame", "j1_head", "j1_screw", "head"]],
+    );
+    (g as { joints?: unknown }).joints = [{ id: "j1", a: { node: "frame", port: "seat" }, b: { node: "rail", port: "end" }, minted: ["j1_head", "j1_tap"] }];
+    const allow = threadAllowances(g);
+    expect(allow.map((x) => [x.a, x.b])).toEqual([["j1_screw", "rail"]]);
+    expect(allow[0]!.volume_mm3).toBeCloseTo(threadEngagementVolume("M6", 11.9) * 1.5, 6);
+    expect(allow[0]!.volume_mm3).toBeGreaterThan(98.45);
   });
 
   it("says the gate did not run when the kernel refuses, rather than passing", async () => {
@@ -444,6 +492,10 @@ describe("G5 hardware: designed overlap and fit bands", () => {
     const dowel = mated(housing("DOWEL_HOLE", { diameter: 4, depth: 8, fit: "press" }), part("pin", "dowel", { diameter: 4 }));
     expect(hardwareAllowances(dowel)[0]!.volume_mm3).toBeCloseTo(ring(4, 3.9, 8), 6);
     expect(hardwareAllowances(mated(housing("DOWEL_HOLE", { diameter: 4, depth: 8, fit: "slip" }), part("pin", "dowel", {})))).toEqual([]);
+    // real-magnet-hinged-box: a filament pin (kind pin) pressed into a's knuckle.
+    const filament = mated(housing("DOWEL_HOLE", { diameter: 1.75, depth: 10, fit: "press" }), part("fpin", "pin", { sku: "FILPIN-1.75" }));
+    expect(hardwareAllowances(filament)[0]!.volume_mm3).toBeCloseTo(ring(1.75, 1.65, 10), 6);
+    expect(hardwareAllowances(filament)[0]!.volume_mm3).toBeGreaterThan(1.35);
     const nut = mated(housing("NUT_TRAP", { af: 5.5, depth: 2.4 }), part("n", "nut", { thread: "M3" }));
     expect(hardwareAllowances(nut)).toEqual([expect.objectContaining({ a: "housing", b: "n" })]);
   });

@@ -73,7 +73,16 @@ def insertion_report(meshes: list[tuple[str, Any]], checks: list[dict[str, Any]]
     `moving` from its pose out against `direction` (the way it travels IN)
     until it is free, or exactly `travel_mm`, and report each still part it
     passes through. Asked with the direction reversed and 1 mm, the answer is
-    what the part comes to rest against."""
+    what the part comes to rest against.
+
+    Free is a start pose the part can be brought to. Backed out its own length
+    (plus any shaft it rides), it may still be inside something: a bearing
+    pressed outward into a U-frame's inner face starts in the cavity. Then,
+    unless the axis runs clear out of the whole scene, it must reach that start
+    sideways: placed there and swept in the four directions square to its
+    axis, one clear way is enough (`enters` is the way it travels in). A
+    bearing inside a fully closed box has none, and is blocked by what shuts
+    it in (`enclosed`)."""
     from .gates import _manifold, _node_of, _shared, g5_swept
 
     by_key = dict(meshes)
@@ -109,10 +118,46 @@ def insertion_report(meshes: list[tuple[str, Any]], checks: list[dict[str, Any]]
                  "limits": [0.0, travel], "moving": moving}
         clashes, _, errs = g5_swept([(k, by_key[k]) for k in moving + still], [sweep], local)
         errors.extend(errs)
-        results.append({"id": check["id"], "blocked": [
+        result: dict[str, Any] = {"id": check["id"], "blocked": [
             {"part": c["a"], "by": c["b"], "depth_mm": c["depth_mm"], "volume_mm3": c["volume_mm3"],
-             "travel_mm": c["travel"], "at": c["at"]} for c in clashes]})
+             "travel_mm": c["travel"], "at": c["at"]} for c in clashes]}
+        if not clashes and not check.get("travel_mm"):
+            result |= _reach(by_key, moving, still, local, out, travel, errors, check["id"])
+        results.append(result)
     return {"checks": results, "errors": errors}
+
+
+def _reach(by_key: dict[str, Any], moving: list[str], still: list[str], local: dict[frozenset, float],
+           axis: np.ndarray, travel: float, errors: list[str], check_id: str) -> dict[str, Any]:
+    """Can `moving`, backed out `travel` along `axis` to its free start pose,
+    be brought there from outside? Straight along the axis if that runs clear
+    of the whole scene; else sideways, swept from the start pose out along each
+    of the four directions square to the axis, the first clear one being the
+    way in. Neither: blocked, by whatever the axis ran into."""
+    from .gates import g5_swept
+
+    every = np.vstack([by_key[k].bounds for k in moving + still])
+    span = float(np.linalg.norm(every.max(axis=0) - every.min(axis=0)))
+    on = {"joint": f"{check_id}@axis", "type": "prismatic", "origin": [0.0, 0.0, 0.0], "direction": axis.tolist(),
+          "limits": [0.0, travel + span], "moving": moving}
+    beyond, _, errs = g5_swept([(k, by_key[k]) for k in moving + still], [on], local)
+    errors.extend(errs)
+    if not beyond:
+        return {}
+    start = {f"{k}@in": by_key[k].copy().apply_translation(axis * travel) for k in moving}
+    pick = np.eye(3)[int(np.argmin(np.abs(axis)))]
+    u = np.cross(axis, pick)
+    u /= np.linalg.norm(u)
+    v = np.cross(axis, u)
+    for d in (u, -u, v, -v):
+        sweep = {"joint": f"{check_id}@in", "type": "prismatic", "origin": [0.0, 0.0, 0.0], "direction": d.tolist(),
+                 "limits": [0.0, span], "moving": list(start)}
+        clashes, _, errs = g5_swept([*start.items(), *((k, by_key[k]) for k in still)], [sweep], {})
+        errors.extend(errs)
+        if not clashes and not errs:
+            return {"enters": [round(float(c), 4) for c in -d]}
+    return {"blocked": [{"part": c["a"], "by": c["b"], "depth_mm": c["depth_mm"], "volume_mm3": c["volume_mm3"],
+                         "travel_mm": c["travel"], "at": c["at"], "enclosed": True} for c in beyond]}
 
 
 # ---------------------------------------------------------------------------

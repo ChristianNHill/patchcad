@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CATALOG } from "./catalog.js";
 import {
-  JOINT_RULES, SNAP_ENABLED, beltCenter, beltLength, gt2PitchD, jointEscapes, pickDrive, pickThread, railHoles, selectJoint,
+  JOINT_RULES, SNAP_ENABLED, materialClass, beltCenter, beltLength, gt2PitchD, jointEscapes, pickDrive, pickThread, railHoles, selectJoint,
   type JointDecision, type JointInput,
 } from "./joints.js";
 
@@ -30,6 +30,7 @@ describe("selectJoint: one row per rule", () => {
   const rows: [string, Partial<JointInput>, string, string[]][] = [
     ["R1 dowel", { intent: "alignment", wallA: 8, wallB: 8 }, "R1", ["dowel:dowel:3x10"]],
     ["W4 dowel screw, leg into a top, as stated", { ...WOOD, wallA: 50, wallB: 400, prefer: { family: "dowel_screw", key: "6" } }, "W4", ["stud:dowel_screw:6x60"]],
+    ["W5 chipboard screw, as stated", { ...WOOD, wallA: 18, wallB: 40, prefer: { family: "chipboard", key: "4" } }, "W5", ["screw:chipboard:4x35"]],
     ["R8 threaded-rod stud, as stated", { intent: "serviceable", wallA: 50, wallB: 400, prefer: { family: "threaded_rod", key: "M6" } }, "R8", ["stud:threaded_rod:M6x30"]],
     ["R1b printed peg when the walls are too thin", { intent: "alignment", wallA: 2, wallB: 3 }, "R1b", []],
     ["R2 tapped into machined b", { processB: "CNC", wallB: 8 }, "R2", ["screw:button:M3x10"]],
@@ -40,6 +41,7 @@ describe("selectJoint: one row per rule", () => {
     ["R6 side nut trap", { intent: "permanent", load: "medium", access: "one_side", wallA: 4, wallB: 10, lateral: 12 }, "R6", ["screw:button:M4x12", "nut:hex_nut:M4"]],
     ["M1 rotor on two bearings", { motion: "revolute", duty: "continuous", wallA: 14, wallB: 8 }, "M1", ["bearing_a:bearing:625", "bearing_b:bearing:625", "shaft:d_shaft:5", "collar:collar:5"]],
     ["M1h V-wheel on its own bearings, axle in a 3mm plate", { motion: "revolute", duty: "continuous", wallA: 3, wallB: 12 }, "M1h", ["hub_bearing_a:bearing:625", "hub_bearing_b:bearing:625", "axle_shaft:d_shaft:5", "axle_collar:collar:5"]],
+    ["M1p winch drum between 6mm plates, one 608 in each", { motion: "revolute", duty: "continuous", wallA: 9, wallB: 30, pairedB: true, prefer: { family: "bearing", key: "608" } }, "M1p", ["bearing_a:bearing:608", "shaft:d_shaft:8", "collar:collar:8"]],
     ["M1f cradle between two supports, one flanged bearing each", { motion: "revolute", wallA: 8, wallB: 8, pairedB: true, prefer: { family: "bearing_flanged" } }, "M1f", ["bearing:bearing_flanged:F625", "shaft:d_shaft:5", "spacer:washer:M5"]],
     ["M2 occasional pivot on bushings", { motion: "revolute", wallA: 12, wallB: 8 }, "M2", ["bushing_a:bushing:5x8x5", "bushing_b:bushing:5x8x5", "shaft:d_shaft:5", "collar:collar:5"]],
     ["M2p printed pin when allowed, e-clipped", { motion: "revolute", allowPrinted: true }, "M2p", ["pin_clip:eclip:4"]],
@@ -366,12 +368,48 @@ describe("real-product leftovers", () => {
     expect((r as { error: string }).error).toContain("(a is 20.0 thick where the motor mounts)");
   });
 
+  it("asm-hand-winch: a stated 608 on one plate fails M1 and names the far support's joint as the way out", () => {
+    const drum = { ...base, id: "jd", motion: "revolute" as const, wallA: 9, wallB: 30, prefer: { family: "bearing", key: "608" } };
+    expect((selectJoint(drum) as { error: string }).error).toContain("M1 wallA 9.0 < 2 × bearing width 7.0 + 1.2");
+    expect(jointEscapes(drum)[0]).toMatch(/^declare b's joint on its far support too .* for M1p's Ø8 shaft on one 608 here/);
+    expect(ok({ ...drum, pairedB: true }).rule).toBe("M1p");
+    // a drum 60 long declared wallB 60 from each end: each shaft stops at the middle
+    expect(ok({ ...drum, wallB: 60, pairedB: true, pairSpan: 60 }).dims.engage).toBe(29.5);
+    expect(ok({ ...drum, wallB: 20, pairedB: true, pairSpan: 60 }).dims.engage).toBeUndefined();
+  });
+
   it("a driven joint honours stated flanged bearings in its spindle", () => {
     const d = ok({ ...idle, driven: true, ratio: 64 / 21, torqueClass: "high", wallA: 12 });
     expect(d.rule).toBe("DG");
     expect(roles(d).slice(0, 2)).toEqual(["bearing_a:bearing_flanged:F623", "bearing_b:bearing_flanged:F623"]);
     // The driven gear clears the flange: the spacer sits on the inner race, fw proud.
     expect(d.dims.gap).toBe(1.5);
+  });
+});
+
+describe("material classes (real-step-stool)", () => {
+  it("reads a part's material string as wood, metal or plastic", () => {
+    expect(materialClass("beech hardwood", "CNC")).toBe("wood");
+    expect(materialClass("Birch Plywood", "CNC")).toBe("wood");
+    expect(materialClass("18mm MDF", "CNC")).toBe("wood");
+    expect(materialClass("particle board", "CNC")).toBe("wood");
+    expect(materialClass("bamboo", "FDM")).toBe("wood");
+    expect(materialClass("6061 aluminium", "CNC")).toBe("metal");
+    expect(materialClass("brass", "CNC")).toBe("metal");
+    expect(materialClass(undefined, "CNC")).toBe("metal");
+    expect(materialClass("PETG", "FDM")).toBe("plastic");
+  });
+
+  it("never taps a wood part: M6 connector screws into beech rails take a cross-dowel nut", () => {
+    const stool = { processA: "CNC" as const, processB: "CNC" as const, materialA: "beech hardwood", materialB: "beech hardwood", wallA: 30, wallB: 40, threadHint: "M6", access: "one_side" as const, lateral: 30 };
+    // removable: a cam lock first; permanent, past the confirmat's reach: a cross-dowel nut
+    expect(ok(stool).rule).toBe("W2");
+    const d = ok({ ...stool, intent: "permanent" });
+    expect([d.rule, d.recipe, d.thread]).toEqual(["R6", "side_nut_trap", "M6"]);
+    // A metal a on a wood b is still not tapped into the wood.
+    expect(ok({ ...stool, materialA: "steel" }).rule).not.toBe("R2");
+    // Into metal it is.
+    expect(ok({ ...stool, materialB: "aluminium", wallB: 20 }).rule).toBe("R2");
   });
 });
 
@@ -382,7 +420,8 @@ describe("stated hardware every family can be", () => {
     const used = new Set(JOINT_RULES.flatMap((r) => r.uses));
     // A seal, a magnet catch and a board standoff are placed in their own
     // pockets by the plan; a wire nail is not stocked as a joint yet.
-    expect(Object.keys(CATALOG.families).filter((f) => !used.has(f))).toEqual(["wire_nail", "disc_magnet", "oring", "standoff"]);
+    // v_wheel is a kit the architect places as a node (the wheel joints seat it).
+    expect(Object.keys(CATALOG.families).filter((f) => !used.has(f))).toEqual(["wire_nail", "v_wheel", "disc_magnet", "oring", "standoff"]);
   });
 
   it("a family no rule uses says so plainly instead of asking for room", () => {

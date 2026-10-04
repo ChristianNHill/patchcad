@@ -96,6 +96,9 @@ export interface SequenceOptions {
   supports?: [string, string][];
   /** Pins and shafts pushed in from the other end (a blind bore on one side). */
   reversed?: string[];
+  /** Copies (`node`, `node#i`) pressed outward from inside: a bearing in the
+   *  inner face of a U-frame's plate, brought in through the open top. */
+  inside?: string[];
 }
 
 interface SceneLike {
@@ -139,6 +142,7 @@ export const NOUN: Record<string, string> = {
   gt2_belt: "GT2 belt", gt2_loop: "GT2 closed belt", spur_gear: "spur gear", coupler: "shaft coupler",
   lead_screw: "lead screw", lead_nut: "lead screw nut", nema17: "stepper motor", brushless: "brushless motor",
   filament_pin: "filament pin", n20: "gear motor", sg90: "servo", mg996r: "servo", sts3215: "serial bus servo", nema14: "stepper motor", disc_magnet: "disc magnet", oring: "O-ring", standoff: "standoff",
+  chipboard: "wood screw", v_wheel: "V-slot wheel",
 };
 
 /** "the M3 insert", "4× M3 inserts". */
@@ -559,6 +563,9 @@ function plan(graph: GraphDoc, scene: SceneLike, opts: SequenceOptions) {
     for (const [x, y] of opts.before ?? [])
       if (ns.some((n) => n.id === x)) out.push(`Fit this before the ${label(byId[y]!)}: it would block the way afterwards.`);
     if (ns.some((n) => opts.reversed?.includes(n.id))) out.push("Push it in from the end the arrow shows: the other end is closed.");
+    if (ns.some((n) => (copies.get(n.id) ?? []).some((c) => opts.inside?.includes(c.key))))
+      out.push("Press from inside the frame: bring it in through the open side, then press it outward into its seat.");
+
     return [...new Set(out)];
   };
   const withPhrase = (hw: StepHardware[]) =>
@@ -572,7 +579,7 @@ function plan(graph: GraphDoc, scene: SceneLike, opts: SequenceOptions) {
     for (const f of fs) placed.add(f.id);
     const ns = ids.map((id) => byId[id]!);
     const mv = movingKeys(ids, within).map((m) =>
-      opts.reversed?.includes(m.key.split("#")[0]!) ? { ...m, direction: m.direction.map((v) => -v || 0) as Vec3 } : m);
+      opts.reversed?.includes(m.key.split("#")[0]!) || opts.inside?.includes(m.key) ? { ...m, direction: m.direction.map((v) => -v || 0) as Vec3 } : m);
     const mated = [...new Set(mv.filter((m) => !riders.includes(m.key.split("#")[0]!)).map((m) => m.host).filter((h): h is string => !!h && within.has(h)))];
     const holding = (id: string) => !!opts.held?.includes(id) || laid.has(id);
     const action = holding(ns[0]!.id) ? "place" : actionFor(ns[0]!, mated[0]);
@@ -600,7 +607,7 @@ function plan(graph: GraphDoc, scene: SceneLike, opts: SequenceOptions) {
     const through = held.flatMap((id) => [...deps.entries()].filter(([sh, ds]) => (byId[sh]!.kind === "shaft" || hingePin(byId[sh]!)) && ds.has(id)).map(([sh]) => sh));
     push({
       title: held.length
-        ? `Hold ${things.join(" and ")} in place: ${hostPhrase(through)} ${through.reduce((a, id) => a + count(id), 0) > 1 ? "go" : "goes"} through ${held.length + own.length > 1 || count(held[0]!) > 1 ? "them" : "it"} next`
+        ? `Hold ${things.join(" and ")} in place: ${hostPhrase(through)} ${through.reduce((a, id) => a + count(id), 0) > 1 ? "go" : "goes"} through ${held.reduce((a, id) => a + count(id), 0) > 1 ? "them" : "it"} next`
         : riders.length
           ? `Mount ${things.join(" and ")}${hosts.length ? ` on ${hostPhrase(hosts)}` : ""} and attach ${named(riders).join(" and ")} to it${withPhrase(fastenHw)}`
           : `${verb} ${things.join(" and ")}${hosts.length ? ` ${prep} ${hostPhrase(hosts)}` : ""}${withPhrase(fastenHw)}`,
@@ -826,21 +833,30 @@ const FLEXIBLE = new Set(["belt", "oring"]);
 
 /** One sweep per step and approach direction: the new copies in, past the context. */
 export function insertionQueries(seq: AssemblySequence): InsertionQuery[] {
+  const before = new Set<string>();
   return seq.steps.flatMap((s) => {
+    // One sweep per piece that moves on its own, each over its own length:
+    // swept as one group, two bearings in opposite plates of a U-frame travelled
+    // the whole frame's width. A sub-assembly being attached, or a part with
+    // the inserts already in it, moves as one body.
+    const carried = s.moving.some((m) => before.has(m.key));
     const groups = new Map<string, InsertionQuery>();
     for (const m of s.moving) {
       if (m.held) continue;
-      const k = m.direction.join(",");
+      const k = s.attaches || carried ? m.direction.join(",") : m.key;
       const g = groups.get(k) ?? { id: `${s.n}:${groups.size}`, moving: [], still: s.context, direction: m.direction };
       g.moving.push(m.key);
       if (m.clearMm !== undefined) g.clear_mm = Math.max(g.clear_mm ?? 0, m.clearMm);
       groups.set(k, g);
     }
+    for (const m of s.moving) before.add(m.key);
     return [...groups.values()].filter((g) => g.still.length > 0);
   });
 }
 
-export type InsertionCheck = (queries: InsertionQuery[]) => Promise<{ id: string; blocked: { part: string; by: string; at?: number[]; travel_mm?: number; volume_mm3?: number }[] }[]>;
+export type InsertionCheck = (
+  queries: InsertionQuery[],
+) => Promise<{ id: string; blocked: { part: string; by: string; at?: number[]; travel_mm?: number; volume_mm3?: number }[]; enters?: number[] }[]>;
 
 /**
  * The mate order, then a sweep of every step. A blocked part goes in before
@@ -848,7 +864,8 @@ export type InsertionCheck = (queries: InsertionQuery[]) => Promise<{ id: string
  * built in place instead. What no order fixes is reported, never hidden.
  */
 export async function feasibleSequence(graph: GraphDoc, scene: SceneLike, check: InsertionCheck): Promise<AssemblySequence> {
-  const opts: Required<SequenceOptions> = { before: [], dissolve: [], held: [], supports: [], reversed: [] };
+  const opts: Required<SequenceOptions> = { before: [], dissolve: [], held: [], supports: [], reversed: [], inside: [] };
+  const triedInside = new Set<string>();
   const nodeOf = (key: string) => key.split("#")[0]!;
   let landing: string | null = null;
   try {
@@ -883,6 +900,27 @@ export async function feasibleSequence(graph: GraphDoc, scene: SceneLike, check:
       }
       return false;
     };
+    // Inside-out first: a blocked single piece pressed the other way, from an
+    // interior. The kernel only clears it if that interior start can be
+    // reached sideways, so a bearing shut inside a closed box stays blocked.
+    const outward = blocked
+      .filter((b) => !b.step.attaches)
+      .flatMap((b) => [...new Set(b.blocked.map((x) => x.part))].map((key) => ({ b, m: b.step.moving.find((mv) => mv.key === key) })))
+      .filter(({ m }) => m && !m.held && !triedInside.has(m.key));
+    if (round < 12 && outward.length) {
+      for (const { m } of outward) triedInside.add(m!.key);
+      let answers: Awaited<ReturnType<InsertionCheck>> = [];
+      try {
+        answers = await check(outward.map(({ b, m }) => ({ id: `in:${m!.key}`, moving: [m!.key], still: b.step.context, direction: m!.direction.map((v) => -v || 0) as Vec3 })));
+      } catch {
+        answers = []; // the main sweep below reports a kernel that stopped answering
+      }
+      const ok = answers.filter((a) => a.blocked.length === 0).map((a) => a.id.slice(3));
+      if (ok.length) {
+        opts.inside.push(...ok);
+        continue;
+      }
+    }
     const fix = round < 12 && blocked.map((b) => {
       if (b.step.attaches) {
         const root = (seq.subassemblies.find((s) => s.title === b.step.attaches))?.root;
@@ -909,6 +947,14 @@ export async function feasibleSequence(graph: GraphDoc, scene: SceneLike, check:
     if (fix) {
       fix();
       continue;
+    }
+    // Reached its start sideways (the kernel's `enters`): it is pressed from inside.
+    for (const r of results) {
+      const st = r.enters && seq.steps[Number(r.id.split(":")[0]) - 1];
+      const note = st && (st.action === "press"
+        ? "Press from inside the frame: bring it in through the open side, then press it outward into its seat."
+        : "This goes in from inside the frame: bring it in through the open side first.");
+      if (st && note && !st.notes.some((n) => n.includes("inside the frame"))) st.notes.push(note);
     }
     for (const b of blocked) {
       const by = [...new Set(b.blocked.map((x) => x.by))].join(", ");

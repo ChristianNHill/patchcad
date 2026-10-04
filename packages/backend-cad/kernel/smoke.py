@@ -2045,6 +2045,32 @@ def instructions(client: httpx.Client) -> None:
     check("instructions: only instruction files are served from the cache directory",
           client.get(pages[0].replace("page-1.svg", "instructions.json")).status_code == 404 if pages else False)
 
+    # Inside-out: a bearing seated in the INNER face of a frame's side plate is
+    # pressed outward from the cavity. Through the plate it is blocked; from
+    # inside it backs out into the cavity, and it can get there sideways only
+    # if the frame is open somewhere it fits through.
+    frame = ("from build123d import *\ndef build(p):\n    _ = p['nonce']\n"
+             "    f = Pos(27, 0, 0) * Box(6, 40, 40) + Pos(-27, 0, 0) * Box(6, 40, 40) + Pos(0, 0, -23) * Box(60, 40, 6)\n"
+             "    if p['closed']:\n"
+             "        f = f + Pos(0, 0, 23) * Box(60, 40, 6) + Pos(0, 23, 0) * Box(60, 6, 52) + Pos(0, -23, 0) * Box(60, 6, 52)\n"
+             "    return f - Pos(26, 0, 0) * Rot(0, 90, 0) * Cylinder(8.1, 4)\n")
+    bearing = "from build123d import *\ndef build(p):\n    return Pos(25, 0, 0) * Rot(0, 90, 0) * Cylinder(8, 6)\n"
+
+    def inside(closed: bool) -> list[dict]:
+        parts = [{"key": "frame", "code": frame, "params": {"nonce": n, "closed": closed}, "matrix": []},
+                 {"key": "brg", "code": bearing, "params": {}, "matrix": []}]
+        return client.post("/instructions/insertions", json={"parts": parts, "checks": [
+            {"id": "through", "moving": ["brg"], "still": ["frame"], "direction": [-1, 0, 0]},
+            {"id": "inside", "moving": ["brg"], "still": ["frame"], "direction": [1, 0, 0]}]},
+            timeout=180).json()["insertions"]["checks"]
+
+    u_frame, box = inside(False), inside(True)
+    check("instructions: a bearing in a U-frame's inner face is blocked through the plate, pressed from inside is reachable",
+          u_frame[0]["blocked"] != [] and u_frame[1]["blocked"] == [] and u_frame[1].get("enters") is not None,
+          str(u_frame)[:300])
+    check("instructions: the same bearing in a fully closed box cannot be reached from inside",
+          box[1]["blocked"] != [] and all(b.get("enclosed") for b in box[1]["blocked"]), str(box)[:300])
+
 
 if __name__ == "__main__":
     main()

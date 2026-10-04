@@ -143,6 +143,8 @@ export interface JointInput {
   /** b also turns on a coaxial revolute joint from its far side (a cradle
    *  between two supports). */
   pairedB?: boolean;
+  /** How far apart b's two faces are along that axis. */
+  pairSpan?: number;
   /** A slide whose moving body already rides a guide of its own (wheels on
    *  a rail, another slide's carriage): no guide rod of its own. */
   guided?: boolean;
@@ -363,7 +365,8 @@ const R1b: JointRule = {
  *  material's engagementMin and 1mm of wall left under the hole. */
 const R2: JointRule = {
   id: "R2",
-  when: (i) => fastens(i) && i.processB === "CNC" && !wood(i),
+  // Never into wood, whatever a is: the step stool's beech rails got M6 tapped holes.
+  when: (i) => fastens(i) && i.processB === "CNC" && classB(i) !== "wood",
   uses: SCREWS,
   fit: (i) => {
     const { thread, reason } = pickThread(i);
@@ -459,7 +462,7 @@ const R4: JointRule = {
 /** R5: printed, both sides reachable: a nut in an axial trap on b's far face. */
 const R5: JointRule = {
   id: "R5",
-  when: (i) => fastens(i) && i.processB === "FDM" && i.access === "both_sides",
+  when: (i) => fastens(i) && (i.processB === "FDM" || classB(i) === "wood") && i.access === "both_sides",
   uses: [...SCREWS, "hex_nut"],
   fit: (i) => {
     const { thread, reason } = pickThread(i);
@@ -482,7 +485,8 @@ const R5: JointRule = {
 /** R6: printed, one side only: the nut slides in from the side, mid-wall. */
 const R6: JointRule = {
   id: "R6",
-  when: (i) => fastens(i) && i.processB === "FDM" && i.access === "one_side",
+  // In wood, the side-entry nut is the furniture cross-dowel (barrel nut) idiom.
+  when: (i) => fastens(i) && (i.processB === "FDM" || classB(i) === "wood") && i.access === "one_side",
   uses: [...SCREWS, "hex_nut"],
   fit: (i) => {
     const { thread, reason } = pickThread(i);
@@ -527,9 +531,22 @@ const R7: JointRule = {
 
 /** Panel stock that takes wood screws, cam fittings and glued dowels, never a
  *  tapped hole or an insert: material names a wood or a wood board. */
-const WOOD = /\b(wood|timber|mdf|hdf|ply(wood)?|particle ?board|chipboard|osb|melamine|oak|beech|birch|pine|spruce|maple|walnut|ash|poplar|bamboo)\b/i;
+const WOOD = /\b(wood|hardwood|softwood|timber|mdf|hdf|ply(wood)?|particle ?board|chipboard|osb|melamine|oak|beech|birch|pine|spruce|maple|walnut|ash|poplar|bamboo)\b/i;
 export const isWood = (material?: string) => !!material && WOOD.test(material);
-const wood = (i: JointInput) => isWood(i.materialA) && isWood(i.materialB);
+const METAL = /\b(alumin(i)?um|steel|stainless|brass|bronze|copper|titanium)\b/i;
+
+/** What a part is made of, for the joint rules: wood takes wood screws,
+ *  cam fittings, dowels and nuts, never a tapped thread; metal is tapped;
+ *  plastic (FDM, SLS) takes inserts and nut traps. Machined with no
+ *  material named reads as metal. */
+export type MaterialClass = "wood" | "metal" | "plastic";
+export function materialClass(material: string | undefined, process: JointProcess): MaterialClass {
+  if (isWood(material)) return "wood";
+  if (material && METAL.test(material)) return "metal";
+  return process === "CNC" ? "metal" : "plastic";
+}
+const classB = (i: JointInput) => materialClass(i.materialB, i.processB);
+const wood = (i: JointInput) => materialClass(i.materialA, i.processA) === "wood" && classB(i) === "wood";
 /** Wood left behind a blind hole, so it never breaks through a face. */
 const WOOD_SKIN_MM = 3;
 
@@ -640,6 +657,29 @@ const W4: JointRule = {
     return decision("W4", "stud", `Ø${key}×${L} dowel screw, half in each part`, [`a double-ended dowel screw as stated, ${L / 2}mm into each part's Ø${n("dowel_screw", key, "pilot")} pilot`], {
       parts: [{ role: "stud", family: "dowel_screw", key, length: L }],
       dims: { d, length: L, depth: L / 2 + 1, pilot: n("dowel_screw", key, "pilot") },
+    });
+  },
+};
+
+/** W5: a countersunk chipboard screw (DIN 7505) through a's clearance into
+ *  a pilot in b, as stated. The shortest stocked length that bites 4·d into
+ *  b and leaves the skin behind its tip; the pilot at the hardwood Ø, which
+ *  is over the modelled core, so screw and pilot share nothing (G5). */
+const W5: JointRule = {
+  id: "W5",
+  when: (i) => fastens(i) && i.prefer?.family === "chipboard",
+  can: fastens,
+  uses: ["chipboard"],
+  fit: (i) => {
+    const key = statedKey(i, "chipboard") ?? { none: "3.5", light: "4", medium: "4.5", heavy: "5" }[i.load];
+    const [d, headD, pilot] = [n("chipboard", key, "d"), n("chipboard", key, "headD"), n("chipboard", key, "pilotHard")];
+    const skin = skinOf(i);
+    if (i.wallA < (headD - d) / 2 + 1) return `wallA ${mm(i.wallA)} < countersunk Ø${key} head ${mm((headD - d) / 2)} + 1`;
+    const L = standardLengths("chipboard", key).find((l) => l - i.wallA >= 4 * d && l - i.wallA + 1 + skin <= i.wallB);
+    if (L === undefined) return `walls ${mm(i.wallA)}/${mm(i.wallB)}: no stocked Ø${key} chipboard screw (${standardLengths("chipboard", key).join(", ")}) bites 4·d into b with ${skin} behind its tip`;
+    return decision("W5", "confirmat", `Ø${key}×${L} countersunk chipboard screw`, [`a chipboard screw as stated, ${mm(L - i.wallA)} into b's Ø${pilot} pilot`], {
+      parts: [{ role: "screw", family: "chipboard", key, length: L }],
+      dims: { headD, drillA: r2(d + 0.5), drillB: pilot, pilotDepth: r2(L - i.wallA + 1) },
     });
   },
 };
@@ -829,9 +869,14 @@ const M1p: JointRule = {
   fit: (i) => {
     const s = spindleFor(i, true);
     if (typeof s === "string") return s;
+    // Each side's shaft stops short of b's middle, where the other side's
+    // starts: two full-depth shafts met inside the winch drum (G5 3077mm³).
+    const engage = r2(Math.min(i.wallB, (i.pairSpan ?? Infinity) / 2 - 0.5));
+    if (engage < s.d) return `b's faces ${mm(i.pairSpan!)} apart leave each shaft ${mm(engage)} of hub, under its Ø${s.d}`;
     return decision("M1p", "bearings", `Ø${s.d} shaft on one ${s.key} here, one in the far support`, [
       `revolute, b between two supports: one bearing in each`, ...s.reasons,
-    ], { parts: s.parts, dims: { d: s.d, od: s.od, width: s.width } });
+      ...(engage < i.wallB ? [`each shaft runs ${mm(engage)} into b, half its span`] : []),
+    ], { parts: s.parts, dims: { d: s.d, od: s.od, width: s.width, ...(engage < i.wallB ? { engage } : {}) } });
   },
 };
 
@@ -1050,6 +1095,19 @@ const D1: JointRule = {
     const drive = pickDrive(i);
     const { family, key } = drive.motor;
     const out = n(family, key, SERVOS.includes(family) ? "splineD" : "shaftD");
+    // A serial-bus servo with a screwed horn (STS3215): b's face bears on the
+    // horn and four screws through b hold it; four M2s through a into the
+    // case's pilots hold the servo. Nothing engages a hub.
+    const row = familyDims(family, key)!;
+    if (typeof row.hornPcd === "number") {
+      return decision("D1", "direct_drive", `${key} driving b through its horn`, [
+        `revolute, driven: ${drive.reason}`, "direct: the servo's own bearings carry b",
+        `b screwed to the horn: 4×${row.hornThread} on PCD ${row.hornPcd}; the case screwed to a: 4×M2 into its pilots`,
+      ], {
+        parts: [drive.motor, { role: "case_screw", family: "shcs", key: "M2" }, { role: "horn_screw", family: "shcs", key: String(row.hornThread) }],
+        dims: { d: out, engage: 0, through: 0 },
+      });
+    }
     const reach = motorReach(family, key);
     // NEMA and N20 mount under a with the shaft up through it; the brushless
     // and the servo sit on a's face with the output above it.
@@ -1459,7 +1517,7 @@ const PB: JointRule = {
 };
 
 /** First fit wins. Motion rules come first: a revolute joint is never bolted. */
-export const JOINT_RULES: JointRule[] = [D1, DB, DG, M1f, M1, M1h, M1p, M2pin, M2, M2d, PL, PB, P1, P2, W1, W2, W4, W3, R8, R1, R1b, R2, R3, R4, R7, R5, R6, R3f];
+export const JOINT_RULES: JointRule[] = [D1, DB, DG, M1f, M1, M1h, M1p, M2pin, M2, M2d, PL, PB, P1, P2, W1, W2, W4, W5, W3, R8, R1, R1b, R2, R3, R4, R7, R5, R6, R3f];
 
 export function selectJoint(input: JointInput): JointDecision | { error: string } {
   const tag = input.id ? `${input.id}: ` : "";

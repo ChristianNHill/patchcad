@@ -219,6 +219,38 @@ export function confirmatCode(size: string, defaultLength: number): string {
 `);
 }
 
+/** Chipboard screw: a countersunk wood screw framed like csk, the flush plane
+ *  on z = 0, a 90° head and the thread at its core Ø running -z. */
+export function chipboardCode(size: string, defaultLength: number): string {
+  const r = familyDims("chipboard", size)!;
+  const [d, headD, core] = [dim(r, "d"), dim(r, "headD"), dim(r, "core")];
+  const hh = (headD - d) / 2;
+  return module(`    L = p.get("length", ${defaultLength})
+    head = Pos(0, 0, ${-hh / 2}) * Cone(${d / 2}, ${headD / 2}, ${hh})
+    thread = Pos(0, 0, ${-hh} - (L - ${hh}) / 2 + 0.01) * Cylinder(${core / 2}, L - ${hh} + 0.02)
+    return head + thread - Pos(0, 0, -1) * Box(${(d * 0.7).toFixed(2)}, ${(d * 0.18).toFixed(2)}, 2.01) - Pos(0, 0, -1) * Box(${(d * 0.18).toFixed(2)}, ${(d * 0.7).toFixed(2)}, 2.01)
+`);
+}
+
+/**
+ * V-slot wheel kit as one solid: the wheel's V rim (two cones from hubD to
+ * the od at vAngle) on a hub, and its two bearings' inner races standing
+ * `proud` past each face round the bore. Seat on z = 0 (a race face), body +z.
+ */
+export function vWheelCode(size: string): string {
+  const r = familyDims("v_wheel", size)!;
+  const [od, w, hub, proud, race, bore] = [dim(r, "od"), dim(r, "width"), dim(r, "hubD"), dim(r, "proud"), dim(r, "raceD"), dim(r, "bore")];
+  const rise = (od - hub) / 2;
+  const flank = rise / Math.tan(((dim(r, "vAngle") / 2) * Math.PI) / 180);
+  const mid = proud + w / 2;
+  return module(`    body = Pos(0, 0, ${mid}) * Cylinder(${hub / 2}, ${w})
+    body = body + Pos(0, 0, ${mid - flank / 2}) * Cone(${hub / 2}, ${od / 2}, ${flank})
+    body = body + Pos(0, 0, ${mid + flank / 2}) * Cone(${od / 2}, ${hub / 2}, ${flank})
+    body = body + Pos(0, 0, ${mid}) * Cylinder(${race / 2}, ${w + 2 * proud})
+    return body - Pos(0, 0, ${mid}) * Cylinder(${bore / 2}, ${w + 2 * proud + 1})
+`);
+}
+
 export function camLockCode(size: string): string {
   const r = familyDims("cam_lock", size)!;
   const [rad, h, w] = [dim(r, "d") / 2 - 0.1, dim(r, "height"), dim(r, "edgeHole")];
@@ -675,6 +707,8 @@ const CODEGEN: Record<string, (key: string, sku: Sku, fit: number) => string> = 
   nema14: (k, s) => motorCode("nema14", k, lengthOf("nema14", k, s)),
   wood_dowel: (k, s) => dowelCode(k, lengthOf("wood_dowel", k, s), "wood_dowel"),
   confirmat: (k, s) => confirmatCode(k, lengthOf("confirmat", k, s)),
+  chipboard: (k, s) => chipboardCode(k, lengthOf("chipboard", k, s)),
+  v_wheel: (k) => vWheelCode(k),
   cam_lock: (k) => camLockCode(k),
   cam_bolt: (k) => camBoltCode(k),
   dowel_screw: (k, s) => dowelScrewCode(k, lengthOf("dowel_screw", k, s)),

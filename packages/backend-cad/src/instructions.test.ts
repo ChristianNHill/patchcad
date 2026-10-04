@@ -167,6 +167,26 @@ describe("feasibleSequence", () => {
     expect(seq.sequenceProblems).toEqual([]);
   });
 
+  it("presses a blocked bearing from inside when the kernel can reach that start, and only then", async () => {
+    const { g, scene } = example("cad-rotor");
+    // Say the base blocks bearing_a's way in. Pressed the other way, outward
+    // from inside, the kernel clears it only when that start can be reached
+    // (it reports an enclosed start as blocked).
+    const reach = (reachable: boolean): InsertionCheck => async (queries) =>
+      queries.map((q) => ({
+        id: q.id,
+        blocked: q.travel_mm || !q.moving.includes("j1_bearing_a") ? []
+          : q.direction[2] === -1 || !reachable ? [{ part: "j1_bearing_a", by: "base" }] : [],
+      }));
+    const open = await feasibleSequence(g, scene, reach(true));
+    const step = open.steps[stepOf(open, "j1_bearing_a")]!;
+    expect(step.moving.find((m) => m.key === "j1_bearing_a")!.direction).toEqual([0, 0, 1]);
+    expect(step.notes).toContain("Press from inside the frame: bring it in through the open side, then press it outward into its seat.");
+    expect(open.sequenceProblems).toEqual([]);
+    const closed = await feasibleSequence(g, scene, reach(false));
+    expect(closed.sequenceProblems.some((p) => /j1_bearing_a runs into base/.test(p))).toBe(true);
+  });
+
   it("says when the sweep did not run, rather than passing", async () => {
     const { g, scene } = example("cad-rotor");
     const seq = await feasibleSequence(g, scene, async () => {
@@ -178,12 +198,22 @@ describe("feasibleSequence", () => {
     ]);
   });
 
-  it("sweeps each step's new copies past its context, one query per direction", () => {
+  it("sweeps each piece of a step on its own, past the step's context", () => {
     const { g, scene } = example("cad-rotor");
     const queries = insertionQueries(buildSequence(g, scene));
     const bearings = queries.filter((q) => q.id.startsWith("1:"));
-    expect(bearings.map((q) => q.direction)).toEqual([[0, 0, -1], [0, 0, 1]]);
+    expect(bearings.map((q) => [q.moving, q.direction])).toEqual([[["j1_bearing_a"], [0, 0, -1]], [["j1_bearing_b"], [0, 0, 1]]]);
     expect(bearings.every((q) => q.still.includes("base"))).toBe(true);
+    // Four inserts, four sweeps: each travels its own length, not the group's.
+    const { g: box, scene: s2 } = example("cad-joints");
+    expect(insertionQueries(buildSequence(box, s2)).filter((q) => q.id.startsWith("1:")).map((q) => q.moving)).toEqual([["j1_insert"], ["j1_insert#1"], ["j1_insert#2"], ["j1_insert#3"]]);
+  });
+
+  it("a sub-assembly being attached is swept as one body", () => {
+    const { g, scene } = example("cad-belt-drive");
+    const seq = buildSequence(g, scene);
+    const attach = seq.steps.find((s) => s.attaches)!;
+    expect(insertionQueries(seq).filter((q) => q.id.startsWith(`${attach.n}:`)).map((q) => q.moving.sort())).toEqual([["j1_motor", "j1_motor_pulley"]]);
   });
 });
 

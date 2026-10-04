@@ -19,7 +19,7 @@ import { METRIC, REGISTRY_HARDWARE, skuOf } from "./registry.js";
 import { familyDims } from "./catalog.js";
 import { isMachined, sourcingOf } from "./sourcing.js";
 import { resolveDim } from "./bindings.js";
-import { jointOwner } from "./expand.js";
+import { jointOwner, mintedNames } from "./expand.js";
 import { invertRigid, transformPoint, type Mat4 } from "./assembly.js";
 import { contains, posedEnvelope } from "./plan-geometry.js";
 import {
@@ -51,6 +51,12 @@ function contactTolerance(graph: GraphDoc, e: GraphDoc["edges"][number] | undefi
 
 /** Smallest ball around a mate point the contact check looks inside. */
 const CONTACT_RADIUS_MM = 5;
+
+/** How far past a feature's nominal radius its wall can stand and still be
+ *  in contact: the widest fit cut plus the loosest contact tolerance. A ball
+ *  of the nominal radius never reached a slip-cut wall, so a horn in a
+ *  Ø19.95 hub cut Ø20.1 read as a 10.05mm gap (robot arm, both servos). */
+const FIT_REACH_MM = Math.max(...Object.values(FDM_FIT_BANDS_MM).map(([, hi]) => hi)) / 2 + CONTACT_GAP_TOL_MM + FDM_SLIP_FIT_MM / 2;
 
 /** Port types a screw threads INTO, so it shares material with by design. */
 const THREADED_PORTS = new Set(["THREADED_HOLE", "SCREW_BOSS"]);
@@ -109,8 +115,10 @@ export function threadAllowances(graph: GraphDoc): { a: string; b: string; volum
     for (const m of Object.values(graph.nodes)) {
       const mOwner = jointOwner(graph, m.id);
       if ((owner || mOwner) && owner !== mOwner) continue;
-      const len = engagementLength(m.kind, thread, skuOf(m)?.family);
-      if (len != null) out.push({ a: screw.id, b: m.id, volume_mm3: allow(len) });
+      // A joint's screw into its own motor (a servo's case pilots) engages
+      // over the screw's length: the case is catalog, so no port says how deep.
+      const len = m.kind === "motor" ? (owner && owner === mOwner ? num(graph, param(screw, "length")) : null) : engagementLength(m.kind, thread, skuOf(m)?.family);
+      if (len != null && Number.isFinite(len)) out.push({ a: screw.id, b: m.id, volume_mm3: allow(len) });
     }
     // A tapped hole or a boss pilot is matched by the mate that seats the
     // screw in it, since the part around it is otherwise an ordinary part.
@@ -123,6 +131,22 @@ export function threadAllowances(graph: GraphDoc): { a: string; b: string; volum
       const depth = port.params.depth ?? param(screw, "length");
       const len = typeof depth === "number" || typeof depth === "string" ? resolveDim(graph, depth) : NaN;
       if (Number.isFinite(len)) out.push({ a: screw.id, b: otherId, volume_mm3: allow(len) });
+    }
+    // A joint's screw is mated by its HEAD (R2: a's counterbore), so the tapped
+    // hole it runs into in b has no edge to it. That hole is still the joint's
+    // own minted port (step stool: 98.4mm³ = M6 tap-drill annulus × 11.4mm, on
+    // all 11 connector screws).
+    const joint = owner ? graph.joints?.find((j) => j.id === owner) : undefined;
+    if (!joint) continue;
+    const mine = mintedNames(joint);
+    for (const hostId of new Set([joint.a.node, joint.b.node])) {
+      const host = graph.nodes[hostId];
+      if (!host || out.some((x) => x.a === screw.id && x.b === hostId)) continue;
+      const depths = ((host.contract.payload as CadContractPayload | undefined)?.ports ?? [])
+        .filter((p) => THREADED_PORTS.has(p.type) && mine(p.name))
+        .map((p) => num(graph, p.params.depth ?? param(screw, "length")))
+        .filter(Number.isFinite);
+      if (depths.length) out.push({ a: screw.id, b: hostId, volume_mm3: allow(Math.max(...depths)) });
     }
   }
   return out;
@@ -191,7 +215,9 @@ export function hardwareAllowances(graph: GraphDoc): { a: string; b: string; vol
         push(hostId, partId, ring(p("diameter"), p("diameter") - PRESS_INTERFERENCE_MM, p("depth")));
       } else if (port.type === "LINEAR_BEARING_SEAT" && press && part.kind === "linear_bearing") {
         push(hostId, partId, ring(p("od"), p("od") - PRESS_INTERFERENCE_MM, p("length")));
-      } else if (port.type === "DOWEL_HOLE" && press && part.kind === "dowel") {
+      } else if (port.type === "DOWEL_HOLE" && press && (part.kind === "dowel" || part.kind === "pin")) {
+        // A filament or wire pin pressed in is a dowel too (magnet box: 1.35mm³,
+        // the FDM press cut's 0.05 on Ø1.75 over 10mm, blocked the base).
         push(hostId, partId, ring(p("diameter"), p("diameter") - PRESS_INTERFERENCE_MM, p("depth")));
       } else if (port.type === "NUT_TRAP" && part.kind === "nut") {
         const af = p("af");
@@ -269,7 +295,7 @@ export function contactQueries(
         });
     const widest = Math.max(0, ...dims()) / 2;
     const depth = Math.max(0, ...dims("depth"));
-    return [{ edge: e.id, a: e.from, b: e.to, at, radius: Math.max(CONTACT_RADIUS_MM, Math.hypot(widest, depth)) }];
+    return [{ edge: e.id, a: e.from, b: e.to, at, radius: Math.max(CONTACT_RADIUS_MM, Math.hypot(widest + (widest ? FIT_REACH_MM : 0), depth)) }];
   });
 }
 
