@@ -834,6 +834,39 @@ export const cadBoreShaftLint = {
   },
 };
 
+/** Every pose a contract declares needs a real frame: zAxis and xAxis of
+ *  non-zero length and not parallel. A zero axis threw deep in the solver
+ *  and ended the robot arm's plan with no repair round. */
+export const cadPoseAxesLint = {
+  run(graph: GraphDoc): string[] {
+    const problems: string[] = [];
+    const bad = (pose: { zAxis?: unknown; xAxis?: unknown } | undefined): string | undefined => {
+      const vec = (v: unknown) => (Array.isArray(v) ? v.map((c) => (typeof c === "number" ? c : Number(c))) : []);
+      const [z, x] = [vec(pose?.zAxis), vec(pose?.xAxis)];
+      if (z.length !== 3 || x.length !== 3 || [...z, ...x].some((c) => !Number.isFinite(c))) return "its axes must be three numbers each";
+      const [nz, nx] = [Math.hypot(...z), Math.hypot(...x)];
+      if (nz < 1e-9) return "zAxis has zero length";
+      if (nx < 1e-9) return "xAxis has zero length";
+      const cx = [z[1]! * x[2]! - z[2]! * x[1]!, z[2]! * x[0]! - z[0]! * x[2]!, z[0]! * x[1]! - z[1]! * x[0]!];
+      if (Math.hypot(...cx) < 1e-6 * nz * nx) return "xAxis is parallel to zAxis";
+      return undefined;
+    };
+    for (const n of Object.values(graph.nodes)) {
+      const payload = n.contract.payload as CadContractPayload | undefined;
+      for (const p of payload?.ports ?? []) {
+        const why = bad(p.pose);
+        if (why) problems.push(`${n.id}: port "${p.name}" pose: ${why} (zAxis ${JSON.stringify(p.pose.zAxis)}, xAxis ${JSON.stringify(p.pose.xAxis)}). zAxis points out of the mating face, xAxis lies in it.`);
+      }
+      (payload?.envelope?.volumes ?? []).forEach((v, k) => {
+        // A cylinder's x is arbitrary and is fixed up when parallel.
+        const why = bad(v.pose);
+        if (why && !(v.kind === "cylinder" && why.includes("parallel"))) problems.push(`${n.id}: envelope volume ${k + 1} pose: ${why}.`);
+      });
+    }
+    return problems;
+  },
+};
+
 export const cadMateConnectivityLint = {
   run(graph: GraphDoc): string[] {
     const ids = Object.keys(graph.nodes);
@@ -1467,6 +1500,7 @@ function cadPlanning(meshAvailable: boolean) {
       cadFastenerJustifiedLint,
       cadEnvelopeCoherentLint,
       cadFlatFaceSizeLint,
+      cadPoseAxesLint,
       cadProbedPortsLint,
       cadAssertionsCoherentLint,
       cadFaceHoleConflictLint,

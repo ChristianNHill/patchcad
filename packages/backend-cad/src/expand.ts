@@ -6,7 +6,7 @@ import {
   CadJoint, FDM_MIN_WALL_MM, gt2PitchD, honours, idlerScrews, statedName, jointEscapes, pulleyHeight, railHoles, railScrews, rimMid, selectJoint,
   type HardwarePick, type JointDecision, type JointInput, type Lin, type JointProcess,
 } from "./joints.js";
-import { gt2TipD } from "./registry.js";
+import { REGISTRY_HARDWARE, gt2TipD } from "./registry.js";
 import { resolveBinding, resolveDim, resolvePose, type NumericPose } from "./bindings.js";
 import type { AssemblyMate, JointAxisDef, KinematicJoint, Mat4 } from "./assembly.js";
 import { reachableTravel, solvePlan, statedTravel } from "./plan-geometry.js";
@@ -500,6 +500,32 @@ export function mintedNames(joint: JointDecl): (name: string) => boolean {
 
 /** Remove everything a joint minted, so expansion can run again. Hardware
  *  ids carry `_`, which the architect's slugger never emits. */
+/** A repair that echoes minted hardware back: the slugger turns its
+ *  `<joint>_<role>` id into `<joint>-<role>`, so it no longer reads as
+ *  minted, and its edges name `<joint var>_…` ports the part never declared.
+ *  The linear actuator spent all three repairs on four such wheel seats.
+ *  Expansion mints them again, so the echo is dropped: catalog parts named
+ *  after a joint, and edges onto a joint-prefixed port that does not exist. */
+function dropEchoes(out: ArchitectOutput) {
+  const ids = (out.joints ?? []).map((j) => j.id);
+  if (!ids.length) return;
+  const vars = ids.map(jointVar);
+  const declared = (node: string, port: string) => !!out.nodes.find((n) => n.id === node) && payloadOf(out.nodes.find((n) => n.id === node)!).ports?.some((p) => p.name === port);
+  const ghost = (node: string, port: string) => vars.some((v) => port.startsWith(`${v}_`)) && !declared(node, port);
+  // Named after a joint AND held only through ports nothing declares (or by
+  // other such parts): a part the architect really declared mates to real ports.
+  const named = new Set(out.nodes.filter((n) => REGISTRY_HARDWARE.has(n.kind) && ids.some((id) => n.id.startsWith(`${id}-`))).map((n) => n.id));
+  const echoed = new Set([...named].filter((id) => {
+    const touching = out.edges.filter((e) => e.from === id || e.to === id);
+    return touching.length > 0 && touching.every((e) => {
+      const [other, port] = e.from === id ? [e.to, e.toPort] : [e.from, e.fromPort];
+      return named.has(other) || ghost(other, port);
+    });
+  }));
+  out.nodes = out.nodes.filter((n) => !echoed.has(n.id));
+  out.edges = out.edges.filter((e) => !echoed.has(e.from) && !echoed.has(e.to) && !ghost(e.from, e.fromPort) && !ghost(e.to, e.toPort));
+}
+
 function unmint(out: ArchitectOutput, joint: JointDecl) {
   const minted = (id: string) => id.startsWith(`${joint.id}_`);
   out.nodes = out.nodes.filter((n) => !minted(n.id));
@@ -1619,6 +1645,7 @@ export function expandJoints(input: ArchitectOutput, live?: Live): ArchitectOutp
       cached.set(`${n.id}.${name}`, { binding, value: n.contract.params.find((p) => p.name === name)?.default });
     }
   }
+  dropEchoes(out);
   joints.forEach((j, i) => j.success && unmint(out, out.joints![i]!));
   const x = new Expansion(out, live);
   const kept: JointDecl[] = [];

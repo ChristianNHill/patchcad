@@ -594,7 +594,18 @@ ${JSON.stringify(zodToJsonSchema(z.array(jointSchema), { target: "jsonSchema7", 
   // The domain's expansion runs on every emission, before the lints judge it.
   // A repair is shown the model's OWN emission: the expanded one carries
   // minted hardware it never wrote and would echo back as its own nodes.
-  const expand = (o: ArchitectOutput) => opts.backend.planning.expandPlan?.(o) ?? o;
+  // Expansion that throws leaves the draft unexpanded and says why, as a
+  // lint problem the next repair round answers.
+  let expandError: string | undefined;
+  const expand = (o: ArchitectOutput) => {
+    try {
+      expandError = undefined;
+      return opts.backend.planning.expandPlan?.(o) ?? o;
+    } catch (err) {
+      expandError = (err as Error).message;
+      return o;
+    }
+  };
   let drafted = normalizeArchitectOutput(first.data, { enforceShell });
   let out = expand(drafted);
   let repaired = false;
@@ -603,9 +614,19 @@ ${JSON.stringify(zodToJsonSchema(z.array(jointSchema), { target: "jsonSchema7", 
 
   const lint = (o: ArchitectOutput): string[] => {
     const problems = genericLints(o);
+    if (expandError) problems.push(`plan expansion failed: ${expandError}. Look for a joint or port pose whose zAxis or xAxis is zero or not a number.`);
     if (problems.length === 0) {
       const graph = architectOutputToGraph(o, opts.projectId, opts.backend.id, opts.goal, opts.backend.planning.paramUnit);
-      for (const l of opts.backend.planning.graphLints) problems.push(...l.run(graph));
+      // A lint that throws on a malformed plan (a zero-length port axis) is a
+      // problem the model can repair, never the end of the plan: the robot
+      // arm's whole case died on one bad pose, before a single repair.
+      for (const l of opts.backend.planning.graphLints) {
+        try {
+          problems.push(...l.run(graph));
+        } catch (err) {
+          problems.push(`the plan could not be checked: ${(err as Error).message}. Look for a port or envelope pose whose zAxis or xAxis is zero or not a number, or an expression that does not resolve.`);
+        }
+      }
     }
     return problems;
   };

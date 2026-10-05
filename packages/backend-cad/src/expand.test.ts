@@ -1438,6 +1438,25 @@ describe("a wheel on its own bearings, on an axle fixed in a thin plate", () => 
     expect(lintAll(out)).toEqual([]);
   });
 
+  it("a repair that echoes the minted hardware back, slugged, re-expands clean (real-linear-actuator)", () => {
+    const first = gantry(4);
+    const slug = (id: string) => id.replace(/_/g, "-");
+    // What the slugger makes of a model echoing its expanded plan: minted ids
+    // with "-" for "_", edges kept, the wheel's minted seat ports gone, and
+    // joints as the model wrote them, unexpanded.
+    const echo = structuredClone(first);
+    const minted = new Set(echo.nodes.filter((n) => n.id.includes("_")).map((n) => n.id));
+    for (const n of echo.nodes) if (minted.has(n.id)) n.id = slug(n.id);
+    echo.edges = echo.edges.map((e) => ({ ...e, from: minted.has(e.from) ? slug(e.from) : e.from, to: minted.has(e.to) ? slug(e.to) : e.to }));
+    const wheel = echo.nodes.find((n) => n.id === "v-wheel")!;
+    (wheel.contract.payload as CadContractPayload).ports = (wheel.contract.payload as CadContractPayload).ports.filter((p) => p.name === "hub_face");
+    wheel.contract.provides = wheel.contract.provides.filter((p) => p.key === "hub_face");
+    echo.joints = (echo.joints as { expanded?: string; minted?: string[] }[]).map(({ expanded: _e, minted: _m, ...j }) => j) as never;
+    const again = expandJoints(echo);
+    expect(again.nodes.filter((n) => n.id.includes("-hub-bearing"))).toEqual([]);
+    expect(lintAll(again)).toEqual([]);
+  });
+
   it("seats one bearing set in the wheel and carries it to every copy (real-round-stool, real-linear-actuator)", () => {
     // Was: each joint's bearings, all four sets on wheel #0.
     const out = gantry(4);
