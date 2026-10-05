@@ -99,7 +99,9 @@ function threadOf(screw: NodeRecord): string | undefined {
 /** Overlap volume each pair of nodes is designed to share: the thread. */
 export function threadAllowances(graph: GraphDoc): { a: string; b: string; volume_mm3: number }[] {
   const out: { a: string; b: string; volume_mm3: number }[] = [];
-  const screws = Object.values(graph.nodes).filter((n) => n.kind === "fastener");
+  // A threaded rod is a screw to its nuts (real-planetary-gearbox: 1.7mm³
+  // of M3 thread read as a clash at each of four tie rods).
+  const screws = Object.values(graph.nodes).filter((n) => n.kind === "fastener" || n.kind === "threaded_rod");
   for (const screw of screws) {
     const thread = threadOf(screw);
     if (!thread) continue;
@@ -390,6 +392,23 @@ function hostOf(graph: GraphDoc, a: string, b: string): { host: string; hw: stri
 
 const fmt = (v: number[]) => `[${v.join(", ")}]`;
 
+/** How far a node's port origin lies outside its built body (the bbox its
+ *  last build measured, in its own frame), or null when it is on it. */
+function offBody(graph: GraphDoc, n: NodeRecord, portName: string): { mm: number; at: number[]; min: number[]; max: number[] } | null {
+  const bbox = (n.measurements?.data as { bbox?: { min: number[]; max: number[] } } | undefined)?.bbox;
+  const port = (n.contract.payload as CadContractPayload | undefined)?.ports?.find((p) => p.name === portName);
+  if (!bbox || !port) return null;
+  let at: number[];
+  try {
+    at = port.pose.origin.map((c) => resolveDim(graph, c));
+  } catch {
+    return null;
+  }
+  const mm = Math.hypot(...at.map((c, i) => Math.max(bbox.min[i]! - c, 0, c - bbox.max[i]!)));
+  const r = (v: number[]) => v.map((c) => Math.round(c * 100) / 100);
+  return mm > 0.5 ? { mm, at: r(at), min: r(bbox.min), max: r(bbox.max) } : null;
+}
+
 /** Kinds whose registry body is centred on z = 0 along z; the rest sit on
  *  z = 0 with the body +z (SEAT_POSE). */
 const CENTRED_HARDWARE = new Set(["gear", "dowel", "dowel_screw", "oring"]);
@@ -513,6 +532,24 @@ export function clashFindings(graph: GraphDoc, report: NonNullable<ClashResult["
     const ports = e ? ` (${e.from}.${e.fromPort} → ${e.to}.${e.toPort})` : "";
     const message = `G5 gap: ${g.a} and ${g.b} are mated${ports} but ${g.gap_mm.toFixed(2)}mm apart at [${g.at.join(", ")}], where their ports meet.`;
     const pair = hostOf(graph, g.a, g.b);
+    // A port the architect posed on catalog hardware by hand can itself be
+    // off the part: real-planetary-gearbox posed its M3 rods' ports at
+    // -L/2 + 6, for a rod centred on its origin, and a catalog rod runs
+    // 0..L. No repair of the host moves that; the plan has to.
+    const hwPort = pair && e ? (pair.hw === e.from ? e.fromPort : e.toPort) : undefined;
+    const off = pair && hwPort && !jointOwner(graph, pair.hw) ? offBody(graph, graph.nodes[pair.hw]!, hwPort) : null;
+    if (pair && off && off.mm >= g.gap_mm - 0.5) {
+      out.push({
+        nodeA: g.a,
+        nodeB: g.b,
+        kind: "gap",
+        measured: g.gap_mm,
+        expected: 0,
+        message: `${message} ${pair.hw}'s own port "${hwPort}" is posed at [${off.at.join(", ")}] in its frame, ${off.mm.toFixed(2)}mm off its body (the catalog ${graph.nodes[pair.hw]!.kind} spans [${off.min.join(", ")}]..[${off.max.join(", ")}]). The plan posed it for a different frame: re-pose ${pair.hw}.${hwPort} onto the part, or let a joint place the hardware.`,
+        blame: [pair.hw],
+      });
+      continue;
+    }
     if (pair && e) {
       // The hardware's frame is exact, so the host's feature is what is off.
       const port = pair.host === e.from ? e.fromPort : e.toPort;

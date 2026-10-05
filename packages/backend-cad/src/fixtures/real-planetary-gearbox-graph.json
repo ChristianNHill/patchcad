@@ -1,0 +1,3024 @@
+{
+ "schemaVersion": 1,
+ "id": "eval-real-planetary-gearbox",
+ "backend": "cad",
+ "brief": {
+  "goal": "a one-stage 3D-printed planetary gearbox on a NEMA 17 stepper: a 41x41mm square printed housing with an internal 27-tooth ring gear, a 9-tooth sun pinion pressed on the motor shaft, three 9-tooth planets on a printed carrier that is the output (module 1.2, 4:1), all clamped to the motor by four M3 threaded rods with nuts",
+  "design": "Compact, functional motor-accessory look: crisp square housing with small 0.5 mm chamfers on outside edges and flat faces that sit flush with the NEMA 17 face. Rotating parts get slightly softer edges and generous running gaps so printed surfaces never rub. No decoration; walls read solid rather than minimal.",
+  "refs": []
+ },
+ "nodes": {
+  "housing": {
+   "id": "housing",
+   "kind": "part",
+   "title": "Gearbox housing with ring gear",
+   "spec": "Square printed block that bolts onto the NEMA 17 face. A thin floor at the bottom sits on the motor. Above the floor, a 27-tooth internal involute ring gear (module 1.2, 20\u00b0 pressure angle, small backlash) is cut around a round cavity, and the gear teeth run the full ring width. Above the ring is a round pocket that the planet carrier spins in. A thick top wall closes the box and carries the output shaft. Four clearance holes run the full height at the motor's 31 mm screw pattern so threaded rods can pass from the motor to nuts on the top face.",
+   "contract": {
+    "name": "Gearbox housing",
+    "summary": "41\u00d741 square housing, open cavity with a 27T m1.2 internal ring gear above a thin floor, carrier pocket above it, thick top wall for the output; four full-height M3 rod holes on a 31 mm square, nuts seat on top.",
+    "params": [
+     {
+      "type": "number",
+      "name": "size",
+      "description": "outer width of the square housing, matched to the NEMA 17 face",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 41,
+      "min": 36,
+      "max": 60
+     },
+     {
+      "type": "number",
+      "name": "height",
+      "description": "overall height of the housing, derived from the stack inside",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 30,
+      "min": 18,
+      "max": 60
+     },
+     {
+      "type": "number",
+      "name": "floor",
+      "description": "thickness of the floor that sits on the motor face",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 3,
+      "min": 2,
+      "max": 6
+     },
+     {
+      "type": "number",
+      "name": "ring_width",
+      "description": "height of the ring gear teeth band, a little more than the gear face width",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 9,
+      "min": 4,
+      "max": 20
+     },
+     {
+      "type": "number",
+      "name": "top_wall",
+      "description": "thickness of the top wall that holds the output shaft bearings",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 12,
+      "min": 6,
+      "max": 24
+     },
+     {
+      "type": "number",
+      "name": "ring_module",
+      "description": "tooth size of the internal ring gear, must match the sun and planets",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 1.2,
+      "min": 0.8,
+      "max": 2
+     },
+     {
+      "type": "number",
+      "name": "ring_teeth",
+      "description": "tooth count of the internal ring gear, sun plus two planets",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 27,
+      "min": 18,
+      "max": 60
+     },
+     {
+      "type": "number",
+      "name": "backlash",
+      "description": "extra play cut into the ring teeth so printed gears turn freely",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 0.15,
+      "min": 0,
+      "max": 0.4
+     },
+     {
+      "type": "number",
+      "name": "carrier_pocket",
+      "description": "diameter of the round pocket the carrier spins in",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 34,
+      "min": 20,
+      "max": 38
+     },
+     {
+      "type": "number",
+      "name": "rod_pitch",
+      "description": "spacing of the four clamp rods, the NEMA 17 screw square",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 31,
+      "min": 25,
+      "max": 40
+     },
+     {
+      "type": "number",
+      "name": "rod_hole",
+      "description": "diameter of the four rod holes through the housing",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 3.4,
+      "min": 2.4,
+      "max": 6.6
+     },
+     {
+      "type": "number",
+      "name": "j_motor_pilot",
+      "description": "motor pilot \u00d8 for j-motor",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 22
+     }
+    ],
+    "provides": [
+     {
+      "key": "motor_face",
+      "type": "FLAT_FACE",
+      "description": "top of the floor, around the motor shaft; the sun turns just above it"
+     },
+     {
+      "key": "carrier_face",
+      "type": "FLAT_FACE",
+      "description": "underside of the top wall that the carrier runs against"
+     },
+     {
+      "key": "rod_hole_fl",
+      "type": "CLEARANCE_HOLE",
+      "description": "rod hole, -x -y corner"
+     },
+     {
+      "key": "rod_hole_fr",
+      "type": "CLEARANCE_HOLE",
+      "description": "rod hole, +x -y corner"
+     },
+     {
+      "key": "rod_hole_bl",
+      "type": "CLEARANCE_HOLE",
+      "description": "rod hole, -x +y corner"
+     },
+     {
+      "key": "rod_hole_br",
+      "type": "CLEARANCE_HOLE",
+      "description": "rod hole, +x +y corner"
+     },
+     {
+      "key": "nut_seat_fl",
+      "type": "FLAT_FACE",
+      "description": "nut seat on top, -x -y corner"
+     },
+     {
+      "key": "nut_seat_fr",
+      "type": "FLAT_FACE",
+      "description": "nut seat on top, +x -y corner"
+     },
+     {
+      "key": "nut_seat_bl",
+      "type": "FLAT_FACE",
+      "description": "nut seat on top, -x +y corner"
+     },
+     {
+      "key": "nut_seat_br",
+      "type": "FLAT_FACE",
+      "description": "nut seat on top, +x +y corner"
+     },
+     {
+      "key": "j_motor_motor_mount",
+      "type": "MOTOR_MOUNT",
+      "description": ""
+     }
+    ],
+    "requires": [],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "motor_face",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "-param(housing.height) / 2 + param(housing.floor)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 9
+       }
+      },
+      {
+       "name": "carrier_face",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "param(housing.height) / 2 - param(housing.top_wall)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 30
+       }
+      },
+      {
+       "name": "rod_hole_fl",
+       "type": "CLEARANCE_HOLE",
+       "pose": {
+        "origin": [
+         "-param(housing.rod_pitch) / 2",
+         "-param(housing.rod_pitch) / 2",
+         "-param(housing.height) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(housing.rod_hole)"
+       }
+      },
+      {
+       "name": "rod_hole_fr",
+       "type": "CLEARANCE_HOLE",
+       "pose": {
+        "origin": [
+         "param(housing.rod_pitch) / 2",
+         "-param(housing.rod_pitch) / 2",
+         "-param(housing.height) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(housing.rod_hole)"
+       }
+      },
+      {
+       "name": "rod_hole_bl",
+       "type": "CLEARANCE_HOLE",
+       "pose": {
+        "origin": [
+         "-param(housing.rod_pitch) / 2",
+         "param(housing.rod_pitch) / 2",
+         "-param(housing.height) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(housing.rod_hole)"
+       }
+      },
+      {
+       "name": "rod_hole_br",
+       "type": "CLEARANCE_HOLE",
+       "pose": {
+        "origin": [
+         "param(housing.rod_pitch) / 2",
+         "param(housing.rod_pitch) / 2",
+         "-param(housing.height) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(housing.rod_hole)"
+       }
+      },
+      {
+       "name": "nut_seat_fl",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "-param(housing.rod_pitch) / 2",
+         "-param(housing.rod_pitch) / 2",
+         "param(housing.height) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 4.3
+       }
+      },
+      {
+       "name": "nut_seat_fr",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(housing.rod_pitch) / 2",
+         "-param(housing.rod_pitch) / 2",
+         "param(housing.height) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 4.3
+       }
+      },
+      {
+       "name": "nut_seat_bl",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "-param(housing.rod_pitch) / 2",
+         "param(housing.rod_pitch) / 2",
+         "param(housing.height) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 4.3
+       }
+      },
+      {
+       "name": "nut_seat_br",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(housing.rod_pitch) / 2",
+         "param(housing.rod_pitch) / 2",
+         "param(housing.height) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 4.3
+       }
+      },
+      {
+       "name": "j_motor_motor_mount",
+       "type": "MOTOR_MOUNT",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "(-param(housing.height) / 2 + param(housing.floor)) + (-(param(housing.floor)))"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "pilot_diameter": "param(housing.j_motor_pilot)",
+        "hole_diameter": 3.4,
+        "pitch_x": 31,
+        "pitch_y": 31
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "box",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "dims": [
+         "param(housing.size)",
+         "param(housing.size)",
+         "param(housing.height)"
+        ]
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "height": "expr: param(housing.floor) + param(housing.ring_width) + param(carrier.thickness) + param(housing.top_wall)",
+      "ring_width": "expr: param(sun-gear.thickness) + 1",
+      "ring_module": "expr: param(sun-gear.module)",
+      "ring_teeth": "expr: param(sun-gear.teeth) + 2 * param(planet-gear.teeth)",
+      "carrier_pocket": "expr: param(carrier.diameter) + 2",
+      "rod_hole": "clearance:param:m3-rod.thread",
+      "j_motor_pilot": "hw:motorPilot:param:j-motor_motor.sku"
+     },
+     "visualChecks": [
+      "Is the outside a square block with flat sides?",
+      "Are there gear teeth around the inside of the round cavity?",
+      "Is there a rod hole near each of the four corners?",
+      "Is there a central opening in the top face for the output?"
+     ],
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "x",
+       "min": 40.5,
+       "max": 41.5
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "y",
+       "min": 40.5,
+       "max": 41.5
+      },
+      {
+       "kind": "line_count",
+       "from": [
+        -25,
+        16.4,
+        -7.5
+       ],
+       "to": [
+        25,
+        16.4,
+        -7.5
+       ],
+       "crossings_min": 5
+      }
+     ]
+    },
+    "hash": "21c26290ad7077af"
+   },
+   "params": {},
+   "hidden": false,
+   "artifact": {
+    "code": "# stripped: the scene reads contracts, not code\n",
+    "testCode": "",
+    "hash": "e877b8fa3b1354d9"
+   },
+   "thread": [],
+   "status": "error_contract",
+   "measurements": {
+    "version": 6,
+    "paramsHash": "08f44b07b5901a25",
+    "data": {
+     "volume_mm3": 34813.829180656234,
+     "area_mm2": 14013.736091466291,
+     "solids": 1,
+     "shells": [
+      1
+     ],
+     "bbox": {
+      "min": [
+       -20.5,
+       -20.5,
+       -15
+      ],
+      "max": [
+       20.5,
+       20.5,
+       15
+      ],
+      "size": [
+       41,
+       41,
+       30
+      ]
+     },
+     "printability": {
+      "min_wall": {
+       "thin_wall_p2_mm": 0.8,
+       "index": 0.881,
+       "recommended_mm": 0.8
+      },
+      "overhang": {
+       "warn_area_fraction": 0,
+       "fail_area_fraction": 0.0874,
+       "index": 0.913
+      },
+      "composite": 0.897
+     },
+     "ports": [
+      {
+       "key": "motor_face",
+       "type": "FLAT_FACE",
+       "ring_diameter": 9
+      },
+      {
+       "key": "carrier_face",
+       "type": "FLAT_FACE",
+       "ring_diameter": 30
+      },
+      {
+       "key": "rod_hole_fl",
+       "type": "CLEARANCE_HOLE",
+       "measured_diameter": 3.4,
+       "center_offset": 0,
+       "tilt_deg": 0,
+       "through": true
+      },
+      {
+       "key": "rod_hole_fr",
+       "type": "CLEARANCE_HOLE",
+       "measured_diameter": 3.4,
+       "center_offset": 0,
+       "tilt_deg": 0,
+       "through": true
+      },
+      {
+       "key": "rod_hole_bl",
+       "type": "CLEARANCE_HOLE",
+       "measured_diameter": 3.4,
+       "center_offset": 0,
+       "tilt_deg": 0,
+       "through": true
+      },
+      {
+       "key": "rod_hole_br",
+       "type": "CLEARANCE_HOLE",
+       "measured_diameter": 3.4,
+       "center_offset": 0,
+       "tilt_deg": 0,
+       "through": true
+      },
+      {
+       "key": "nut_seat_fl",
+       "type": "FLAT_FACE",
+       "ring_diameter": 4.3
+      },
+      {
+       "key": "nut_seat_fr",
+       "type": "FLAT_FACE",
+       "ring_diameter": 4.3
+      },
+      {
+       "key": "nut_seat_bl",
+       "type": "FLAT_FACE",
+       "ring_diameter": 4.3
+      },
+      {
+       "key": "nut_seat_br",
+       "type": "FLAT_FACE",
+       "ring_diameter": 4.3
+      },
+      {
+       "key": "j_motor_motor_mount",
+       "type": "MOTOR_MOUNT",
+       "measured_diameter": 22.15,
+       "center_offset": 0,
+       "through": true,
+       "holes": [
+        {
+         "key": "j_motor_motor_mount #1/4",
+         "type": "MOTOR_MOUNT",
+         "measured_diameter": 3.4,
+         "center_offset": 0,
+         "tilt_deg": 0,
+         "through": true
+        },
+        {
+         "key": "j_motor_motor_mount #2/4",
+         "type": "MOTOR_MOUNT",
+         "measured_diameter": 3.4,
+         "center_offset": 0,
+         "tilt_deg": 0,
+         "through": true
+        },
+        {
+         "key": "j_motor_motor_mount #3/4",
+         "type": "MOTOR_MOUNT",
+         "measured_diameter": 3.4,
+         "center_offset": 0,
+         "tilt_deg": 0,
+         "through": true
+        },
+        {
+         "key": "j_motor_motor_mount #4/4",
+         "type": "MOTOR_MOUNT",
+         "measured_diameter": 3.4,
+         "center_offset": 0,
+         "tilt_deg": 0,
+         "through": true
+        }
+       ]
+      }
+     ],
+     "envelope": {
+      "vertices_checked": 9186,
+      "violations": 0
+     },
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "x",
+       "measured": 41
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "y",
+       "measured": 41
+      },
+      {
+       "kind": "line_count",
+       "measured": 6
+      }
+     ],
+     "process": {
+      "kind": "fdm",
+      "min_wall": 0.8,
+      "stability": {
+       "tip_angle_deg": 49.94,
+       "gamma_deg": 10,
+       "footprint_mm2": 1600
+      },
+      "overhang_area_fraction": 0,
+      "bridge_span_mm": 13,
+      "findings": [
+       {
+        "rule": "bridge",
+        "message": "a flat roof bridges 13.0 mm unsupported (over 10 mm sags): narrow it, or close it with 45\u00b0 sides to a point or a short flat",
+        "measured": 13
+       }
+      ]
+     }
+    }
+   },
+   "version": 6,
+   "history": [],
+   "cost": {
+    "calls": 8,
+    "inputTokens": 59898,
+    "outputTokens": 28952,
+    "usd": 0.8382935999999999
+   },
+   "statusDetail": {
+    "stage": "assembly",
+    "message": "G5 swept: joint j-motor carries planet-gear into housing at -180\u00b0 of its travel: 53.4 mm\u00b3 shared near [0.44, 15.62, -7]. Both parts clear at rest; give planet-gear room to turn (shorter blades, a taller shaft, or housing moved out of its path), or limit the joint.\nG5 swept: joint j-planet-1 carries planet-gear into housing at -180\u00b0 of its travel: 53.4 mm\u00b3 shared near [0.44, 15.62, -7]. Both parts clear at rest; give planet-gear room to turn (shorter blades, a taller shaft, or housing moved out of its path), or limit the joint.\nG5 swept: joint j-planet-2 carries planet-gear#1 into housing at 60\u00b0 of its travel: 53.4 mm\u00b3 shared near [-13.75, -7.43, -7]. Both parts clear at rest; give planet-gear#1 room to turn (shorter blades, a taller shaft, or housing moved out of its path), or limit the joint.\nG5 swept: joint j-planet-3 carries planet-gear#2 into housing at -60\u00b0 of its travel: 53.4 mm\u00b3 shared near [13.31, -8.19, -7]. Both parts clear at rest; give planet-gear#2 room to turn (shorter blades, a taller shaft, or housing moved out of its path), or limit the joint.\nG5 gap: housing and m3-rod are mated (housing.rod_hole_fl \u2192 m3-rod.housing_hole) but 14.00mm apart at [-15.5, -15.5, -15], where their ports meet. m3-rod is catalog hardware, exact by construction, so housing's rod_hole_fl is what is off: it gets a repair round.\nG5 gap: housing and m3-rod are mated (housing.rod_hole_fr \u2192 m3-rod.housing_hole) but 14.00mm apart at [15.5, -15.5, -15], where their ports meet. m3-rod is catalog hardware, exact by construction, so housing's rod_hole_fr is what is off: it gets a repair round.\nG5 gap: housing and m3-rod are mated (housing.rod_hole_bl \u2192 m3-rod.housing_hole) but 14.00mm apart at [-15.5, 15.5, -15], where their ports meet. m3-rod is catalog hardware, exact by construction, so housing's rod_hole_bl is what is off: it gets a repair round.\nG5 gap: housing and m3-rod are mated (housing.rod_hole_br \u2192 m3-rod.housing_hole) but 14.00mm apart at [15.5, 15.5, -15], where their ports meet. m3-rod is catalog hardware, exact by construction, so housing's rod_hole_br is what is off: it gets a repair round.\nAssembly: step 3 cannot be done: housing cannot reach its place travelling along [0, 0, -1]; carrier (and 6 more) is in the way 12.0mm out (1597.7 mm\u00b3 near [0, 0, -0.67]), and no order the mates allow gets it in first. Both parts keep inside their envelopes, so the contracts leave no way in (a port pointing into its part, a closed bore, a part seated off its shaft): no code change fixes it.",
+    "attribution": "contract-infeasible"
+   }
+  },
+  "sun-gear": {
+   "id": "sun-gear",
+   "kind": "gear",
+   "title": "Sun pinion",
+   "spec": "9-tooth module 1.2 spur pinion pressed onto the NEMA 17 5 mm shaft.",
+   "contract": {
+    "name": "Sun pinion",
+    "summary": "9T m1.2 spur gear, 5 mm bore, pressed on the motor shaft; meshes with the three planets.",
+    "params": [
+     {
+      "type": "number",
+      "name": "module",
+      "description": "tooth size shared by all gears in the box",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 1.2,
+      "min": 0.8,
+      "max": 2
+     },
+     {
+      "type": "number",
+      "name": "teeth",
+      "description": "sun tooth count",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 9,
+      "min": 8,
+      "max": 30
+     },
+     {
+      "type": "number",
+      "name": "pressure_angle",
+      "description": "tooth flank angle",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 20,
+      "min": 14.5,
+      "max": 25
+     },
+     {
+      "type": "number",
+      "name": "thickness",
+      "description": "face width of the gear",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 8,
+      "min": 4,
+      "max": 20
+     },
+     {
+      "type": "number",
+      "name": "bore",
+      "description": "hole for the motor shaft",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 5,
+      "min": 0,
+      "max": 8
+     }
+    ],
+    "provides": [],
+    "requires": [
+     {
+      "key": "j_motor_hub",
+      "type": "HUB_BORE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "face",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "-param(sun-gear.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 7.4
+       }
+      },
+      {
+       "name": "j_motor_hub",
+       "type": "HUB_BORE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "(-param(sun-gear.thickness) / 2)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": 5,
+        "flat": 2
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": "param(sun-gear.module) * param(sun-gear.teeth) - 1",
+        "h": "param(sun-gear.thickness)"
+       }
+      ],
+      "clearance": 0
+     },
+     "paramBindings": {}
+    },
+    "hash": "d538fd9a44617a79"
+   },
+   "params": {},
+   "hidden": false,
+   "artifact": {
+    "code": "# stripped: the scene reads contracts, not code\n",
+    "testCode": "",
+    "hash": "c1cb57ed0c826861"
+   },
+   "thread": [],
+   "status": "error_contract",
+   "measurements": {
+    "version": 1,
+    "paramsHash": "08f44b07b5901a25",
+    "data": {
+     "volume_mm3": 535.4156874288051,
+     "area_mm2": 821.5702374419257,
+     "solids": 1,
+     "shells": [
+      1
+     ],
+     "bbox": {
+      "min": [
+       -6.309972827402279,
+       -6.550120247613541,
+       -4.0000001
+      ],
+      "max": [
+       6.600000099999999,
+       6.550120247613541,
+       4.0000001
+      ],
+      "size": [
+       12.90997292740228,
+       13.100240495227082,
+       8.0000002
+      ]
+     },
+     "printability": {
+      "min_wall": {
+       "thin_wall_p2_mm": 1.324,
+       "index": 1,
+       "recommended_mm": 0.8
+      },
+      "overhang": {
+       "warn_area_fraction": 0,
+       "fail_area_fraction": 0,
+       "index": 1
+      },
+      "composite": 1
+     },
+     "ports": [
+      {
+       "key": "j_motor_hub",
+       "type": "HUB_BORE",
+       "measured_diameter": 5.15,
+       "measured_flat": 2
+      }
+     ]
+    }
+   },
+   "version": 1,
+   "history": [],
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   },
+   "statusDetail": {
+    "stage": "assembly",
+    "message": "G5 swept: joint j-motor carries sun-gear into planet-gear#1 at -180\u00b0 of its travel: 29.8 mm\u00b3 shared near [-4.86, -2.38, -7]. Both parts clear at rest; give sun-gear room to turn (shorter blades, a taller shaft, or planet-gear#1 moved out of its path), or limit the joint.\nG5 swept: joint j-motor carries sun-gear into planet-gear#2 at -60\u00b0 of its travel: 29.8 mm\u00b3 shared near [4.49, -3.02, -7]. Both parts clear at rest; give sun-gear room to turn (shorter blades, a taller shaft, or planet-gear#2 moved out of its path), or limit the joint.\nG5 swept: joint j-planet-1 carries sun-gear into planet-gear#1 at -180\u00b0 of its travel: 29.8 mm\u00b3 shared near [-4.86, -2.38, -7]. Both parts clear at rest; give sun-gear room to turn (shorter blades, a taller shaft, or planet-gear#1 moved out of its path), or limit the joint.\nG5 swept: joint j-planet-1 carries sun-gear into planet-gear#2 at -60\u00b0 of its travel: 29.8 mm\u00b3 shared near [4.49, -3.02, -7]. Both parts clear at rest; give sun-gear room to turn (shorter blades, a taller shaft, or planet-gear#2 moved out of its path), or limit the joint.\nG5 swept: joint j-planet-2 carries planet-gear#1 into sun-gear at -180\u00b0 of its travel: 29.9 mm\u00b3 shared near [-4.49, -3.02, -7]. Both parts clear at rest; give planet-gear#1 room to turn (shorter blades, a taller shaft, or sun-gear moved out of its path), or limit the joint.\nG5 swept: joint j-planet-3 carries planet-gear#2 into sun-gear at -180\u00b0 of its travel: 29.9 mm\u00b3 shared near [4.86, -2.38, -7]. Both parts clear at rest; give planet-gear#2 room to turn (shorter blades, a taller shaft, or sun-gear moved out of its path), or limit the joint.",
+    "attribution": "contract-infeasible"
+   }
+  },
+  "planet-gear": {
+   "id": "planet-gear",
+   "kind": "gear",
+   "title": "Planet gear",
+   "spec": "9-tooth module 1.2 spur gear; three copies turn on the carrier pins.",
+   "contract": {
+    "name": "Planet gear",
+    "summary": "9T m1.2 spur gear on a carrier pin; meshes with the sun and the ring.",
+    "params": [
+     {
+      "type": "number",
+      "name": "module",
+      "description": "tooth size, same as the sun",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 1.2,
+      "min": 0.8,
+      "max": 2
+     },
+     {
+      "type": "number",
+      "name": "teeth",
+      "description": "planet tooth count",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 9,
+      "min": 8,
+      "max": 30
+     },
+     {
+      "type": "number",
+      "name": "pressure_angle",
+      "description": "tooth flank angle",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 20,
+      "min": 14.5,
+      "max": 25
+     },
+     {
+      "type": "number",
+      "name": "thickness",
+      "description": "face width of the gear",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 8,
+      "min": 4,
+      "max": 20
+     },
+     {
+      "type": "number",
+      "name": "bore",
+      "description": "hole for the planet pin",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 3,
+      "min": 0,
+      "max": 4
+     },
+     {
+      "type": "number",
+      "name": "j_planet_1_pin_d",
+      "description": "pin \u00d8 for j-planet-1",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 3
+     },
+     {
+      "type": "number",
+      "name": "phase",
+      "description": "tooth phase, degrees: set at expansion so the teeth mesh",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 20
+     }
+    ],
+    "provides": [],
+    "requires": [
+     {
+      "key": "face",
+      "type": "FLAT_FACE",
+      "description": "minted gear port"
+     },
+     {
+      "key": "bore",
+      "type": "HUB_BORE",
+      "description": "minted gear port"
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "j_planet_1_pin_b",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "-param(planet-gear.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 6
+       }
+      },
+      {
+       "name": "face",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "-param(planet-gear.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": "(param(planet-gear.j_planet_1_pin_d)) + 2.4"
+       }
+      },
+      {
+       "name": "bore",
+       "type": "HUB_BORE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "-param(planet-gear.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(planet-gear.bore)",
+        "depth": "param(planet-gear.thickness)"
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": "param(planet-gear.module) * param(planet-gear.teeth) - 1",
+        "h": "param(planet-gear.thickness)"
+       }
+      ],
+      "clearance": 0
+     },
+     "paramBindings": {
+      "module": "expr: param(sun-gear.module)",
+      "thickness": "expr: param(sun-gear.thickness)",
+      "j_planet_1_pin_d": "hw:dowelHole:param:j-planet-1_pin.sku"
+     }
+    },
+    "hash": "de9d2e5e763ee051"
+   },
+   "params": {},
+   "hidden": false,
+   "artifact": {
+    "code": "# stripped: the scene reads contracts, not code\n",
+    "testCode": "",
+    "hash": "dc746aed59fa8f59"
+   },
+   "thread": [],
+   "status": "error_contract",
+   "measurements": {
+    "version": 1,
+    "paramsHash": "08f44b07b5901a25",
+    "data": {
+     "volume_mm3": 629.5230447647142,
+     "area_mm2": 796.9540689087185,
+     "solids": 1,
+     "shells": [
+      1
+     ],
+     "bbox": {
+      "min": [
+       -6.6000001,
+       -6.550120247613541,
+       -4.0000001
+      ],
+      "max": [
+       6.309972827402279,
+       6.550120247613542,
+       4.0000001
+      ],
+      "size": [
+       12.90997292740228,
+       13.100240495227084,
+       8.0000002
+      ]
+     },
+     "printability": {
+      "min_wall": {
+       "thin_wall_p2_mm": 1.387,
+       "index": 1,
+       "recommended_mm": 0.8
+      },
+      "overhang": {
+       "warn_area_fraction": 0,
+       "fail_area_fraction": 0,
+       "index": 1
+      },
+      "composite": 1
+     },
+     "ports": [
+      {
+       "key": "bore",
+       "type": "HUB_BORE",
+       "measured_diameter": 3.15,
+       "center_offset": 0,
+       "tilt_deg": 0,
+       "through": true
+      }
+     ]
+    }
+   },
+   "version": 1,
+   "history": [],
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   },
+   "statusDetail": {
+    "stage": "assembly",
+    "message": "G5 swept: joint j-motor carries sun-gear into planet-gear#1 at -180\u00b0 of its travel: 29.8 mm\u00b3 shared near [-4.86, -2.38, -7]. Both parts clear at rest; give sun-gear room to turn (shorter blades, a taller shaft, or planet-gear#1 moved out of its path), or limit the joint.\nG5 swept: joint j-motor carries sun-gear into planet-gear#2 at -60\u00b0 of its travel: 29.8 mm\u00b3 shared near [4.49, -3.02, -7]. Both parts clear at rest; give sun-gear room to turn (shorter blades, a taller shaft, or planet-gear#2 moved out of its path), or limit the joint.\nG5 swept: joint j-planet-1 carries sun-gear into planet-gear#1 at -180\u00b0 of its travel: 29.8 mm\u00b3 shared near [-4.86, -2.38, -7]. Both parts clear at rest; give sun-gear room to turn (shorter blades, a taller shaft, or planet-gear#1 moved out of its path), or limit the joint.\nG5 swept: joint j-planet-1 carries sun-gear into planet-gear#2 at -60\u00b0 of its travel: 29.8 mm\u00b3 shared near [4.49, -3.02, -7]. Both parts clear at rest; give sun-gear room to turn (shorter blades, a taller shaft, or planet-gear#2 moved out of its path), or limit the joint.\nG5 swept: joint j-planet-2 carries planet-gear#1 into sun-gear at -180\u00b0 of its travel: 29.9 mm\u00b3 shared near [-4.49, -3.02, -7]. Both parts clear at rest; give planet-gear#1 room to turn (shorter blades, a taller shaft, or sun-gear moved out of its path), or limit the joint.\nG5 swept: joint j-planet-3 carries planet-gear#2 into sun-gear at -180\u00b0 of its travel: 29.9 mm\u00b3 shared near [4.86, -2.38, -7]. Both parts clear at rest; give planet-gear#2 room to turn (shorter blades, a taller shaft, or sun-gear moved out of its path), or limit the joint.",
+    "attribution": "contract-infeasible"
+   }
+  },
+  "carrier": {
+   "id": "carrier",
+   "kind": "part",
+   "title": "Planet carrier (output)",
+   "spec": "Round printed disc that spins in the housing pocket above the ring gear and is the gearbox output. Its underside carries three planet seats spaced evenly at 120 degrees on the sun-planet mesh radius, and the planets hang below it. The top face runs against the underside of the housing top wall and carries the output hub at its centre.",
+   "contract": {
+    "name": "Planet carrier",
+    "summary": "Disc carrier, output of the box; three planet seats on its underside at the mesh radius, top face runs under the housing top wall with the output hub at its centre.",
+    "params": [
+     {
+      "type": "number",
+      "name": "diameter",
+      "description": "outer diameter of the carrier disc",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 32,
+      "min": 24,
+      "max": 36
+     },
+     {
+      "type": "number",
+      "name": "thickness",
+      "description": "how thick the carrier disc prints",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 6,
+      "min": 4,
+      "max": 12
+     },
+     {
+      "type": "number",
+      "name": "orbit_radius",
+      "description": "distance from the centre to each planet pin, set by the gear mesh",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 10.8,
+      "min": 6,
+      "max": 20
+     },
+     {
+      "type": "number",
+      "name": "j_planet_1_pin_d",
+      "description": "pin \u00d8 for j-planet-1",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 3
+     },
+     {
+      "type": "number",
+      "name": "j_planet_2_pin_d",
+      "description": "pin \u00d8 for j-planet-2",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 3
+     },
+     {
+      "type": "number",
+      "name": "j_planet_3_pin_d",
+      "description": "pin \u00d8 for j-planet-3",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 3
+     }
+    ],
+    "provides": [
+     {
+      "key": "planet_seat_1",
+      "type": "FLAT_FACE",
+      "description": "planet seat at +y"
+     },
+     {
+      "key": "planet_seat_2",
+      "type": "FLAT_FACE",
+      "description": "planet seat at lower left"
+     },
+     {
+      "key": "planet_seat_3",
+      "type": "FLAT_FACE",
+      "description": "planet seat at lower right"
+     },
+     {
+      "key": "j_planet_1_pin_a",
+      "type": "DOWEL_HOLE",
+      "description": ""
+     },
+     {
+      "key": "j_planet_2_pin_a",
+      "type": "DOWEL_HOLE",
+      "description": ""
+     },
+     {
+      "key": "j_planet_3_pin_a",
+      "type": "DOWEL_HOLE",
+      "description": ""
+     }
+    ],
+    "requires": [
+     {
+      "key": "housing_face",
+      "type": "FLAT_FACE",
+      "description": "top face that runs under the housing top wall"
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "housing_face",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "param(carrier.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 24
+       }
+      },
+      {
+       "name": "planet_seat_1",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         "param(carrier.orbit_radius)",
+         "-param(carrier.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "size": 7,
+        "ring_diameter": "(param(carrier.j_planet_1_pin_d)) + 2.4"
+       }
+      },
+      {
+       "name": "planet_seat_2",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "-param(carrier.orbit_radius) * 0.8660254",
+         "-param(carrier.orbit_radius) / 2",
+         "-param(carrier.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "size": 7,
+        "ring_diameter": "(param(carrier.j_planet_2_pin_d)) + 2.4"
+       }
+      },
+      {
+       "name": "planet_seat_3",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(carrier.orbit_radius) * 0.8660254",
+         "-param(carrier.orbit_radius) / 2",
+         "-param(carrier.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "size": 7,
+        "ring_diameter": "(param(carrier.j_planet_3_pin_d)) + 2.4"
+       }
+      },
+      {
+       "name": "j_planet_1_pin_a",
+       "type": "DOWEL_HOLE",
+       "pose": {
+        "origin": [
+         0,
+         "(param(carrier.orbit_radius))",
+         "(-param(carrier.thickness) / 2)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(carrier.j_planet_1_pin_d)",
+        "depth": 4.5,
+        "fit": "press"
+       }
+      },
+      {
+       "name": "j_planet_2_pin_a",
+       "type": "DOWEL_HOLE",
+       "pose": {
+        "origin": [
+         "(-param(carrier.orbit_radius) * 0.8660254)",
+         "(-param(carrier.orbit_radius) / 2)",
+         "(-param(carrier.thickness) / 2)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(carrier.j_planet_2_pin_d)",
+        "depth": 4.5,
+        "fit": "press"
+       }
+      },
+      {
+       "name": "j_planet_3_pin_a",
+       "type": "DOWEL_HOLE",
+       "pose": {
+        "origin": [
+         "(param(carrier.orbit_radius) * 0.8660254)",
+         "(-param(carrier.orbit_radius) / 2)",
+         "(-param(carrier.thickness) / 2)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(carrier.j_planet_3_pin_d)",
+        "depth": 4.5,
+        "fit": "press"
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": "param(carrier.diameter)",
+        "h": "param(carrier.thickness)"
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "orbit_radius": "expr: param(sun-gear.module) * (param(sun-gear.teeth) + param(planet-gear.teeth)) / 2",
+      "j_planet_1_pin_d": "hw:dowelHole:param:j-planet-1_pin.sku",
+      "j_planet_2_pin_d": "hw:dowelHole:param:j-planet-2_pin.sku",
+      "j_planet_3_pin_d": "hw:dowelHole:param:j-planet-3_pin.sku"
+     },
+     "visualChecks": [
+      "Is the carrier a round disc?",
+      "Are there exactly three planet seats on the underside, evenly spaced around the centre?",
+      "Is the output hub at the centre of the top face?"
+     ],
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "x",
+       "min": 22,
+       "max": 32.5
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "y",
+       "min": 22,
+       "max": 32.5
+      }
+     ]
+    },
+    "hash": "d3bebbcdada0e056"
+   },
+   "params": {},
+   "hidden": false,
+   "artifact": {
+    "code": "# stripped: the scene reads contracts, not code\n",
+    "testCode": "",
+    "hash": "14bd86a7dff90cd8"
+   },
+   "thread": [],
+   "status": "error_contract",
+   "measurements": {
+    "version": 2,
+    "paramsHash": "08f44b07b5901a25",
+    "data": {
+     "volume_mm3": 4552.857022676808,
+     "area_mm2": 2349.9731506885673,
+     "solids": 1,
+     "shells": [
+      1
+     ],
+     "bbox": {
+      "min": [
+       -16,
+       -16.0000001,
+       -3
+      ],
+      "max": [
+       16.0000001,
+       16,
+       3
+      ],
+      "size": [
+       32.0000001,
+       32.0000001,
+       6
+      ]
+     },
+     "printability": {
+      "min_wall": {
+       "thin_wall_p2_mm": 1.5,
+       "index": 1,
+       "recommended_mm": 0.8
+      },
+      "overhang": {
+       "warn_area_fraction": 0,
+       "fail_area_fraction": 0.0087,
+       "index": 0.991
+      },
+      "composite": 0.995
+     },
+     "ports": [
+      {
+       "key": "housing_face",
+       "type": "FLAT_FACE",
+       "ring_diameter": 24
+      },
+      {
+       "key": "planet_seat_1",
+       "type": "FLAT_FACE",
+       "ring_diameter": 5.4
+      },
+      {
+       "key": "planet_seat_2",
+       "type": "FLAT_FACE",
+       "ring_diameter": 5.4
+      },
+      {
+       "key": "planet_seat_3",
+       "type": "FLAT_FACE",
+       "ring_diameter": 5.4
+      },
+      {
+       "key": "j_planet_1_pin_a",
+       "type": "DOWEL_HOLE",
+       "measured_diameter": 2.95,
+       "center_offset": 0,
+       "tilt_deg": 0,
+       "through": false,
+       "measured_depth": 4.5
+      },
+      {
+       "key": "j_planet_2_pin_a",
+       "type": "DOWEL_HOLE",
+       "measured_diameter": 2.95,
+       "center_offset": 0,
+       "tilt_deg": 0,
+       "through": false,
+       "measured_depth": 4.5
+      },
+      {
+       "key": "j_planet_3_pin_a",
+       "type": "DOWEL_HOLE",
+       "measured_diameter": 2.95,
+       "center_offset": 0,
+       "tilt_deg": 0,
+       "through": false,
+       "measured_depth": 4.5
+      }
+     ],
+     "envelope": {
+      "vertices_checked": 6877,
+      "violations": 0
+     },
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "x",
+       "measured": 32
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "y",
+       "measured": 32
+      }
+     ],
+     "process": {
+      "kind": "fdm",
+      "min_wall": 1.5,
+      "stability": {
+       "tip_angle_deg": 79.29,
+       "gamma_deg": 10,
+       "footprint_mm2": 799.1
+      },
+      "overhang_area_fraction": 0,
+      "bridge_span_mm": 2.95
+     }
+    }
+   },
+   "version": 2,
+   "history": [],
+   "cost": {
+    "calls": 4,
+    "inputTokens": 22810,
+    "outputTokens": 3930,
+    "usd": 0.1256556
+   },
+   "statusDetail": {
+    "stage": "assembly",
+    "message": "Assembly: step 3 cannot be done: housing cannot reach its place travelling along [0, 0, -1]; carrier (and 6 more) is in the way 12.0mm out (1597.7 mm\u00b3 near [0, 0, -0.67]), and no order the mates allow gets it in first. Both parts keep inside their envelopes, so the contracts leave no way in (a port pointing into its part, a closed bore, a part seated off its shaft): no code change fixes it.\nAssembly: step 6 cannot be done: sun-gear cannot reach its place travelling along [0, 0, -1]; carrier (and 1 more) is in the way 7.8mm out (348.4 mm\u00b3 near [0, 0, 0]), and no order the mates allow gets it in first. Both parts keep inside their envelopes, so the contracts leave no way in (a port pointing into its part, a closed bore, a part seated off its shaft): no code change fixes it.",
+    "attribution": "contract-infeasible"
+   }
+  },
+  "m3-rod": {
+   "id": "m3-rod",
+   "kind": "threaded_rod",
+   "title": "M3 clamp rod",
+   "spec": "M3 threaded rod screwed into a NEMA 17 tapped hole, running up through a housing corner hole to a nut on top; four used.",
+   "contract": {
+    "name": "M3 clamp rod",
+    "summary": "M3 threaded rod, one per housing corner, clamps the housing to the motor.",
+    "params": [
+     {
+      "type": "string",
+      "name": "thread",
+      "description": "rod thread size",
+      "default": "M3"
+     },
+     {
+      "type": "number",
+      "name": "length",
+      "description": "rod length, housing height plus motor thread and nut",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 40,
+      "min": 20,
+      "max": 80
+     }
+    ],
+    "provides": [],
+    "requires": [
+     {
+      "key": "housing_hole",
+      "type": "CLEARANCE_HOLE",
+      "description": "the corner hole it passes through, at the housing underside"
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "housing_hole",
+       "type": "CLEARANCE_HOLE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "-param(m3-rod.length) / 2 + 6"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": 3
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 3,
+        "h": "param(m3-rod.length)"
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "length": "expr: param(housing.height) + 10"
+     }
+    },
+    "hash": "fc9d983e7521a68c"
+   },
+   "params": {},
+   "hidden": false,
+   "artifact": {
+    "code": "# stripped: the scene reads contracts, not code\n",
+    "testCode": "",
+    "hash": "14d51408c8db3b37"
+   },
+   "thread": [],
+   "status": "error_contract",
+   "measurements": {
+    "version": 1,
+    "paramsHash": "08f44b07b5901a25",
+    "data": {
+     "volume_mm3": 224.80058931843456,
+     "area_mm2": 347.3904434000296,
+     "solids": 1,
+     "shells": [
+      1
+     ],
+     "bbox": {
+      "min": [
+       -1.3375,
+       -1.3375,
+       0
+      ],
+      "max": [
+       1.3375,
+       1.3375,
+       40
+      ],
+      "size": [
+       2.675,
+       2.675,
+       40
+      ]
+     },
+     "printability": {
+      "min_wall": {
+       "thin_wall_p2_mm": 2.674,
+       "index": 1,
+       "recommended_mm": 0.8
+      },
+      "overhang": {
+       "warn_area_fraction": 0,
+       "fail_area_fraction": 0,
+       "index": 1
+      },
+      "composite": 1
+     }
+    }
+   },
+   "version": 1,
+   "history": [],
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   },
+   "statusDetail": {
+    "stage": "assembly",
+    "message": "G5 clash: m3-rod and m3-nut occupy the same space: 1.7 mm\u00b3 of shared material near [-15.5, -15.5, 16.2]. Both parts pass their own gates, so the fault is in a mate offset or a port pose, not in either part's code.\nG5 clash: m3-rod#1 and m3-nut#1 occupy the same space: 1.7 mm\u00b3 of shared material near [15.5, -15.5, 16.2]. Both parts pass their own gates, so the fault is in a mate offset or a port pose, not in either part's code.\nG5 clash: m3-rod#2 and m3-nut#2 occupy the same space: 1.7 mm\u00b3 of shared material near [-15.5, 15.5, 16.2]. Both parts pass their own gates, so the fault is in a mate offset or a port pose, not in either part's code.\nG5 clash: m3-rod#3 and m3-nut#3 occupy the same space: 1.7 mm\u00b3 of shared material near [15.5, 15.5, 16.2]. Both parts pass their own gates, so the fault is in a mate offset or a port pose, not in either part's code.",
+    "attribution": "contract-infeasible"
+   }
+  },
+  "m3-nut": {
+   "id": "m3-nut",
+   "kind": "nut",
+   "title": "M3 clamp nut",
+   "spec": "M3 hex nut on top of each clamp rod; four used.",
+   "contract": {
+    "name": "M3 clamp nut",
+    "summary": "M3 hex nut seated on the housing top face at each corner.",
+    "params": [
+     {
+      "type": "string",
+      "name": "thread",
+      "description": "nut thread size",
+      "default": "M3"
+     }
+    ],
+    "provides": [],
+    "requires": [
+     {
+      "key": "seat",
+      "type": "FLAT_FACE",
+      "description": "housing top face around a rod hole"
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "seat",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 4.3
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          1.2
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 6.4,
+        "h": 2.4
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {}
+    },
+    "hash": "d7cb25627a87639a"
+   },
+   "params": {},
+   "hidden": false,
+   "artifact": {
+    "code": "# stripped: the scene reads contracts, not code\n",
+    "testCode": "",
+    "hash": "e42701ddf17df5e7"
+   },
+   "thread": [],
+   "status": "error_contract",
+   "measurements": {
+    "version": 1,
+    "paramsHash": "08f44b07b5901a25",
+    "data": {
+     "volume_mm3": 51.09247186378852,
+     "area_mm2": 107.15275712784752,
+     "solids": 1,
+     "shells": [
+      1
+     ],
+     "bbox": {
+      "min": [
+       -3.1754264805429417,
+       -2.75,
+       0
+      ],
+      "max": [
+       3.1754264805429417,
+       2.7500000000000004,
+       2.4
+      ],
+      "size": [
+       6.3508529610858835,
+       5.5,
+       2.4
+      ]
+     },
+     "printability": {
+      "min_wall": {
+       "thin_wall_p2_mm": 1.5,
+       "index": 1,
+       "recommended_mm": 0.8
+      },
+      "overhang": {
+       "warn_area_fraction": 0,
+       "fail_area_fraction": 0,
+       "index": 1
+      },
+      "composite": 1
+     },
+     "ports": [
+      {
+       "key": "seat",
+       "type": "FLAT_FACE",
+       "ring_diameter": 4.3
+      }
+     ]
+    }
+   },
+   "version": 1,
+   "history": [],
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   },
+   "statusDetail": {
+    "stage": "assembly",
+    "message": "G5 clash: m3-rod and m3-nut occupy the same space: 1.7 mm\u00b3 of shared material near [-15.5, -15.5, 16.2]. Both parts pass their own gates, so the fault is in a mate offset or a port pose, not in either part's code.\nG5 clash: m3-rod#1 and m3-nut#1 occupy the same space: 1.7 mm\u00b3 of shared material near [15.5, -15.5, 16.2]. Both parts pass their own gates, so the fault is in a mate offset or a port pose, not in either part's code.\nG5 clash: m3-rod#2 and m3-nut#2 occupy the same space: 1.7 mm\u00b3 of shared material near [-15.5, 15.5, 16.2]. Both parts pass their own gates, so the fault is in a mate offset or a port pose, not in either part's code.\nG5 clash: m3-rod#3 and m3-nut#3 occupy the same space: 1.7 mm\u00b3 of shared material near [15.5, 15.5, 16.2]. Both parts pass their own gates, so the fault is in a mate offset or a port pose, not in either part's code.",
+    "attribution": "contract-infeasible"
+   }
+  },
+  "j-motor_motor": {
+   "id": "j-motor_motor",
+   "kind": "motor",
+   "title": "j-motor motor",
+   "spec": "NEMA17 driving b directly. Catalog NEMA ICS 16 faceplate (42.3 square, 31 hole pitch, M3, \u00d822 pilot, \u00d85 shaft); shaft length and flat are typical; length is the body length NEMA17, built by the registry, never generated.",
+   "contract": {
+    "name": "j-motor_motor",
+    "summary": "NEMA-NEMA17",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "NEMA-NEMA17"
+     }
+    ],
+    "provides": [
+     {
+      "key": "shaft",
+      "type": "HUB_BORE",
+      "description": ""
+     }
+    ],
+    "requires": [
+     {
+      "key": "mount",
+      "type": "MOTOR_MOUNT",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "mount",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 7
+       }
+      },
+      {
+       "name": "shaft",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "-((param(housing.floor)) + 1)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 2.5
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 50.76,
+        "h": 2
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {}
+    },
+    "hash": "1280382064defb7e"
+   },
+   "params": {},
+   "hidden": false,
+   "artifact": {
+    "code": "# stripped: the scene reads contracts, not code\n",
+    "testCode": "",
+    "hash": "4fdd4b880c6b90a1"
+   },
+   "thread": [],
+   "status": "ready",
+   "measurements": {
+    "version": 1,
+    "paramsHash": "08f44b07b5901a25",
+    "data": {
+     "volume_mm3": 58932.601564506615,
+     "area_mm2": 9218.392503820685,
+     "solids": 1,
+     "shells": [
+      1
+     ],
+     "bbox": {
+      "min": [
+       -21.15,
+       -21.150000000000624,
+       -24
+      ],
+      "max": [
+       21.15,
+       21.150000000000627,
+       34
+      ],
+      "size": [
+       42.3,
+       42.30000000000125,
+       58
+      ]
+     },
+     "printability": {
+      "min_wall": {
+       "thin_wall_p2_mm": 2.216,
+       "index": 1,
+       "recommended_mm": 0.8
+      },
+      "overhang": {
+       "warn_area_fraction": 0,
+       "fail_area_fraction": 0.1825,
+       "index": 0.817
+      },
+      "composite": 0.904
+     }
+    }
+   },
+   "version": 1,
+   "history": [],
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   }
+  },
+  "j-planet-1_pin": {
+   "id": "j-planet-1_pin",
+   "kind": "dowel",
+   "title": "j-planet-1 pin",
+   "spec": "\u00d83\u00d712 pin pressed in a, turning in b. Catalog ISO 2338 m6 (key is the nominal \u00d8) 3, built by the registry, never generated.",
+   "contract": {
+    "name": "j-planet-1_pin",
+    "summary": "ISO2338-3 \u00d7 12",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "ISO2338-3"
+     },
+     {
+      "type": "number",
+      "name": "length",
+      "description": "length, mm",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 12
+     }
+    ],
+    "provides": [],
+    "requires": [
+     {
+      "key": "center",
+      "type": "DOWEL_HOLE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "center",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         1.5
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 1.5
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 4.8,
+        "h": 24
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {}
+    },
+    "hash": "323b8e6a003c0199"
+   },
+   "params": {},
+   "hidden": false,
+   "artifact": {
+    "code": "# stripped: the scene reads contracts, not code\n",
+    "testCode": "",
+    "hash": "ae975cf2a71a3198"
+   },
+   "thread": [],
+   "status": "ready",
+   "measurements": {
+    "version": 1,
+    "paramsHash": "08f44b07b5901a25",
+    "data": {
+     "volume_mm3": 82.7286065445312,
+     "area_mm2": 121.06295022103869,
+     "solids": 1,
+     "shells": [
+      1
+     ],
+     "bbox": {
+      "min": [
+       -1.5,
+       -1.5,
+       -6
+      ],
+      "max": [
+       1.5,
+       1.5,
+       6
+      ],
+      "size": [
+       3,
+       3,
+       12
+      ]
+     },
+     "printability": {
+      "min_wall": {
+       "thin_wall_p2_mm": 2.999,
+       "index": 1,
+       "recommended_mm": 0.8
+      },
+      "overhang": {
+       "warn_area_fraction": 0.0063,
+       "fail_area_fraction": 0,
+       "index": 0.998
+      },
+      "composite": 0.999
+     }
+    }
+   },
+   "version": 1,
+   "history": [],
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   }
+  },
+  "j-planet-2_pin": {
+   "id": "j-planet-2_pin",
+   "kind": "dowel",
+   "title": "j-planet-2 pin",
+   "spec": "\u00d83\u00d712 pin pressed in a, turning in b. Catalog ISO 2338 m6 (key is the nominal \u00d8) 3, built by the registry, never generated.",
+   "contract": {
+    "name": "j-planet-2_pin",
+    "summary": "ISO2338-3 \u00d7 12",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "ISO2338-3"
+     },
+     {
+      "type": "number",
+      "name": "length",
+      "description": "length, mm",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 12
+     }
+    ],
+    "provides": [],
+    "requires": [
+     {
+      "key": "center",
+      "type": "DOWEL_HOLE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "center",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         1.5
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 1.5
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 4.8,
+        "h": 24
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {}
+    },
+    "hash": "85816904534be6b0"
+   },
+   "params": {},
+   "hidden": false,
+   "artifact": {
+    "code": "# stripped: the scene reads contracts, not code\n",
+    "testCode": "",
+    "hash": "ae975cf2a71a3198"
+   },
+   "thread": [],
+   "status": "ready",
+   "measurements": {
+    "version": 1,
+    "paramsHash": "08f44b07b5901a25",
+    "data": {
+     "volume_mm3": 82.7286065445312,
+     "area_mm2": 121.06295022103869,
+     "solids": 1,
+     "shells": [
+      1
+     ],
+     "bbox": {
+      "min": [
+       -1.5,
+       -1.5,
+       -6
+      ],
+      "max": [
+       1.5,
+       1.5,
+       6
+      ],
+      "size": [
+       3,
+       3,
+       12
+      ]
+     },
+     "printability": {
+      "min_wall": {
+       "thin_wall_p2_mm": 2.999,
+       "index": 1,
+       "recommended_mm": 0.8
+      },
+      "overhang": {
+       "warn_area_fraction": 0.0063,
+       "fail_area_fraction": 0,
+       "index": 0.998
+      },
+      "composite": 0.999
+     }
+    }
+   },
+   "version": 1,
+   "history": [],
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   }
+  },
+  "j-planet-3_pin": {
+   "id": "j-planet-3_pin",
+   "kind": "dowel",
+   "title": "j-planet-3 pin",
+   "spec": "\u00d83\u00d712 pin pressed in a, turning in b. Catalog ISO 2338 m6 (key is the nominal \u00d8) 3, built by the registry, never generated.",
+   "contract": {
+    "name": "j-planet-3_pin",
+    "summary": "ISO2338-3 \u00d7 12",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "ISO2338-3"
+     },
+     {
+      "type": "number",
+      "name": "length",
+      "description": "length, mm",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 12
+     }
+    ],
+    "provides": [],
+    "requires": [
+     {
+      "key": "center",
+      "type": "DOWEL_HOLE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "center",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         1.5
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 1.5
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 4.8,
+        "h": 24
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {}
+    },
+    "hash": "21d6df1c67d36d83"
+   },
+   "params": {},
+   "hidden": false,
+   "artifact": {
+    "code": "# stripped: the scene reads contracts, not code\n",
+    "testCode": "",
+    "hash": "ae975cf2a71a3198"
+   },
+   "thread": [],
+   "status": "ready",
+   "measurements": {
+    "version": 1,
+    "paramsHash": "08f44b07b5901a25",
+    "data": {
+     "volume_mm3": 82.7286065445312,
+     "area_mm2": 121.06295022103869,
+     "solids": 1,
+     "shells": [
+      1
+     ],
+     "bbox": {
+      "min": [
+       -1.5,
+       -1.5,
+       -6
+      ],
+      "max": [
+       1.5,
+       1.5,
+       6
+      ],
+      "size": [
+       3,
+       3,
+       12
+      ]
+     },
+     "printability": {
+      "min_wall": {
+       "thin_wall_p2_mm": 2.999,
+       "index": 1,
+       "recommended_mm": 0.8
+      },
+      "overhang": {
+       "warn_area_fraction": 0.0063,
+       "fail_area_fraction": 0,
+       "index": 0.998
+      },
+      "composite": 0.999
+     }
+    }
+   },
+   "version": 1,
+   "history": [],
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   }
+  }
+ },
+ "edges": [
+  {
+   "id": "e0-housing-m3-rod",
+   "from": "housing",
+   "fromPort": "rod_hole_fl",
+   "to": "m3-rod",
+   "toPort": "housing_hole"
+  },
+  {
+   "id": "e1-housing-m3-rod",
+   "from": "housing",
+   "fromPort": "rod_hole_fr",
+   "to": "m3-rod",
+   "toPort": "housing_hole"
+  },
+  {
+   "id": "e2-housing-m3-rod",
+   "from": "housing",
+   "fromPort": "rod_hole_bl",
+   "to": "m3-rod",
+   "toPort": "housing_hole"
+  },
+  {
+   "id": "e3-housing-m3-rod",
+   "from": "housing",
+   "fromPort": "rod_hole_br",
+   "to": "m3-rod",
+   "toPort": "housing_hole"
+  },
+  {
+   "id": "e4-housing-m3-nut",
+   "from": "housing",
+   "fromPort": "nut_seat_fl",
+   "to": "m3-nut",
+   "toPort": "seat"
+  },
+  {
+   "id": "e5-housing-m3-nut",
+   "from": "housing",
+   "fromPort": "nut_seat_fr",
+   "to": "m3-nut",
+   "toPort": "seat"
+  },
+  {
+   "id": "e6-housing-m3-nut",
+   "from": "housing",
+   "fromPort": "nut_seat_bl",
+   "to": "m3-nut",
+   "toPort": "seat"
+  },
+  {
+   "id": "e7-housing-m3-nut",
+   "from": "housing",
+   "fromPort": "nut_seat_br",
+   "to": "m3-nut",
+   "toPort": "seat"
+  },
+  {
+   "id": "e8-housing-carrier",
+   "from": "housing",
+   "fromPort": "carrier_face",
+   "to": "carrier",
+   "toPort": "housing_face"
+  },
+  {
+   "id": "e9-carrier-planet-gear",
+   "from": "carrier",
+   "fromPort": "planet_seat_1",
+   "to": "planet-gear",
+   "toPort": "face"
+  },
+  {
+   "id": "e10-carrier-planet-gear",
+   "from": "carrier",
+   "fromPort": "planet_seat_2",
+   "to": "planet-gear",
+   "toPort": "face"
+  },
+  {
+   "id": "e11-carrier-planet-gear",
+   "from": "carrier",
+   "fromPort": "planet_seat_3",
+   "to": "planet-gear",
+   "toPort": "face"
+  },
+  {
+   "id": "e12-housing-j-motor_motor",
+   "from": "housing",
+   "fromPort": "j_motor_motor_mount",
+   "to": "j-motor_motor",
+   "toPort": "mount"
+  },
+  {
+   "id": "e13-j-motor_motor-sun-gear",
+   "from": "j-motor_motor",
+   "fromPort": "shaft",
+   "to": "sun-gear",
+   "toPort": "j_motor_hub"
+  },
+  {
+   "id": "e14-carrier-j-planet-1_pin",
+   "from": "carrier",
+   "fromPort": "j_planet_1_pin_a",
+   "to": "j-planet-1_pin",
+   "toPort": "center"
+  },
+  {
+   "id": "e15-carrier-j-planet-2_pin",
+   "from": "carrier",
+   "fromPort": "j_planet_2_pin_a",
+   "to": "j-planet-2_pin",
+   "toPort": "center"
+  },
+  {
+   "id": "e16-carrier-j-planet-3_pin",
+   "from": "carrier",
+   "fromPort": "j_planet_3_pin_a",
+   "to": "j-planet-3_pin",
+   "toPort": "center"
+  }
+ ],
+ "assembly": {
+  "entryNodeId": "housing"
+ },
+ "joints": [
+  {
+   "id": "j-motor",
+   "a": {
+    "node": "housing",
+    "port": "motor_face"
+   },
+   "b": {
+    "node": "sun-gear",
+    "port": "face"
+   },
+   "intent": "removable",
+   "motion": "revolute",
+   "duty": "continuous",
+   "driven": true,
+   "speedClass": "medium",
+   "load": "light",
+   "access": "both_sides",
+   "count": 1,
+   "wallA": "param(housing.floor)",
+   "wallB": "param(sun-gear.thickness)",
+   "shaftHint": 5,
+   "hubFit": "press",
+   "note": "NEMA 17 coaxial under the housing floor; sun pressed on its 5 mm shaft. Motor clamped by the four M3 rods and nuts. The carrier shares this axis and runs as a plain printed face against the top wall, so it has no joint of its own.",
+   "expanded": "D1|motor=nema17:NEMA17",
+   "minted": [
+    "j_motor_pilot",
+    "j_motor_motor_mount",
+    "j_motor_hub"
+   ]
+  },
+  {
+   "id": "j-planet-1",
+   "a": {
+    "node": "carrier",
+    "port": "planet_seat_1"
+   },
+   "b": {
+    "node": "planet-gear",
+    "port": "face"
+   },
+   "intent": "removable",
+   "motion": "revolute",
+   "duty": "occasional",
+   "load": "none",
+   "access": "both_sides",
+   "count": 1,
+   "wallA": "param(carrier.thickness)",
+   "wallB": "param(planet-gear.thickness)",
+   "shaftHint": 3,
+   "allowPrinted": true,
+   "prefer": {
+    "family": "shaft",
+    "key": "3"
+   },
+   "expanded": "M2d|pin=dowel:3",
+   "minted": [
+    "j_planet_1_pin_d",
+    "j_planet_1_pin_a",
+    "j_planet_1_pin_b"
+   ],
+   "limits": [
+    -180,
+    180
+   ],
+   "limitsSource": "derived"
+  },
+  {
+   "id": "j-planet-2",
+   "a": {
+    "node": "carrier",
+    "port": "planet_seat_2"
+   },
+   "b": {
+    "node": "planet-gear",
+    "port": "face"
+   },
+   "intent": "removable",
+   "motion": "revolute",
+   "duty": "occasional",
+   "load": "none",
+   "access": "both_sides",
+   "count": 1,
+   "wallA": "param(carrier.thickness)",
+   "wallB": "param(planet-gear.thickness)",
+   "shaftHint": 3,
+   "allowPrinted": true,
+   "prefer": {
+    "family": "shaft",
+    "key": "3"
+   },
+   "expanded": "M2d|pin=dowel:3",
+   "minted": [
+    "j_planet_2_pin_d",
+    "j_planet_2_pin_a",
+    "j_planet_2_pin_b"
+   ],
+   "limits": [
+    -180,
+    180
+   ],
+   "limitsSource": "derived"
+  },
+  {
+   "id": "j-planet-3",
+   "a": {
+    "node": "carrier",
+    "port": "planet_seat_3"
+   },
+   "b": {
+    "node": "planet-gear",
+    "port": "face"
+   },
+   "intent": "removable",
+   "motion": "revolute",
+   "duty": "occasional",
+   "load": "none",
+   "access": "both_sides",
+   "count": 1,
+   "wallA": "param(carrier.thickness)",
+   "wallB": "param(planet-gear.thickness)",
+   "shaftHint": 3,
+   "allowPrinted": true,
+   "prefer": {
+    "family": "shaft",
+    "key": "3"
+   },
+   "expanded": "M2d|pin=dowel:3",
+   "minted": [
+    "j_planet_3_pin_d",
+    "j_planet_3_pin_a",
+    "j_planet_3_pin_b"
+   ],
+   "limits": [
+    -180,
+    180
+   ],
+   "limitsSource": "derived"
+  }
+ ],
+ "rev": 128
+}

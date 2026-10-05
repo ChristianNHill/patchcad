@@ -325,7 +325,7 @@ function plan(graph: GraphDoc, scene: SceneLike, opts: SequenceOptions) {
 
   // The base: a made part that holds still (nothing moving on a joint), the
   // one the most others hang off, then the biggest.
-  const turning = new Set((scene.joints ?? []).flatMap((j) => [...j.moving, ...(j.coupled ?? []).flatMap((c) => c.moving)]).map((k) => k.split("#")[0]!));
+  const turning = new Set((scene.joints ?? []).flatMap((j) => [...j.moving, ...(j.turnsInWorld ?? []), ...(j.coupled ?? []).flatMap((c) => (c.frame ? [] : c.moving))]).map((k) => k.split("#")[0]!));
   const made = items.filter((n) => !isBuy(n));
   const candidates = made.filter((n) => !turning.has(n.id)).length ? made.filter((n) => !turning.has(n.id)) : made;
   const score = (n: NodeRecord) => [nbrs.get(n.id)!.size, volumeOf(graph, n), n.id === graph.assembly.entryNodeId ? 1 : 0];

@@ -1810,6 +1810,77 @@ export function gearMeshJoints(graph: GraphDoc, world: Record<string, Mat4>, joi
  *  the plan meant to mesh: a centre declared to a rounded figure. */
 export const GEAR_CENTRE_TOL_MM = 0.5;
 
+/**
+ * A planetary stage swept as it moves. With the ring fixed in the housing and
+ * the carrier held still, sun and planets are locked: every fixed-axis sweep
+ * turned the sun into frozen planets and each planet into the ring
+ * (real-planetary-gearbox, 12 swept clashes on a train that turns). So the
+ * stage is swept in the CARRIER's frame, where every axis is fixed: the sun
+ * turns φ, each planet −(zs/zp)·φ about its own pin, and the ring with all
+ * that holds still turns −(zs/zr)·φ about the sun's axis, zr = zs + 2·zp.
+ * Relative motion between every pair is what it is in the world, so each
+ * clash found is real. Found by geometry: a driven joint's gear (the sun), and
+ * gear copies in mesh with it, each turning on its own joint off one part (the
+ * carrier). The planets' own joints and mesh sweeps are replaced.
+ */
+export function planetaryJoints(graph: GraphDoc, instances: Record<string, Mat4[]>, joints: KinematicJoint[]): KinematicJoint[] {
+  const col = (m: Mat4, c: number) => [m[c * 4]!, m[c * 4 + 1]!, m[c * 4 + 2]!];
+  const keyOf = (id: string, i: number) => (i === 0 ? id : `${id}#${i}`);
+  const declared = (id: string) => graph.joints?.find((j) => j.id === id.split("#")[0]);
+  let out = joints;
+  for (const sunJoint of joints) {
+    if (sunJoint.type !== "revolute") continue;
+    const sun = sunJoint.moving.find((k) => graph.nodes[k]?.kind === "gear" && (instances[k]?.length ?? 0) === 1);
+    if (!sun) continue;
+    const ms = instances[sun]![0]!;
+    const [m, zs] = [gearParam(graph.nodes[sun]!, "module"), gearParam(graph.nodes[sun]!, "teeth")];
+    if (!(m > 0 && zs > 0) || Math.abs(Math.abs(dot3(col(ms, 2), sunJoint.direction)) - 1) > 1e-6) continue;
+    const planets: { key: string; origin: Vec; direction: Vec; joint: KinematicJoint; zp: number }[] = [];
+    for (const g of Object.values(graph.nodes)) {
+      if (g.kind !== "gear" || g.id === sun || Math.abs(gearParam(g, "module") - m) > 1e-9) continue;
+      const zp = gearParam(g, "teeth");
+      (instances[g.id] ?? []).forEach((mp, i) => {
+        const z = col(mp, 2);
+        if (Math.abs(Math.abs(dot3(z, sunJoint.direction)) - 1) > 1e-6) return;
+        const c = sub3(col(mp, 3), col(ms, 3));
+        const axial = dot3(c, sunJoint.direction);
+        const dist = Math.hypot(...c.map((v, k) => v - axial * sunJoint.direction[k]!));
+        if (Math.abs(dist - (m * (zs + zp)) / 2) > GEAR_CENTRE_TOL_MM) return;
+        const key = keyOf(g.id, i);
+        const joint = joints.find((j) => j !== sunJoint && j.type === "revolute" && j.moving.includes(key) && !j.id.startsWith("mesh:"));
+        if (joint) planets.push({ key, origin: col(mp, 3) as Vec, direction: z.map((v) => Math.round(v * 1e6) / 1e6) as Vec, joint, zp });
+      });
+    }
+    const carriers = new Set(planets.map((p) => declared(p.joint.id)?.a.node));
+    // Two planets at least, on a carrier that is not the frame the sun turns
+    // in: a pinion on its own joint in the same frame is a plain pair.
+    if (planets.length < 2 || carriers.size !== 1 || carriers.has(undefined) || new Set(planets.map((p) => p.zp)).size !== 1) continue;
+    const carrier = [...carriers][0]!;
+    if (carrier === declared(sunJoint.id)?.a.node) continue;
+    const zp = planets[0]!.zp;
+    const zr = zs + 2 * zp;
+    const planetJoints = new Set(planets.map((p) => p.joint));
+    const planetKeys = new Set(planets.map((p) => p.key));
+    // The carrier and what its planet joints minted (their pins) hold still;
+    // the sun's set moves; everything else turns with the ring.
+    const onCarrier = (id: string) => id === carrier || (planets.some((p) => jointOwner(graph, id) === declared(p.joint.id)?.id) && !planetKeys.has(id));
+    const moving = new Set([...sunJoint.moving, ...(sunJoint.coupled ?? []).flatMap((c) => c.moving)]);
+    const ground = Object.entries(instances).flatMap(([id, ms]) => (onCarrier(id) ? [] : ms.map((_, i) => keyOf(id, i)))).filter((k) => !moving.has(k) && !planetKeys.has(k));
+    const swept: KinematicJoint = {
+      ...sunJoint,
+      turnsInWorld: Object.keys(instances).filter(onCarrier),
+      coupled: [
+        ...(sunJoint.coupled ?? []).filter((c) => !c.moving.some((k) => planetKeys.has(k))),
+        ...planets.map((p) => ({ origin: p.origin, direction: p.direction, ratio: round(-(zs / zp) * Math.sign(dot3(p.direction, sunJoint.direction))), moving: [p.key] })),
+        { origin: sunJoint.origin, direction: sunJoint.direction, ratio: round(-zs / zr), moving: ground, frame: true },
+      ],
+    };
+    const meshes = (j: KinematicJoint) => j.id.startsWith("mesh:") && [sun, ...planets.map((p) => p.key.split("#")[0]!)].some((id) => j.id.split(":").includes(id));
+    out = out.flatMap((j) => (j === sunJoint ? [swept] : planetJoints.has(j) || meshes(j) ? [] : [j]));
+  }
+  return out;
+}
+
 /** Give each meshing gear pair's second gear the phase gearMeshes asks for. */
 function phaseGears(out: ArchitectOutput, base: GraphDoc) {
   const nodes = Object.fromEntries(out.nodes.map((n) => [n.id, { ...base.nodes[n.id]!, kind: n.kind, contract: n.contract }]));

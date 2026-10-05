@@ -251,7 +251,7 @@ import { generatePrompt, repairPrompt } from "./prompts.js";
 import { FASTENING_HARDWARE, REGISTRY_HARDWARE, REGISTRY_SOLIDS, resolveDeterministic, skuOf, unresolvedHardware } from "./registry.js";
 import { CadJoint } from "./joints.js";
 import { CATALOG, skuFor } from "./catalog.js";
-import { cadJointRuleLint, expandJoints, gearMeshJoints, graphMates, isJointHardware, jointAxes } from "./expand.js";
+import { cadJointRuleLint, expandJoints, gearMeshJoints, planetaryJoints, graphMates, isJointHardware, jointAxes } from "./expand.js";
 import { gearHubName, mintDefaultGearPorts, mintNamedGearPorts } from "./gear-ports.js";
 import { IDENTITY, kinematicJoints, poseToMat, solveAssembly, type AssemblyNode } from "./assembly.js";
 import { resolveBinding, resolveDim, resolvePose } from "./bindings.js";
@@ -2047,7 +2047,8 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
     // which parts go with it (G5 sweeps them).
     // A gear pair meshed without a drive joint turns too (gearMeshes).
     const kinematic = kinematicJoints(jointAxes(graph), world, instances);
-    const joints = [...kinematic, ...gearMeshJoints(graph, world, kinematic)];
+    // A planetary stage is swept in its carrier's frame (planetaryJoints).
+    const joints = planetaryJoints(graph, instances, [...kinematic, ...gearMeshJoints(graph, world, kinematic)]);
     const scene = {
       nodes: Object.fromEntries(
         Object.values(graph.nodes).map((n) => [

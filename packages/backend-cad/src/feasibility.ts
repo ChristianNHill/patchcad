@@ -1,6 +1,6 @@
 import type { GraphDoc } from "@patchcad/shared";
 import type { CheckFinding } from "@patchcad/engine";
-import { transformPoint, type Mat4 } from "./assembly.js";
+import { IDENTITY, transformPoint, type Mat4 } from "./assembly.js";
 import { resolveDim, resolvePose } from "./bindings.js";
 import { standardLengths } from "./catalog.js";
 import type { CadContractPayload } from "./index.js";
@@ -8,6 +8,7 @@ import type { AssemblySequence } from "./instructions.js";
 import type { CadJoint } from "./joints.js";
 import { contains, posedEnvelope, solvePlan } from "./plan-geometry.js";
 import { REGISTRY_HARDWARE, skuOf } from "./registry.js";
+import { jointOwner } from "./expand.js";
 
 /**
  * Assembly feasibility as a check: the sequencer's blocked insertions
@@ -114,6 +115,8 @@ const POCKETS: Record<string, string> = {
 };
 /** Catalog parts that ride a shaft by their own bore. */
 const RIDERS = new Set(["gear", "pulley", "collar"]);
+/** Catalog parts the registry builds from z = 0 to their length along +z. */
+const RODS = new Set(["threaded_rod", "shaft"]);
 
 const sub3 = (a: readonly number[], b: readonly number[]) => [a[0]! - b[0]!, a[1]! - b[1]!, a[2]! - b[2]!] as Vec3;
 const dot3 = (a: readonly number[], b: readonly number[]) => a[0]! * b[0]! + a[1]! * b[1]! + a[2]! * b[2]!;
@@ -130,6 +133,35 @@ function worldPort(graph: GraphDoc, m: Mat4, pose: unknown): { o: Vec3; z: Vec3 
   } catch {
     return undefined;
   }
+}
+
+/** A pattern port's member centres in its own frame, and their hole radius:
+ *  a grid {nx, ny, pitch_x, pitch_y} (a MOTOR_MOUNT is 2×2) or polar
+ *  {count, pcd, start_angle}. Undefined when a value does not resolve. */
+function patternMembers(graph: GraphDoc, params: Record<string, unknown> | undefined): { list: [number, number][]; r: number } | undefined {
+  if (!params) return undefined;
+  const num = (k: string, dflt?: number) => {
+    const v = params[k];
+    if (v === undefined) return dflt;
+    try {
+      return resolveDim(graph, v as never);
+    } catch {
+      return undefined;
+    }
+  };
+  const d = num("hole_diameter") ?? num("diameter");
+  if (d === undefined || !(d > 0)) return undefined;
+  const list: [number, number][] = [];
+  const pcd = num("pcd"), count = num("count");
+  if (pcd !== undefined && count !== undefined) {
+    const a0 = ((num("start_angle", 0) ?? 0) * Math.PI) / 180;
+    for (let k = 0; k < count; k++) list.push([(pcd / 2) * Math.cos(a0 + (2 * Math.PI * k) / count), (pcd / 2) * Math.sin(a0 + (2 * Math.PI * k) / count)]);
+  } else {
+    const [nx, ny, px, py] = [num("nx", 2), num("ny", 2), num("pitch_x"), num("pitch_y", 0)];
+    if (nx === undefined || ny === undefined || px === undefined || py === undefined) return undefined;
+    for (let i = 0; i < nx; i++) for (let j = 0; j < ny; j++) list.push([(i - (nx - 1) / 2) * px, (j - (ny - 1) / 2) * py]);
+  }
+  return { list, r: d / 2 };
 }
 
 /** Each defect with the part at fault and the one it is measured against. */
@@ -166,6 +198,65 @@ export function assemblyPlanDefects(graph: GraphDoc): { node: string; other: str
       if (proud > 0.1) {
         problems.push({ node: hw, other: host, message: `${hw}: mated to ${host}'s ${port.type} "${hostPort}" but posed ON its face, not in it: its body's centre stands ${round1(proud)}mm out of ${host} along the pocket's +z, where the partner part goes. Pose ${hw}'s seat port zAxis [0, 0, 1] so its body sinks into the pocket from the mouth.` });
         break;
+      }
+    }
+  }
+
+  // A rod or shaft the architect declared by hand runs 0..L along its own +z
+  // from its end, as the registry builds it. Its ports posed for a rod
+  // centred on its origin (real-planetary-gearbox: four M3 tie rods at
+  // -L/2 + 6) leave it floating 14mm off its holes, and no host repair moves
+  // it. Joint-minted rods are posed by construction.
+  for (const n of Object.values(graph.nodes)) {
+    if (!RODS.has(n.kind) || jointOwner(graph, n.id)) continue;
+    const sku = skuOf(n);
+    let L: number | undefined;
+    try {
+      L = resolveDim(graph, `param(${n.id}.length)`);
+    } catch {
+      L = sku ? (sku.length ?? standardLengths(sku.family, sku.key)[0]) : undefined;
+    }
+    if (!L) continue;
+    for (const p of (n.contract.payload as CadContractPayload | undefined)?.ports ?? []) {
+      let z: number;
+      try {
+        z = resolveDim(graph, p.pose.origin[2] as never);
+      } catch {
+        continue;
+      }
+      if (z < -0.5 || z > L + 0.5) {
+        problems.push({ node: n.id, other: n.id, message: `${n.id}: port "${p.name}" sits at z=${round1(z)}, off the ${n.kind === "threaded_rod" ? "rod" : "shaft"}: a catalog ${n.kind} runs z 0..${round1(L)} from its end along its own +z, not centred on its origin. Pose its ports between 0 and its length (one end at z=0), or let a joint place it.` });
+      }
+    }
+  }
+
+  // Every hole of a mounting pattern must land in its part: a belt drive's
+  // centre is solved from a stocked loop, and asm-belt-turntable's put a
+  // NEMA 17's outer screw pair 5mm past a 160mm base. No code can cut a
+  // hole in material the envelope does not have.
+  for (const n of Object.values(graph.nodes)) {
+    if (hardware(n.id)) continue;
+    const payload = n.contract.payload as CadContractPayload | undefined;
+    const prims = posedEnvelope(graph, n.id, IDENTITY);
+    if (!prims.length) continue;
+    const margin = Number(payload?.envelope?.clearance ?? 0) || 0;
+    for (const p of payload?.ports ?? []) {
+      if (p.type !== "MOTOR_MOUNT" && p.type !== "HOLE_PATTERN") continue;
+      const members = patternMembers(graph, p.params as Record<string, unknown> | undefined);
+      if (!members) continue;
+      let pose;
+      try {
+        pose = resolvePose(graph, p.pose as never);
+      } catch {
+        continue;
+      }
+      const z = pose.zAxis, x = pose.xAxis;
+      const y: Vec3 = [z[1]! * x[2]! - z[2]! * x[1]!, z[2]! * x[0]! - z[0]! * x[2]!, z[0]! * x[1]! - z[1]! * x[0]!];
+      const at = (u: number, v: number) => pose.origin.map((c, i) => c + u * x[i]! + v * y[i]!) as Vec3;
+      const out = members.list.filter(([u, v]) => [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].some(([du, dv]) =>
+        !prims.some((o) => contains(o, at(u + du! * members.r, v + dv! * members.r), margin + 0.05))));
+      if (out.length) {
+        problems.push({ node: n.id, other: n.id, message: `${n.id}: ${p.type} "${p.name}" puts ${out.length} of its ${members.list.length} Ø${round1(2 * members.r)} holes outside ${n.id}'s envelope (at ${out.map(([u, v]) => `u=${round1(u)} v=${round1(v)}`).join(", ")} in the port frame), so G3 can never find them. Make ${n.id} reach past them there, or bring the port in; for a joint's motor, a bigger part or a ratio that takes a shorter stocked belt.` });
       }
     }
   }

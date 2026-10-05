@@ -392,7 +392,12 @@ export interface KinematicJoint {
   direction: [number, number, number];
   limits: [number, number];
   moving: string[];
-  coupled?: { origin: [number, number, number]; direction: [number, number, number]; ratio: number; moving: string[] }[];
+  /** `frame`: turns only in the sweep's own frame (a planetary's ring and
+   *  housing, swept from the carrier), never in the world. */
+  coupled?: { origin: [number, number, number]; direction: [number, number, number]; ratio: number; moving: string[]; frame?: boolean }[];
+  /** Parts that turn in the world but hold still in the sweep's frame: a
+   *  planetary's carrier, the output. */
+  turnsInWorld?: string[];
 }
 
 /** A joint's axis declared in one node's frame: a port pose, and which of its

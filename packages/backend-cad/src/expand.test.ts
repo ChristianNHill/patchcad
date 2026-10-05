@@ -11,6 +11,7 @@ import { boundDependents, resolvePose } from "./bindings.js";
 import { buildBom } from "./bom.js";
 import { hardwareAllowances, threadAllowances } from "./g5.js";
 import { meshSourceLint } from "./mesh-source.js";
+import { assemblyPlanDefects } from "./feasibility.js";
 
 /** Expansion turns intent into graph, so its tests read the graph: which
  *  nodes, which host ports, which edges, and whether every CAD lint is happy
@@ -298,8 +299,9 @@ describe("every recipe expands to a plan the CAD lints accept", () => {
       const plan = plates(joint, wb, wa);
       // A rail's screws sit along its whole length, inside the part it is on.
       if (label.startsWith("rail")) Object.assign((plan.nodes[0]!.contract.payload as CadContractPayload).envelope.volumes[0]!, { d: 300 });
-      // The STS3215's case screws reach ~30 from its axis: a plate that holds it.
-      if (label.startsWith("STS3215")) Object.assign((plan.nodes[0]!.contract.payload as CadContractPayload).envelope.volumes[0]!, { d: 80 });
+      // The STS3215's case screws reach ~30 from its axis, a NEMA 17's and an
+      // MG996R's tab screws ~25: a plate that holds them (the pattern lint).
+      if (/^(STS3215|NEMA 17 direct|MG996R)/.test(label)) Object.assign((plan.nodes[0]!.contract.payload as CadContractPayload).envelope.volumes[0]!, { d: 80 });
       if (label.startsWith("wood")) {
         for (const n of plan.nodes) {
           const p = n.contract.payload as CadContractPayload;
@@ -317,6 +319,43 @@ describe("every recipe expands to a plan the CAD lints accept", () => {
       expect(lintAll(out)).toEqual([]);
     });
   }
+
+  it("a motor whose screw pattern overhangs its part fails the plan, not the cook", () => {
+    // asm-belt-turntable: the base's NEMA 17 holes landed past its edge, and
+    // five generation rounds could not cut them in air.
+    const out = expandJoints(plates({ motion: "revolute", driven: true, precise: true }, 10, 6));
+    expect(lintAll(out)).toEqual([expect.stringMatching(/^base: MOTOR_MOUNT "j1_motor_mount" puts 4 of its 4 Ø3\.4 holes outside base's envelope/)]);
+  });
+});
+
+describe("planetary stage", () => {
+  const g = GraphDoc.parse(JSON.parse(readFileSync(new URL("./fixtures/real-planetary-gearbox-graph.json", import.meta.url), "utf8")));
+  const joints = new CadBackend().solveScene(g).joints;
+
+  it("is swept in its carrier's frame: sun φ, planets −zs/zp·φ on their pins, the ring and all that holds it −zs/zr·φ", () => {
+    // 9T sun, 9T planets, 27T ring: the planets' own joints and the sun's
+    // mesh couplings are replaced by one sweep.
+    expect(joints.map((j) => j.id)).toEqual(["j-motor"]);
+    const [motor] = joints;
+    expect(motor!.moving).toEqual(["sun-gear"]);
+    const planets = motor!.coupled!.filter((c) => c.moving.some((k) => k.startsWith("planet-gear")));
+    expect(planets.map((c) => c.moving[0]).sort()).toEqual(["planet-gear", "planet-gear#1", "planet-gear#2"]);
+    // About each pin's own axis, which points down: +1 there is −1 about +z.
+    for (const c of planets) expect(c.ratio * c.direction[2]).toBe(-1);
+    const ring = motor!.coupled!.find((c) => c.frame)!;
+    expect(ring.ratio).toBe(-0.3333);
+    expect(ring.moving).toEqual(expect.arrayContaining(["housing", "j-motor_motor", "m3-rod#3", "m3-nut"]));
+    expect(ring.moving).not.toContain("carrier");
+    expect(motor!.turnsInWorld!.sort()).toEqual(["carrier", "j-planet-1_pin", "j-planet-2_pin", "j-planet-3_pin"]);
+  });
+
+  it("lets each tie rod share its thread with its nut", () => {
+    expect(threadAllowances(g).map((x) => `${x.a}|${x.b}`)).toContain("m3-rod|m3-nut");
+  });
+
+  it("flags the hand-posed tie rods: a catalog rod runs 0..L from its end", () => {
+    expect(assemblyPlanDefects(g).filter((d) => /off the rod/.test(d.message)).map((d) => d.node)).toEqual(["m3-rod"]);
+  });
 });
 
 describe("re-expansion on a live graph", () => {
