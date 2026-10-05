@@ -43,6 +43,7 @@ describe("selectJoint: one row per rule", () => {
     ["M1 rotor on two bearings", { motion: "revolute", duty: "continuous", wallA: 14, wallB: 8 }, "M1", ["bearing_a:bearing:625", "bearing_b:bearing:625", "shaft:d_shaft:5", "collar:collar:5"]],
     ["M1h V-wheel on its own bearings, axle in a 3mm plate", { motion: "revolute", duty: "continuous", wallA: 3, wallB: 12 }, "M1h", ["hub_bearing_a:bearing:625", "hub_bearing_b:bearing:625", "axle_shaft:d_shaft:5", "axle_collar:collar:5"]],
     ["M1h one 608 in a thin light gear, axle in a 7mm plate", { motion: "revolute", duty: "continuous", load: "light", wallA: 7, wallB: 9, prefer: { family: "bearing", key: "608" } }, "M1h", ["hub_bearing_b:bearing:608", "axle_shaft:d_shaft:8", "axle_collar:collar:8"]],
+    ["M2d pinewood wheel on a stated 2.2mm axle nail", { motion: "revolute", wallA: 22, wallB: 9.5, prefer: { family: "wire_nail", key: "2.2" } }, "M2d", ["pin:wire_nail:2.2x25"]],
     ["C1 thumb screw clamping a bracket on a Ø16 rod", { onRod: 16, wallB: 6, toolFree: true, intent: "serviceable" }, "C1", ["screw:thumb_screw:M5x6"]],
     ["M1p winch drum between 6mm plates, one 608 in each", { motion: "revolute", duty: "continuous", wallA: 9, wallB: 30, pairedB: true, prefer: { family: "bearing", key: "608" } }, "M1p", ["bearing_a:bearing:608", "shaft:d_shaft:8", "collar:collar:8"]],
     ["M1f cradle between two supports, one flanged bearing each", { motion: "revolute", wallA: 8, wallB: 8, pairedB: true, prefer: { family: "bearing_flanged" } }, "M1f", ["bearing:bearing_flanged:F625", "shaft:d_shaft:5", "spacer:washer:M5"]],
@@ -425,7 +426,7 @@ describe("stated hardware every family can be", () => {
     // pockets by the plan; a wire nail is not stocked as a joint yet.
     // v_wheel is a kit the architect places as a node (the wheel joints seat it).
     // Thumb screws, set screws and wing nuts are stocked ahead of their rule.
-    expect(Object.keys(CATALOG.families).filter((f) => !used.has(f))).toEqual(["wing_nut", "wire_nail", "v_wheel", "disc_magnet", "oring", "standoff"]);
+    expect(Object.keys(CATALOG.families).filter((f) => !used.has(f))).toEqual(["wing_nut", "v_wheel", "disc_magnet", "oring", "standoff"]);
   });
 
   it("a heat-set insert stated for wood is refused, naming the wood insert (real-step-stool)", () => {

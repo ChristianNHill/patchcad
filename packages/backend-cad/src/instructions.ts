@@ -100,6 +100,10 @@ export interface SequenceOptions {
   /** Copies (`node`, `node#i`) pressed outward from inside: a bearing in the
    *  inner face of a U-frame's plate, brought in through the open top. */
   inside?: string[];
+  /** Copies slid in along their seat's face instead of onto it: a drawer
+   *  into its case through the open front (real-drawer-organiser lowered it
+   *  through the closed top). */
+  slide?: Record<string, Vec3>;
 }
 
 interface SceneLike {
@@ -126,7 +130,13 @@ interface Link {
 const BEARINGS = new Set(["bearing", "bushing", "linear_bearing"]);
 const FASTENERS = new Set(["fastener", "nut", "washer"]);
 /** Pressed into one loose part before any parts meet. */
-const PREINSTALLED = new Set(["insert", "magnet", "dowel"]);
+/** Fitted into one loose part before any parts meet: a cam bolt screwed into
+ *  its panel, the cam dropped into the other, a dowel screw into the top
+ *  (real-cube-shelf-1x2: each cam bolt went in after the end panel and was
+ *  blocked by it). */
+const PREINSTALLED = new Set(["insert", "magnet", "dowel", "cam_bolt", "cam_lock", "dowel_screw"]);
+/** Of those, the ones that are screwed in rather than pressed. */
+const SCREWED_IN = new Set(["cam_bolt", "dowel_screw"]);
 /** A servo and the link on its horn go in as one step, as manuals do it. */
 const SERVOS = new Set(["sg90", "mg996r", "sts3215"]);
 /** Mirror words: "Upper front rail" and "Upper back rail" are one kind of part. */
@@ -541,15 +551,19 @@ function plan(graph: GraphDoc, scene: SceneLike, opts: SequenceOptions) {
   for (const [host, g] of [...byHost].sort(([a], [b]) => d(a) - d(b))) {
     const qty = g.keys.length;
     const hw = hwEntries([...g.ids], (id) => g.keys.filter((k) => k.key.split("#")[0] === id).length);
+    const screwed = [...g.ids].every((id) => SCREWED_IN.has(byId[id]!.kind));
     push({
-      title: `Press ${hw.map((h) => counted(h.qty, h.description, "the")).join(" and ")} into ${hostPhrase([host])}`,
-      action: "press",
+      title: `${screwed ? "Screw" : [...g.ids].every((id) => byId[id]!.kind === "cam_lock") ? "Drop" : "Press"} ${hw.map((h) => counted(h.qty, h.description, "the")).join(" and ")} into ${hostPhrase([host])}`,
+      action: screwed ? "screw" : "press",
       parts: [],
       hardware: hw,
       notes: [...g.ids].map((id) => byId[id]!.kind).map((k) =>
         k === "magnet" ? "Press each magnet in flush. Check its pole against its partner first, so the pair attracts."
         : k === "dowel" ? "Tap each dowel in square until it stops. The part that goes on next slides over what sticks out."
         : k === "linear_bearing" ? "Press each linear bearing in square until it sits in its seat, pushing on its outer shell only."
+        : k === "cam_bolt" ? "Screw each cam bolt in by hand until its collar sits on the panel. Do not overtighten: the chipboard strips."
+        : k === "cam_lock" ? "Drop each cam into its hole with the arrow pointing at the panel edge, so the bolt can enter it."
+        : k === "dowel_screw" ? "Screw each dowel screw in by hand until half of it stands out, the wood thread first."
         : "Heat each insert with the soldering iron and press it straight down until it sits flush. Let it cool before you load it.").filter((v, i, a) => a.indexOf(v) === i),
       context: (copies.get(host) ?? []).map((c) => c.key),
       moving: g.keys,
@@ -587,6 +601,8 @@ function plan(graph: GraphDoc, scene: SceneLike, opts: SequenceOptions) {
     for (const [x, y] of opts.before ?? [])
       if (ns.some((n) => n.id === x)) out.push(`Fit this before the ${label(byId[y]!)}: it would block the way afterwards.`);
     if (ns.some((n) => opts.reversed?.includes(n.id))) out.push("Push it in from the end the arrow shows: the other end is closed.");
+    if (ns.some((n) => (copies.get(n.id) ?? []).some((c) => opts.slide?.[c.key])))
+      out.push("Slide it in across its seat from the open side, the way the arrow shows, until it stops.");
     if (ns.some((n) => (copies.get(n.id) ?? []).some((c) => opts.inside?.includes(c.key))))
       out.push("Press from inside the frame: bring it in through the open side, then press it outward into its seat.");
 
@@ -604,7 +620,11 @@ function plan(graph: GraphDoc, scene: SceneLike, opts: SequenceOptions) {
     const ns = ids.map((id) => byId[id]!);
     const flipped = (key: string) => opts.reversed?.includes(key.split("#")[0]!) || opts.inside?.includes(key);
     // What a part carries goes the way the part goes.
-    const mv = movingKeys(ids, within).map(({ carrier, ...m }) => (flipped(carrier ?? m.key) ? { ...m, direction: m.direction.map((v) => -v || 0) as Vec3 } : m));
+    const mv = movingKeys(ids, within).map(({ carrier, ...m }) => {
+      const along = opts.slide?.[carrier ?? m.key];
+      if (along) return { ...m, direction: along };
+      return flipped(carrier ?? m.key) ? { ...m, direction: m.direction.map((v) => -v || 0) as Vec3 } : m;
+    });
     const mated = [...new Set(mv.filter((m) => !riders.includes(m.key.split("#")[0]!)).map((m) => m.host).filter((h): h is string => !!h && within.has(h)))];
     const holding = (id: string) => !!opts.held?.includes(id) || laid.has(id);
     const action = holding(ns[0]!.id) ? "place" : actionFor(ns[0]!, mated[0]);
@@ -889,7 +909,8 @@ export type InsertionCheck = (
  * built in place instead. What no order fixes is reported, never hidden.
  */
 export async function feasibleSequence(graph: GraphDoc, scene: SceneLike, check: InsertionCheck): Promise<AssemblySequence> {
-  const opts: Required<SequenceOptions> = { before: [], dissolve: [], held: [], supports: [], reversed: [], inside: [] };
+  const opts: Required<SequenceOptions> = { before: [], dissolve: [], held: [], supports: [], reversed: [], inside: [], slide: {} };
+  const triedSlide = new Set<string>();
   const triedInside = new Set<string>();
   /** What the inside-out sweep hit, per moving copy: the far side's blockers. */
   const reverseBy = new Map<string, string[]>();
@@ -986,6 +1007,39 @@ export async function feasibleSequence(graph: GraphDoc, scene: SceneLike, check:
       fix();
       continue;
     }
+    // Slid in along its seat: a part blocked onto its face (and from inside)
+    // tries the four ways across that face, the way a drawer goes into a case.
+    const across = blocked
+      .filter((b) => !b.step.attaches)
+      .flatMap((b) => [...new Set(b.blocked.map((x) => x.part))].map((key) => ({ b, m: b.step.moving.find((mv) => mv.key === key) })))
+      .filter(({ m }) => m && !m.held && !triedSlide.has(m.key) && !opts.slide[m.key]);
+    if (round < 12 && across.length) {
+      const queries = across.flatMap(({ b, m }) => {
+        triedSlide.add(m!.key);
+        const d = m!.direction;
+        const a: Vec3 = Math.abs(d[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+        const u = unit([d[1] * a[2] - d[2] * a[1], d[2] * a[0] - d[0] * a[2], d[0] * a[1] - d[1] * a[0]]);
+        const v = unit([d[1] * u[2] - d[2] * u[1], d[2] * u[0] - d[0] * u[2], d[0] * u[1] - d[1] * u[0]]);
+        const r = (w: number[]) => w.map((c) => Math.round(c * 1e6) / 1e6 || 0) as Vec3;
+        return [u, u.map((c) => -c), v, v.map((c) => -c)].map((dir, k) => ({ id: `slide:${k}:${m!.key}`, moving: [m!.key], still: b.step.context, direction: r(dir) }));
+      });
+      let answers: Awaited<ReturnType<InsertionCheck>> = [];
+      try {
+        answers = await check(queries);
+      } catch {
+        answers = [];
+      }
+      let found = false;
+      for (const a of answers) {
+        if (a.blocked.length) continue;
+        const key = a.id.split(":").slice(2).join(":");
+        if (opts.slide[key]) continue;
+        opts.slide[key] = queries.find((q) => q.id === a.id)!.direction;
+        found = true;
+      }
+      if (found) continue;
+    }
+
     // Reached its start sideways (the kernel's `enters`): it is pressed from inside.
     for (const r of results) {
       const st = r.enters && seq.steps[Number(r.id.split(":")[0]) - 1];

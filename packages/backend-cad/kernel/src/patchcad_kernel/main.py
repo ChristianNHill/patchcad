@@ -164,7 +164,9 @@ pool = None  # set at startup; parent process stays OCP-free
 # against the thread's pitch..major Ø band (the spaghetti shelf's foot stud).
 # A BORE declaring params.fit (press|slip) is graded on that fit's band
 # around the shaft's nominal Ø, like a hardware seat.
-GATES_VERSION = 25
+# 25 -> 26: a through bore's depth runs across gaps it passes through (a pin
+# through interleaved hinge knuckles), not only its first stretch of wall.
+GATES_VERSION = 26
 # Tap drills and clearances come from the catalog, so a catalog edit changes
 # verdicts too. Keyed by content, not by remembering to bump GATES_VERSION.
 CATALOG_DIGEST = hashlib.sha256(

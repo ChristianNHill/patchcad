@@ -43,24 +43,24 @@
         {
           "motion": "fixed",
           "hardware": [
-            "shcs|button|csk"
+            "confirmat|shcs|button|csk"
           ],
           "count": 2
         },
         {
           "motion": "fixed",
           "hardware": [
-            "dowel"
+            "dowel|wood_dowel"
           ]
         }
       ],
       "bom": [
         {
-          "family": "shcs|button|csk",
+          "family": "confirmat|shcs|button|csk",
           "minQty": 8
         },
         {
-          "family": "dowel",
+          "family": "dowel|wood_dowel",
           "minQty": 4
         }
       ],

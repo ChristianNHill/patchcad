@@ -2432,6 +2432,31 @@ def _banded(shape: Any, port: dict[str, Any], band: tuple[float, float]) -> dict
     return _probe_hole(shape, {**port, "params": {"diameter": sum(band) / 2}}, band)
 
 
+def _through_run(shape: Any, frame, u: float, v: float, t: float, need: float, reach: float) -> float:
+    """How far a through bore runs, across gaps: from the end of the first
+    stretch of wall beside it (t), on to the end of the last stretch the bore
+    still runs through within reach of `need`. A pin through interleaved hinge
+    knuckles crosses the partner's knuckles in the gaps: the phone stand's
+    31.7mm pin read 25.7, its first knuckle only. A stretch counts only where
+    the bore's axis is void too, so a rib under a plain hole adds nothing."""
+    o, x, y, z = frame
+    line = (list(_at(o, x, y, z, u, v, 0.0)), x, y, z)
+    end = t
+    for _ in range(12):
+        if end >= need:
+            break
+        gap = _march(shape, line, 0.0, 0.0, -(end + CROSSING_EPS_MM), reach, find="material", dw=-1.0)
+        if gap is None or end + gap > need + 2.0:
+            break
+        start = end + CROSSING_EPS_MM + gap
+        run = _march(shape, line, 0.0, 0.0, -(start + CROSSING_EPS_MM), reach, find="void", dw=-1.0)
+        stop = start + CROSSING_EPS_MM + (run if run is not None else 0.0)
+        if _in_material(shape, _at(o, x, y, z, 0.0, 0.0, -(start + stop) / 2)):
+            break  # the bore does not go through this stretch
+        end = stop
+    return end
+
+
 def _require_depth(shape: Any, port: dict[str, Any], result: dict[str, Any], need: float, r: float) -> None:
     """A blind bore's floor must be at least `need` down. A through bore is as
     deep as the material beside it, read off the wall just outside its radius:
@@ -2443,9 +2468,10 @@ def _require_depth(shape: Any, port: dict[str, Any], result: dict[str, Any], nee
         sides = []
         for k in range(0, PROBE_DIRECTIONS, 2):
             a = 2 * math.pi * k / PROBE_DIRECTIONS
-            t = _axial_depth(shape, frame, rr * math.cos(a), rr * math.sin(a), reach, find="void")
+            u, v = rr * math.cos(a), rr * math.sin(a)
+            t = _axial_depth(shape, frame, u, v, reach, find="void")
             if t is not None:
-                sides.append(t)
+                sides.append(_through_run(shape, frame, u, v, t, need, reach))
         if not sides:
             return
         got = sorted(sides)[len(sides) // 2]

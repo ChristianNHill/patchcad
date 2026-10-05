@@ -1055,8 +1055,37 @@ const M2d: JointRule = {
   id: "M2d",
   when: (i) => revolute(i) && !i.driven && casual(i),
   can: (i) => revolute(i) && !i.driven,
-  uses: ["dowel", "filament_pin"],
-  fit: (i) => {
+  uses: ["dowel", "filament_pin", "wire_nail"],
+  fit: (raw) => {
+    // A pin can only go as deep into a as a's material runs behind the face
+    // (real-folding-phone-stand: wallA 36.7 declared, 25.8 of plate there, a
+    // 31.7mm hole no code could cut).
+    const i = raw.depthA !== undefined && raw.depthA < raw.wallA ? { ...raw, wallA: raw.depthA } : raw;
+    // An axle nail, when stated (a pinewood car's wheels): its shank tip is
+    // pressed into a, the shank runs right through b, and the head sits just
+    // past b's outer face, holding b on. DIN 1151 lengths only.
+    const nail = statedKey(i, "wire_nail") ?? (i.prefer?.family === "wire_nail" ? "" : undefined);
+    if (nail !== undefined) {
+      const keys = Object.keys(CATALOG.families.wire_nail!.dims).map(Number).filter((d) => (nail ? String(d) === nail || Number(nail) === d : d <= (i.shaftHint ?? PIVOT_D[i.load]))).sort((a, b) => b - a);
+      const tried: string[] = [];
+      for (const d of keys) {
+        const key = canonicalKey("wire_nail", String(d))!;
+        for (const L of [...standardLengths("wire_nail", key)].sort((a, b) => a - b)) {
+          // b turns freely on the shank with up to 2mm of end play under the head.
+          const run = r2(Math.max(i.wallB + 0.5, L - i.wallA));
+          const press = r2(L - run);
+          if (run - i.wallB > 2.5 || press < 1.5 * d) {
+            tried.push(`Ø${d}×${L}: ${press < 1.5 * d ? `presses only ${mm(press)} into a` : `leaves ${mm(run - i.wallB)} of play past b`}`);
+            continue;
+          }
+          return decision("M2d", "pin", `Ø${d}×${L} axle nail pressed into a, b turning on its shank`, [
+            `revolute, occasional, ${i.load}: an axle nail, as stated`,
+            `${L}mm: ${press}mm pressed into a (wallA ${mm(i.wallA)}), ${run}mm through b and its end play`,
+          ], { parts: [{ role: "pin", family: "wire_nail", key, length: L }], dims: { d, length: L, press, run } });
+        }
+      }
+      return `stated axle nail: ${tried.join("; ") || "no DIN 1151 size fits"}; wallA is how deep a's material runs behind its face for the nail`;
+    }
     // Filament stock when stated, or hinted at a Ø only filament comes in (1.75).
     const stockOf = (f: string) => Object.keys(CATALOG.families[f]!.dims).map(Number);
     const family = statedKey(i, "filament_pin") || (i.shaftHint !== undefined && !stockOf("dowel").includes(i.shaftHint) && stockOf("filament_pin").includes(i.shaftHint)) ? "filament_pin" : "dowel";

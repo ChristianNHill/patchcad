@@ -42,12 +42,13 @@
       "joints": [
         {
           "motion": "fixed",
-          "count": 4
+          "count": 4,
+          "hardware": []
         }
       ],
       "bom": [
         {
-          "family": "threaded_rod|shcs|dowel",
+          "family": "dowel_screw|threaded_rod|shcs|dowel",
           "minQty": 4
         }
       ],

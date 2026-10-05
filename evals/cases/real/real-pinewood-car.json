@@ -43,12 +43,13 @@
         {
           "motion": "revolute",
           "count": 2,
-          "travel": 360
+          "travel": 360,
+          "hardware": []
         }
       ],
       "bom": [
         {
-          "family": "dowel|shaft",
+          "family": "dowel|shaft|pin|wire_nail",
           "minQty": 2
         }
       ],

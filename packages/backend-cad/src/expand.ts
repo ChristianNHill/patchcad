@@ -610,7 +610,44 @@ function unmate(c: Ctx) {
  *  it by T1 and leaves the contract alone. */
 function ringFace(c: Ctx, node: OutNode, port: string, diameter: D) {
   const p = c.x.port(node, port);
-  if (p.type === "FLAT_FACE") p.params = { ...p.params, ring_diameter: typeof diameter === "number" ? round(diameter) : diameter };
+  if (p.type !== "FLAT_FACE") return;
+  // A face on the floor of a groove or slot is as wide as the channel: a
+  // ring round it meets the channel's walls (real-storage-crate's side
+  // panels: a Ø60 ring on a 12.4mm groove floor, "material above the face").
+  const width = channelFloorWidth(c.x.graph, node, p);
+  if (width !== undefined) {
+    const { ring_diameter: _r, ...rest } = p.params;
+    const size = typeof rest.size === "number" ? Math.min(rest.size, width - 0.4) : round(width - 0.4);
+    p.params = { ...rest, size: round(size) };
+    return;
+  }
+  p.params = { ...p.params, ring_diameter: typeof diameter === "number" ? round(diameter) : diameter };
+}
+
+/** The width of the GROOVE or SLOT whose floor this face is, else undefined. */
+function channelFloorWidth(graph: GraphDoc, node: OutNode, face: CadPortT): number | undefined {
+  let f;
+  try {
+    f = resolvePose(graph, face.pose);
+  } catch {
+    return undefined;
+  }
+  for (const ch of payloadOf(node).ports) {
+    if (ch.type !== "GROOVE" && ch.type !== "SLOT") continue;
+    try {
+      const g = resolvePose(graph, ch.pose);
+      const [w, depth] = [resolveDim(graph, ch.params.width as D), resolveDim(graph, ch.params.depth as D)];
+      const z = unit(g.zAxis);
+      if (dot3(unit(f.zAxis), z) < 0.999 || !(w > 0) || !(depth > 0)) continue;
+      const d = sub3(f.origin, g.origin);
+      const x = unit(g.xAxis);
+      const y = [z[1]! * x[2]! - z[2]! * x[1]!, z[2]! * x[0]! - z[0]! * x[2]!, z[0]! * x[1]! - z[1]! * x[0]!];
+      if (Math.abs(dot3(d, z) + depth) < 0.1 && Math.abs(dot3(d, y)) < w / 2) return w;
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
 }
 
 /** The ring for a pattern of features of Ø `feature`, `rho` from the face's
@@ -1087,8 +1124,12 @@ function pin(c: Ctx) {
   x.addParam(A, `${v}_pin_d`, `pin Ø for ${j.id}`, `hw:dowelHole:param:${id}.sku`);
   x.addParam(B, `${v}_pin_d`, `pin Ø for ${j.id}`, `hw:dowelHole:param:${id}.sku`);
   // The registry centres a dowel on its origin: L/2 − press out of a's face.
+  // A nail has its head at z = 0 and its shank down -z: its tip goes into a,
+  // so the seat faces the other way, press up from the tip.
+  const nailed = part(d, "pin")!.family === "wire_nail";
+  const seat = nailed ? pose([0, 0, round(-d.dims.length! + d.dims.press!)], [0, 0, -1]) : pose([0, 0, round(d.dims.length! / 2 - d.dims.press!)]);
   x.mint(j.id, part(d, "pin")!, d.summary, [{
-    side: "requires", port: { name: "center", type: "FLAT_FACE", pose: pose([0, 0, round(d.dims.length! / 2 - d.dims.press!)]), params: { ring_diameter: d.dims.d! / 2 } }, decl: "DOWEL_HOLE",
+    side: "requires", port: { name: "center", type: "FLAT_FACE", pose: seat, params: { ring_diameter: d.dims.d! / 2 } }, decl: "DOWEL_HOLE",
   }]);
   // b between a's knuckles: the pin goes in through a once b is there.
   x.addPort(A, "provides", { name: `${v}_pin_a`, type: "DOWEL_HOLE", pose: at(fa, 0, 0, 0), params: { diameter: `param(${A.id}.${v}_pin_d)`, depth: i.trappedB ? i.wallA : deep(d.dims.press!, i.wallA, i.minWallA ?? i.minWall), fit: d.dims.slipA ? "slip" : "press" } });

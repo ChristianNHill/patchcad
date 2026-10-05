@@ -257,7 +257,7 @@
     "wire_nail": {
       "category": "fasteners", "kind": "pin", "keyedBy": "size", "skuPrefix": "DIN1151",
       "standard": "DIN 1151 A round plain-head wire nail (shank Ø, head Ø min, lengths); head height family-typical", "dimsSource": "standard",
-      "note": "also a small axle: head on z = 0 like a screw head, shank -z",
+      "note": "also a small axle: head on z = 0 like a screw head, shank -z. 2.2 x 25 is the pinewood-derby kit axle nail (0.087in x about 1in), kit-typical, not in DIN 1151",
       "dims": {
         "1.6": { "d": 1.6, "headD": 3.2, "headH": 0.6 },
         "2": { "d": 2, "headD": 4, "headH": 0.8 },
@@ -266,7 +266,7 @@
         "2.8": { "d": 2.8, "headD": 5.6, "headH": 1.1 },
         "3.1": { "d": 3.1, "headD": 6.2, "headH": 1.2 }
       },
-      "lengths": { "1.6": [25, 30, 35], "2": [40, 45], "2.2": [45, 50], "2.5": [55, 60], "2.8": [65], "3.1": [70, 80] }
+      "lengths": { "1.6": [25, 30, 35], "2": [40, 45], "2.2": [25, 45, 50], "2.5": [55, 60], "2.8": [65], "3.1": [70, 80] }
     },
     "threaded_rod": {
       "category": "fasteners", "kind": "threaded_rod", "keyedBy": "thread", "skuPrefix": "DIN976",

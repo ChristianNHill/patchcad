@@ -1072,6 +1072,10 @@ def build(p):
             for sy in (-15.5, 15.5):
                 part = part - bore(3.4, 20, sx, sy)
         return part
+    if k == "gapped":
+        # a wall, a 4mm gap across the bore, then more wall: knuckles
+        part = part - Pos(-5, 0, top - 8) * Box(50, 70, 4)
+        return part - bore(p.d, p.depth)
     if k == "stud":
         return part + Pos(0, 0, top + p.length / 2) * Cylinder(p.d / 2, p.length)
     if k == "dbore":
@@ -1128,6 +1132,8 @@ def build(p):
         ("LINEAR_BEARING_SEAT shorter than its bushing", {"case": "seat", "d": 11.95, "depth": 15, "lip": 8}, "LINEAR_BEARING_SEAT", {"od": 12, "length": 19, "fit": "press"}, "the seat is 15.00mm deep"),
         ("CLIP_GROOVE Ø4 e-clip groove on a Ø5 shaft", {"case": "groove", "d": 4, "w": 0.74, "at": 0}, "CLIP_GROOVE", {"diameter": 4, "width": 0.74, "shaft_diameter": 5}, None),
         ("CLIP_GROOVE 0.3mm off its place", {"case": "groove", "d": 4, "w": 0.74, "at": 0.3}, "CLIP_GROOVE", {"diameter": 4, "width": 0.74, "shaft_diameter": 5}, "groove's middle"),
+        ("DOWEL_HOLE through two knuckles and the gap between", {"case": "gapped", "d": 5.15, "depth": 20}, "DOWEL_HOLE", {"diameter": 5, "depth": 16, "fit": "slip"}, None),
+        ("DOWEL_HOLE stopping at the gap, solid below", {"case": "gapped", "d": 5.15, "depth": 6}, "DOWEL_HOLE", {"diameter": 5, "depth": 16, "fit": "slip"}, "needs 16mm of depth"),
         ("THREADED_STUD M8 at major Ø", {"case": "stud", "d": 7.8, "length": 20}, "THREADED_STUD", {"thread": "M8", "length": 20}, None),
         ("THREADED_STUD M8 at pitch Ø", {"case": "stud", "d": 7.3, "length": 20}, "THREADED_STUD", {"thread": "M8", "length": 20}, None),
         ("THREADED_STUD too thin for M8", {"case": "stud", "d": 6, "length": 20}, "THREADED_STUD", {"thread": "M8", "length": 20}, "for M8, measured Ø6.00"),

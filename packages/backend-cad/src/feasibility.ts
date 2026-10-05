@@ -256,7 +256,8 @@ export function assemblyPlanDefects(graph: GraphDoc): { node: string; other: str
       const out = members.list.filter(([u, v]) => [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].some(([du, dv]) =>
         !prims.some((o) => contains(o, at(u + du! * members.r, v + dv! * members.r), margin + 0.05))));
       if (out.length) {
-        problems.push({ node: n.id, other: n.id, message: `${n.id}: ${p.type} "${p.name}" puts ${out.length} of its ${members.list.length} Ø${round1(2 * members.r)} holes outside ${n.id}'s envelope (at ${out.map(([u, v]) => `u=${round1(u)} v=${round1(v)}`).join(", ")} in the port frame), so G3 can never find them. Make ${n.id} reach past them there, or bring the port in; for a joint's motor, a bigger part or a ratio that takes a shorter stocked belt.` });
+        const fmtP = (q: Vec3) => `[${q.map(round1).join(", ")}]`;
+        problems.push({ node: n.id, other: n.id, message: `${n.id}: ${p.type} "${p.name}" puts ${out.length} of its ${members.list.length} Ø${round1(2 * members.r)} holes outside ${n.id}'s envelope, at ${out.map(([u, v]) => fmtP(at(u, v))).join(", ")} in ${n.id}'s frame, so G3 can never find them. The pattern's pitch_x runs along the port's xAxis ${fmtP(x as Vec3)} and pitch_y along ${fmtP(y)}: check that is the direction you meant (a long pitch across a short side), then make ${n.id} reach past the holes or bring the port in; for a joint's motor, a bigger part or a ratio that takes a shorter stocked belt.` });
       }
     }
   }
