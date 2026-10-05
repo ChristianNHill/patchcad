@@ -45,8 +45,18 @@ export const FIT_BAND_MM = 0.1;
  *  that far: measured 0.15mm on five generated mates, which is FDM_SLIP_FIT_MM/2. */
 function contactTolerance(graph: GraphDoc, e: GraphDoc["edges"][number] | undefined): number {
   if (!e) return CONTACT_GAP_TOL_MM;
-  const types = [portOf(graph.nodes[e.from]!, e.fromPort)?.type, portOf(graph.nodes[e.to]!, e.toPort)?.type];
-  return types.every((t) => t === "FLAT_FACE") ? CONTACT_GAP_TOL_MM : CONTACT_GAP_TOL_MM + FDM_SLIP_FIT_MM / 2;
+  const ends = [portOf(graph.nodes[e.from]!, e.fromPort), portOf(graph.nodes[e.to]!, e.toPort)];
+  const types = ends.map((p) => p?.type);
+  if (types.every((t) => t === "FLAT_FACE")) return CONTACT_GAP_TOL_MM;
+  // A shaft through a bore that declares no fit is a pass-through (a rod
+  // through a shelf's Ø18 hole): its radial clearance is the design's.
+  const bore = ends.find((p) => p?.type === "BORE");
+  const shaft = ends.find((p) => p?.type === "SHAFT");
+  if (bore && shaft && !bore.params.fit) {
+    const [b, sh] = [num(graph, bore.params.diameter ?? bore.params.d), num(graph, shaft.params.diameter ?? shaft.params.d)];
+    if (Number.isFinite(b) && Number.isFinite(sh) && b > sh) return CONTACT_GAP_TOL_MM + (b - sh) / 2;
+  }
+  return CONTACT_GAP_TOL_MM + FDM_SLIP_FIT_MM / 2;
 }
 
 /** Smallest ball around a mate point the contact check looks inside. */
@@ -372,14 +382,21 @@ export function fitFindings(graph: GraphDoc): CheckFinding[] {
       // A declared fit, or a machined pair, takes its process's band (radial:
       // half the Ø band); a plain printed bore keeps the FDM slip allowance.
       const machined = isMachined(sourcingOf(bore.n).process) || isMachined(sourcingOf(shaft.n).process);
-      const fit = bore.port!.params.fit === "press" ? "press" : bore.port!.params.fit === "slip" || machined ? "slip" : undefined;
+      // Machined with no declared fit is a pass-through too: only a declared
+      // fit is graded on its band.
+      const fit = bore.port!.params.fit === "press" ? "press" : bore.port!.params.fit === "slip" ? "slip" : undefined;
       if (fit) {
         const [lo, hi] = (machined ? MACHINED_FIT_BANDS_MM : FDM_FIT_BANDS_MM)[fit];
         [expected, tol] = [Math.round(((lo + hi) / 4) * 1e4) / 1e4, Math.round(((hi - lo) / 4) * 1e4) / 1e4 + 0.01];
         // A fitted bore declares the shaft's nominal Ø; unmeasured, it is
         // taken at the middle of its band, as a seat is.
         if (bore.port!.params.fit && !outer.measured) outer = { d: outer.d + 2 * expected, measured: false };
-      } else expected = FDM_SLIP_FIT_MM / 2;
+      } else {
+        // No declared fit and not machined: a pass-through, judged only on
+        // being wide enough for the shaft to go in.
+        expected = FDM_SLIP_FIT_MM / 2;
+        if ((outer.d - inner) / 2 > expected) continue;
+      }
       what = `${shaft.n.id}.${shaft.port!.name} Ø${inner.toFixed(2)} in ${bore.n.id}.${bore.port!.name}`;
     } else if (screw && hole && screw !== hole) {
       const thread = threadOf(screw.n);
