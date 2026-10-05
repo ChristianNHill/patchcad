@@ -5,6 +5,7 @@ import { resolveDim, resolvePose, type NumericPose } from "./bindings.js";
 import { buildBom } from "./bom.js";
 import { CATALOG, familyDims, type Sku } from "./catalog.js";
 import { jointOwner } from "./expand.js";
+import type { OrderLink } from "./ordering.js";
 import { hardwareAllowances, threadAllowances } from "./g5.js";
 import type { KernelClient } from "./kernel.js";
 import { skuOf } from "./registry.js";
@@ -145,7 +146,7 @@ export const NOUN: Record<string, string> = {
   gt2_belt: "GT2 belt", gt2_loop: "GT2 closed belt", spur_gear: "spur gear", coupler: "shaft coupler",
   lead_screw: "lead screw", lead_nut: "lead screw nut", nema17: "stepper motor", brushless: "brushless motor",
   filament_pin: "filament pin", n20: "gear motor", sg90: "servo", mg996r: "servo", sts3215: "serial bus servo", nema14: "stepper motor", disc_magnet: "disc magnet", oring: "O-ring", standoff: "standoff",
-  chipboard: "wood screw", v_wheel: "V-slot wheel",
+  chipboard: "wood screw", v_wheel: "V-slot wheel", thumb_screw: "thumb screw", set_screw: "set screw", wing_nut: "wing nut",
 };
 
 /** "the M3 insert", "4× M3 inserts". */
@@ -1014,8 +1015,11 @@ export interface InstructionsDocument {
   summary: string;
   tools: string[];
   problems: string[];
-  items: { id: string; label: string; qty: number; gauge_mm?: number; code?: string; params?: Record<string, unknown> }[];
+  items: { id: string; label: string; designation: string; qty: number; gauge_mm?: number; code?: string; params?: Record<string, unknown> }[];
   made: { label: string; qty: number }[];
+  /** The "Where to order" page: every bought part, verified PNs first, then
+   *  labelled search links. Empty when nothing is bought. */
+  order: { id: string; designation: string; qty: number; links: OrderLink[] }[];
   steps: (AssemblyStep & { callouts: { keys: string[]; label: string }[]; hardware: (StepHardware & { label: string; item: string })[] })[];
 }
 
@@ -1044,6 +1048,7 @@ export function instructionsDocument(graph: GraphDoc, scene: SceneLike, seq: Ass
     return {
       id: row.sku,
       label: hardwareLabel(node),
+      designation: row.designation,
       qty: row.qty,
       ...(len ? { gauge_mm: len } : {}),
       ...(node.artifact?.code ? { code: node.artifact.code, params: mergedParams(node) as Record<string, unknown> } : {}),
@@ -1059,6 +1064,7 @@ export function instructionsDocument(graph: GraphDoc, scene: SceneLike, seq: Ass
     problems: seq.sequenceProblems,
     items,
     made: made.map((r) => ({ label: `${r.title} (${r.process}${r.material ? `, ${r.material}` : ""})`, qty: r.qty })),
+    order: bom.buy.map((r) => ({ id: r.sku, designation: r.designation, qty: r.qty, links: r.orderFrom })),
     steps: seq.steps.map((s) => ({
       ...s,
       hardware: s.hardware.map((h) => ({ ...h, label: h.description, item: h.sku })),

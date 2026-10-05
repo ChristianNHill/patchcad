@@ -4,7 +4,6 @@ import {
   CadBackend,
   CadContractPayload,
   G4C_SCORE,
-  UNVERIFIED_PN,
   bomCsv,
   buildBom,
   cadSourcingLint,
@@ -217,7 +216,7 @@ describe("BOM", () => {
 
   it("groups bought parts by SKU across nodes and placed copies", () => {
     expect(bom.buy).toHaveLength(1);
-    expect(bom.buy[0]).toMatchObject({ sku: "ISO4762-M3x12", qty: 3, nodes: ["screw", "screw2"], vendors: UNVERIFIED_PN });
+    expect(bom.buy[0]).toMatchObject({ sku: "ISO4762-M3x12", qty: 3, nodes: ["screw", "screw2"], designation: "ISO 4762 M3×12 socket head cap screw" });
     expect(bom.buy[0]!.standard).toMatch(/ISO 4762/);
   });
 
@@ -241,7 +240,7 @@ describe("BOM", () => {
     expect(bom.print.map((r) => r.nodeId)).not.toContain("lid");
     const csv = bomCsv(bom);
     expect(csv.split("\n")[0]).toMatch(/^section,item,description/);
-    expect(csv).toContain("lid,lid,,,,,,,,,,not generated (error_code)");
+    expect(csv).toContain("lid,lid,,,,,,,,,,,,not generated (error_code)");
     expect(csv).toContain("custom — send to vendor");
   });
 

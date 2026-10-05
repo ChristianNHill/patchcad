@@ -15,6 +15,7 @@ export { autoFixPlan, fixFrameFlips, fixSpans } from "./frame-flip.js";
 export * from "./sourcing.js";
 export * from "./dfm.js";
 export * from "./bom.js";
+export * from "./ordering.js";
 export * from "./joints.js";
 export * from "./expand.js";
 export * from "./segment-joints.js";
@@ -105,6 +106,9 @@ export const PROBED_PORT_TYPES = [
   "LINEAR_BEARING_SEAT",
   "CLIP_GROOVE",
   "RAIL_MOUNT",
+  // A made part's male thread, probed as a peg against its thread's Ø band;
+  // G5 allows its overlap with the THREADED_HOLE it mates.
+  "THREADED_STUD",
 ] as const;
 
 export const CadPortType = z.enum(PROBED_PORT_TYPES);
@@ -147,6 +151,10 @@ export const CadPort = z.object({
   type: CadPortType,
   pose: Pose,
   params: z.record(z.union([z.number(), z.string()])).default({}),
+  repeat: z
+    .object({ count: z.number().int().min(2).max(50), step: z.tuple([Dim, Dim, Dim]) })
+    .optional()
+    .describe("the same port at `count` positions, each `step` mm (in this part's frame) past the last: levels up a post, a row along a rail. Plan expansion makes ports <name>_1..<name>_N and repeats every edge and joint on it, so one part wired here is placed at every position"),
 });
 
 export const EnvelopePrimitive = z.discriminatedUnion("kind", [
@@ -248,10 +256,10 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { KernelClient, type ExportResult, type KernelResult } from "./kernel.js";
 import { generatePrompt, repairPrompt } from "./prompts.js";
-import { FASTENING_HARDWARE, REGISTRY_HARDWARE, REGISTRY_SOLIDS, resolveDeterministic, skuOf, unresolvedHardware } from "./registry.js";
+import { FASTENING_HARDWARE, METRIC, REGISTRY_HARDWARE, REGISTRY_SOLIDS, resolveDeterministic, skuOf, unresolvedHardware } from "./registry.js";
 import { CadJoint } from "./joints.js";
 import { CATALOG, skuFor } from "./catalog.js";
-import { cadJointRuleLint, expandJoints, gearMeshJoints, planetaryJoints, graphMates, isJointHardware, jointAxes } from "./expand.js";
+import { cadJointRuleLint, expandJoints, gearMeshJoints, planetaryJoints, graphMates, isJointHardware, jointAxes, mintedNames } from "./expand.js";
 import { gearHubName, mintDefaultGearPorts, mintNamedGearPorts } from "./gear-ports.js";
 import { IDENTITY, kinematicJoints, poseToMat, solveAssembly, type AssemblyNode } from "./assembly.js";
 import { resolveBinding, resolveDim, resolvePose } from "./bindings.js";
@@ -259,9 +267,10 @@ import { DIAMETER_KEYS, clashFindings, contactQueries, fitFindings, hardwareAllo
 import { cadPlanGeometryLint, contains, posedEnvelope } from "./plan-geometry.js";
 import { silhouetteAdvisories } from "./silhouette.js";
 import { geometrySourceGuidance, isMeshNode, meshNodeCode, meshSourceLint, prepareMeshNode, type MeshSource } from "./mesh-source.js";
-import { Sourcing, cadSourcingLint, markCncSetups, sourcingOf } from "./sourcing.js";
+import { Sourcing, cadSourcingLint, isMachined, markCncSetups, sourcingOf } from "./sourcing.js";
 import { summarizeCadPlan } from "./plan-summary.js";
 import { assemblyInstructions } from "./instructions.js";
+import { expandRepeats } from "./repeat.js";
 import { assemblyFindings, assemblyPlanDefects, cadAssemblyPlanLint } from "./feasibility.js";
 import { autoFixPlan } from "./frame-flip.js";
 import { G4C_SCORE, kernelProcess } from "./dfm.js";
@@ -270,6 +279,7 @@ import { WORKED_PLAN, WORKED_PLAN_GOAL } from "./worked-plan.js";
 import { CAD_INSPECT_SYSTEM } from "./judge.js";
 import {
   BEARING_DIAMETER,
+  FDM_SLIP_FIT_MM,
   SEAT_POSE,
   groundingLines,
   seatBand,
@@ -328,7 +338,7 @@ export const cadPortConsistencyLint = {
         if (names?.has(port)) continue;
         problems.push(
           REGISTRY_HARDWARE.has(n.kind) && !names?.size
-            ? `edge ${e.from}.${e.fromPort} → ${e.to}.${e.toPort}: ${id} is ${n.kind} and declares no ports, so "${port}" cannot exist and the mate will not solve. Give it the seat port the edge names (examples/cad-clamp's screw declares head_seat as a FLAT_FACE with ring_diameter).`
+            ? `edge ${e.from}.${e.fromPort} → ${e.to}.${e.toPort}: ${id} is ${n.kind} and declares no ports, so "${port}" cannot exist and the mate will not solve. Give it the seat port the edge names (examples/cad-clamp's screw declares head_seat as a FLAT_FACE with ring_diameter), or better, declare a joint between the two parts it fastens and let expansion mint it (a part clamped on a rod: a fixed joint, b's BORE on a's SHAFT, toolFree for a thumb screw).`
             : `edge ${e.from}.${e.fromPort} → ${e.to}.${e.toPort}: "${port}" is not a payload port name of ${id}`,
         );
       }
@@ -604,6 +614,10 @@ export const cadFlatFaceSizeLint = {
               `${n.id}: ${p.type} port "${p.name}" declares no outer diameter (params: ${JSON.stringify(keys)}). Add params.outer_diameter in mm — the boss wall diameter the probe measures.`,
             );
           }
+        } else if (p.type === "THREADED_STUD") {
+          if (!METRIC[String(p.params.thread ?? "")]) {
+            problems.push(`${n.id}: THREADED_STUD port "${p.name}" declares no known thread (params: ${JSON.stringify(keys)}). Add params.thread, one of ${Object.keys(METRIC).join(", ")}, and params.length in mm.`);
+          }
         } else if (p.type === "SHAFT") {
           // The emitter is the IMPORT path (main.ts), which never runs a lint,
           // and imported nodes resolve deterministically with no repair round.
@@ -690,6 +704,136 @@ export const cadFlatFaceSizeLint = {
  *  repair is free. Connectivity ignores edge direction, because a mate
  *  positions whichever end is not yet placed.
  */
+/** The assembly entry is placed once, at the origin: nothing can make a copy
+ *  of it. Edges asking for one (two providers onto the same entry port) or a
+ *  repeated port on the entry's own seat mean the plan wanted it several times
+ *  (the spaghetti shelf made a shelf the entry: one placed, six asked). */
+export const cadEntryOnceLint = {
+  run(graph: GraphDoc): string[] {
+    const entry = graph.assembly.entryNodeId;
+    const seats = new Map<string, number>();
+    // Edges run provider → consumer: the entry as the consumer of one port
+    // twice is the entry asked to be two copies.
+    for (const e of graph.edges) if (e.to === entry) seats.set(e.toPort, (seats.get(e.toPort) ?? 0) + 1);
+    return [...seats].filter(([, n]) => n > 1).map(([port, n]) =>
+      `${entry} is the assembly entry, which is placed once, but ${n} edges seat it by "${port}" as if it were several copies. Make the part that stands on the floor or holds the rest (a frame, a base, a post) the entry, and let ${entry} be placed by it, one copy per edge.`);
+  },
+};
+
+/** A made part mated INTO a tapped hole must say it has the thread. The
+ *  spaghetti shelf's foot met its rod's M8 hole with a FLAT_FACE and built a
+ *  stud anyway: nothing allowed the overlap, so G5 blocked 132 mm³ of thread. */
+export const cadThreadPartnerLint = {
+  run(graph: GraphDoc): string[] {
+    const problems: string[] = [];
+    const portOf = (id: string, name: string) =>
+      (graph.nodes[id]?.contract.payload as CadContractPayload | undefined)?.ports?.find((p) => p.name === name);
+    for (const e of graph.edges) {
+      for (const [hostId, hostPort, otherId, otherPort] of [[e.from, e.fromPort, e.to, e.toPort], [e.to, e.toPort, e.from, e.fromPort]] as const) {
+        const hole = portOf(hostId, hostPort);
+        if (hole?.type !== "THREADED_HOLE") continue;
+        const other = graph.nodes[otherId];
+        if (!other || REGISTRY_HARDWARE.has(other.kind)) continue;
+        const theirs = portOf(otherId, otherPort);
+        if (theirs?.type === "THREADED_STUD") {
+          if (theirs.params.thread !== hole.params.thread) problems.push(`edge ${e.from}.${e.fromPort} → ${e.to}.${e.toPort}: a ${theirs.params.thread} stud in a ${hole.params.thread} hole. Give both the same thread.`);
+          continue;
+        }
+        problems.push(
+          `edge ${e.from}.${e.fromPort} → ${e.to}.${e.toPort}: ${otherId} is mated into ${hostId}'s tapped ${hole.params.thread ?? ""} hole "${hostPort}" by a ${theirs?.type ?? "missing"} port. What threads into it? If ${otherId} has a male thread, declare it as a THREADED_STUD port {thread: "${hole.params.thread ?? "M?"}", length} and mate that; otherwise screw it on with catalog hardware through a joint.`,
+        );
+      }
+    }
+    // A tapped hole nothing threads into. Joint-minted holes take their screw
+    // by its head, so they have no edge of their own and are exempt.
+    const mated = new Set(graph.edges.flatMap((e) => [`${e.from}|${e.fromPort}`, `${e.to}|${e.toPort}`]));
+    const minted = (id: string, name: string) => (graph.joints ?? []).some((j) => (j.a.node === id || j.b.node === id) && mintedNames(j as never)(name));
+    for (const n of Object.values(graph.nodes)) {
+      if (REGISTRY_HARDWARE.has(n.kind)) continue;
+      for (const p of (n.contract.payload as CadContractPayload | undefined)?.ports ?? []) {
+        if (p.type !== "THREADED_HOLE" || mated.has(`${n.id}|${p.name}`) || minted(n.id, p.name)) continue;
+        problems.push(`${n.id}: tapped hole "${p.name}" (${p.params.thread ?? "?"}) has nothing threading into it. Mate the part that does: its THREADED_STUD port, or a catalog screw through a joint. A foot or knob with a stud is mated by its THREADED_STUD to this hole, not by a face.`);
+      }
+    }
+    return problems;
+  },
+};
+
+/** A round rod has no face on its side. The spaghetti shelf's rod declared six
+ *  FLAT_FACE ports on its curved surface, so its generator milled a flat down
+ *  the full 2.5m to give them one, and the flat's corners cut into every
+ *  bracket bore (10.7 mm³ each). A part that slides on a rod mates by a BORE
+ *  to a SHAFT station on the rod's axis. Slender cylinders only (length over
+ *  three diameters): a flat on a knob or a hub is a real feature. */
+export const cadRoundFaceLint = {
+  run(graph: GraphDoc): string[] {
+    const problems: string[] = [];
+    for (const n of Object.values(graph.nodes)) {
+      if (REGISTRY_HARDWARE.has(n.kind)) continue;
+      let prims: ReturnType<typeof posedEnvelope> = [];
+      try {
+        prims = posedEnvelope(graph, n.id, IDENTITY);
+      } catch {
+        continue;
+      }
+      const rods = prims.filter((b) => b.round && b.half[2] > 3 * b.half[0]);
+      if (!rods.length) continue;
+      for (const p of (n.contract.payload as CadContractPayload | undefined)?.ports ?? []) {
+        if (p.type !== "FLAT_FACE") continue;
+        let pose;
+        try {
+          pose = resolvePose(graph, p.pose);
+        } catch {
+          continue;
+        }
+        const zl = Math.hypot(...pose.zAxis) || 1;
+        const onSide = rods.some((b) => {
+          const d = pose.origin.map((v, i) => v - b.c[i]!);
+          const along = d.reduce((t, v, i) => t + v * b.axes[2][i]!, 0);
+          const radial = Math.hypot(...d.map((v, i) => v - along * b.axes[2][i]!));
+          const axial = Math.abs(pose.zAxis.reduce((t, v, i) => t + v * b.axes[2][i]!, 0)) / zl;
+          return Math.abs(along) < b.half[2] - 1 && Math.abs(radial - b.half[0]) < 1 && axial < 0.2;
+        });
+        if (onSide) {
+          problems.push(`${n.id}: FLAT_FACE port "${p.name}" sits on the curved side of a round rod, which has no face there; the generator would mill a flat to make one. A part that slides onto the rod mates by its BORE to a SHAFT station on the rod's axis (pose on the axis, +z along it, params.diameter = the rod Ø); for levels, one SHAFT port with repeat {count, step}.`);
+        }
+      }
+    }
+    return problems;
+  },
+};
+
+/** A bore a shaft slides through must be wider than the shaft, by the
+ *  process's slip, unless it declares its fit (then the probe grades it). */
+export const cadBoreShaftLint = {
+  run(graph: GraphDoc): string[] {
+    const problems: string[] = [];
+    const portOf = (id: string, name: string) =>
+      (graph.nodes[id]?.contract.payload as CadContractPayload | undefined)?.ports?.find((p) => p.name === name);
+    const dia = (p: { params: Record<string, unknown> }) => {
+      try {
+        return resolveDim(graph, (p.params.diameter ?? p.params.d) as never);
+      } catch {
+        return NaN;
+      }
+    };
+    for (const e of graph.edges) {
+      const ends = [[e.from, portOf(e.from, e.fromPort)], [e.to, portOf(e.to, e.toPort)]] as const;
+      const bore = ends.find(([, p]) => p?.type === "BORE");
+      const shaft = ends.find(([, p]) => p?.type === "SHAFT");
+      if (!bore || !shaft || bore[1]!.params.fit) continue;
+      const [b, sh] = [dia(bore[1]!), dia(shaft[1]!)];
+      if (!Number.isFinite(b) || !Number.isFinite(sh)) continue;
+      const machined = [bore[0], shaft[0]].some((id) => graph.nodes[id] && isMachined(sourcingOf(graph.nodes[id]!).process));
+      const need = machined ? 0 : FDM_SLIP_FIT_MM / 2;
+      if (b - sh < need - 1e-9) {
+        problems.push(`edge ${e.from}.${e.fromPort} → ${e.to}.${e.toPort}: ${bore[0]}.${bore[1]!.name} is Ø${b} on a Ø${sh} shaft, which cannot slide in. Cut it Ø${+(sh + (machined ? 0.02 : FDM_SLIP_FIT_MM)).toFixed(2)}, or declare {"diameter": ${sh}, "fit": "slip"} and let the probe grade it.`);
+      }
+    }
+    return problems;
+  },
+};
+
 export const cadMateConnectivityLint = {
   run(graph: GraphDoc): string[] {
     const ids = Object.keys(graph.nodes);
@@ -1308,12 +1452,12 @@ function cadPlanning(meshAvailable: boolean) {
     ],
     jointSchema: CadJoint,
     expandPlan: (out: ArchitectOutput, live?: Parameters<typeof expandJoints>[1]) =>
-      markCncSetups(mintDefaultGearPorts(expandJoints(mintNamedGearPorts(out), live))),
+      markCncSetups(mintDefaultGearPorts(expandJoints(mintNamedGearPorts(expandRepeats(out)), live))),
     autoFix: autoFixPlan,
     critic: {
       summarize: summarizeCadPlan,
       repairHint:
-        "Add a part the brief names as its own node, mated into the assembly. Add a motion or a piece of hardware the brief names (an axle, pin, bearing, gear pair, spring, screw) as a JOINT between the two parts it connects, with the motion it has and `prefer` naming that hardware, so plan expansion mints it. A joint whose hardware will not fit is fixed, never dropped.",
+        "A count short of the brief (six shelves, one placed): one node, wired once per position, or once to a port with repeat {count, step} on the part that holds it; what is mated only to a repeated part is copied with it, and the entry is placed once. Add a part the brief names as its own node, mated into the assembly. Add a motion or a piece of hardware the brief names (an axle, pin, bearing, gear pair, spring, screw) as a JOINT between the two parts it connects, with the motion it has and `prefer` naming that hardware, so plan expansion mints it. A joint whose hardware will not fit is fixed, never dropped.",
     },
     paramUnit: "mm",
     payloadSchema: CadContractPayload as z.ZodType<CadContractPayload>,
@@ -1329,6 +1473,10 @@ function cadPlanning(meshAvailable: boolean) {
       cadHardwareResolvesLint,
       cadHardwareSeatLint,
       cadMateConnectivityLint,
+      cadEntryOnceLint,
+      cadThreadPartnerLint,
+      cadRoundFaceLint,
+      cadBoreShaftLint,
       cadPlanGeometryLint,
       cadAssemblyPlanLint,
       meshSourceLint(meshAvailable),
@@ -1406,6 +1554,8 @@ function cadPlanning(meshAvailable: boolean) {
       "",
       "Hole-like ports (CLEARANCE_HOLE, BORE, SCREW_SEAT) MUST carry",
       '  params: {"diameter": <mm>} — that exact key; probes measure against it.',
+      '  A BORE a shaft or rod slides through may instead declare {"diameter": <the shaft Ø>,',
+      '  "fit": "slip"|"press"}: the probe then grades it on the fit band for its process.',
       "FLAT_FACE ports MUST carry params: {\"size\": <mm>} — the width of the flat",
       "  the mating part sits on (or {\"ring_diameter\": <mm>} for an annular seat).",
       "  A probe with no size to measure against cannot check the port at all.",
@@ -1423,6 +1573,9 @@ function cadPlanning(meshAvailable: boolean) {
       "  pattern does not assert that its holes pass through.",
       "HARDWARE HOST FEATURES, one per catalog part, all centred on the origin, axis on +z:",
       '  THREADED_HOLE {"thread": "M3", "depth"}: tapped into metal, cut at the tap drill.',
+      '  THREADED_STUD {"thread": "M8", "length"}: a MALE thread on a made part (a foot\'s stud, a',
+      "    spindle) standing out of its face along +z. Whatever threads into a THREADED_HOLE is a",
+      "    catalog screw, rod or stud, or a part with a THREADED_STUD mated to that hole.",
       '  INSERT_POCKET {"diameter", "depth"}: heat-set insert hole, cut depth+0.3, 1.2mm wall around it.',
       '  NUT_TRAP {"af", "depth", "entry": "axial"|"side"}: hex, a CORNER on xAxis; side entry opens toward +x.',
       '  COUNTERBORE {"diameter", "depth", "through_diameter"}: head recess over a through bore.',
@@ -1469,6 +1622,15 @@ function cadPlanning(meshAvailable: boolean) {
       "part needs only its single mating port. Edges onto DIFFERENT ports of the",
       "same node still mean one part held at two points, so do not reuse a port",
       "name to mean two features.",
+      "COPIES CARRY WHAT HANGS ON THEM: a part mated only to a repeated part (and",
+      "to what hangs below it) is placed on every copy, so a rod under each of",
+      "two brackets is one rod node with one edge. Levels and rows: give the",
+      "holding part ONE port with repeat {count, step} (a station every 400mm up",
+      "a post: repeat {count: 6, step: [0, 0, 400]}) and wire the repeated part",
+      "to it once; expansion makes <name>_1..<name>_N and an edge to each.",
+      "THE ENTRY IS PLACED ONCE: make the part that stands on the floor or holds",
+      "the rest (a frame, a base, a post) the entry, never a part the brief",
+      "asks for several of.",
       "Features repeated WITHIN one part — a bolt circle, four blades on a hub,",
       "a hole pattern — are not nodes at all: the generator writes a loop, and",
       "the contract declares them as one HOLE_PATTERN or BOSS_PATTERN port.",
@@ -1550,6 +1712,12 @@ function cadPlanning(meshAvailable: boolean) {
       "rules mint them, with ids like",
       "j1_screw. Hardware no joint owns must still be justified by a host port.",
       "",
+      "",
+      "A part CLAMPED ON A ROD or post (a bracket, a collar-held shelf, a lamp arm):",
+      "  a fixed joint with a = the rod at its SHAFT station (on the axis, +z along",
+      "  it), b = the part at its BORE, wallB = b's wall around the bore; toolFree:",
+      "  true when it is set by hand (a DIN 464 thumb screw), else a set screw; a",
+      "  medium load adds a DIN 705 collar under b. Never hand-wire the screw.",
       "",
       "Every hole or bore the brief states with a size is a declared port on",
       "its part (a BORE or CLEARANCE_HOLE at that Ø), joint or no joint.",

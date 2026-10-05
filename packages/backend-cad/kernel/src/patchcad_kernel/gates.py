@@ -1206,7 +1206,28 @@ DIAMETER_KEYS = ("diameter", "dia", "shaftDiameter", "shaft_diameter", "pegDiame
 LENGTH_KEYS = ("length", "len", "shaftLength", "shaft_length", "pegLength", "peg_length")
 
 
-def _probe_shaft(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
+def _probe_threaded_stud(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
+    """THREADED_STUD: a made part's male thread (a foot's stud, a knob's
+    spindle), measured as a peg. Its Ø is graded against the thread, not one
+    number: a modelled helix reads near the major Ø over a pitch window and a
+    plain cylinder may sit anywhere down to the pitch Ø, and both fit the
+    tapped hole they go into (cut at the tap drill: G5 allows that overlap
+    along the mate). The spaghetti shelf's foot had a stud and no port, so the
+    132 mm3 of thread in its rod read as a clash."""
+    from .meshpart import _catalog_threads
+
+    threads = {k.upper(): v for k, v in _catalog_threads().items()}
+    thread = str(port.get("params", {}).get("thread", "")).upper()
+    if thread not in threads:
+        raise GateError("G3", f'port "{port.get("key", "?")}" (THREADED_STUD) declares no known thread ({thread!r})',
+                        f"declare params.thread as one of {', '.join(threads)}")
+    major = float(thread[1:])
+    pitch_d = major - 0.6495 * float(threads[thread]["pitch"])
+    band = (pitch_d - 0.1, major + 0.1)
+    return _probe_shaft(shape, {**port, "params": {**port.get("params", {}), "diameter": major}}, band=band)
+
+
+def _probe_shaft(shape: Any, port: dict[str, Any], band: tuple[float, float] | None = None) -> dict[str, Any]:
     """SHAFT: a peg standing OUT of the mating face, the inverse of a hole.
 
     Emitted by the import path for every peg joint (main.ts), which never passes
@@ -1221,6 +1242,7 @@ def _probe_shaft(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     hole probe tolerates one at a mouth.
     """
     key = port.get("key", "?")
+    ptype = port.get("type", "SHAFT")
     d = _port_dim(port, DIAMETER_KEYS, "diameter",
                   "declare params.diameter in mm — the peg diameter at its base")
     declared_len = _port_dim_opt(port, LENGTH_KEYS)
@@ -1243,7 +1265,7 @@ def _probe_shaft(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
         if len(inner) < 6:
             raise GateError(
                 "G3",
-                f'port "{key}" (SHAFT): no material {near}mm out from the pose, so there is no peg',
+                f'port "{key}" ({ptype}): no material {near}mm out from the pose, so there is no peg',
                 f"grow a Ø{d:g} peg standing out of the mating face at the contract pose",
             )
         bore_r = sorted(inner)[len(inner) // 2]
@@ -1280,7 +1302,7 @@ def _probe_shaft(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
         # 200mm column declared 12mm passed with a shrug.
         raise GateError(
             "G3",
-            f'port "{key}" (SHAFT): material continues past {reach:.1f}mm, so this is not a {declared_len:g}mm peg',
+            f'port "{key}" ({ptype}): material continues past {reach:.1f}mm, so this is not a {declared_len:g}mm peg',
             f"the peg must end: build it {declared_len:g}mm long standing out of the mating face",
         )
 
@@ -1295,7 +1317,7 @@ def _probe_shaft(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     if declared_len and tip is not None and abs(tip - declared_len) > LENGTH_TOL_MM:
         raise GateError(
             "G3",
-            f'port "{key}" (SHAFT): expected length {declared_len:g}mm, material ends at {tip:.2f}mm',
+            f'port "{key}" ({ptype}): expected length {declared_len:g}mm, material ends at {tip:.2f}mm',
             f"build the peg {declared_len:g}mm long: short of that it misses its socket, "
             f"over it the joint bottoms out before seating",
             expected=declared_len, measured=round(tip, 3),
@@ -1324,7 +1346,7 @@ def _probe_shaft(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     if len(radii) < 8:
         raise GateError(
             "G3",
-            f'port "{key}" (SHAFT): could not measure a diameter, {len(radii)}/8 rays found an edge within {d * 2 + 4:.1f}mm',
+            f'port "{key}" ({ptype}): could not measure a diameter, {len(radii)}/8 rays found an edge within {d * 2 + 4:.1f}mm',
             "the peg must be a bounded solid standing proud of the face, not a merged mass",
         )
     radii.sort()
@@ -1338,13 +1360,21 @@ def _probe_shaft(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     if spread > 2 * DIAMETER_TOL_MM:
         raise GateError(
             "G3",
-            f'port "{key}" (SHAFT): not round, rays span Ø{2 * radii[0]:.2f} to Ø{2 * radii[-1]:.2f}',
+            f'port "{key}" ({ptype}): not round, rays span Ø{2 * radii[0]:.2f} to Ø{2 * radii[-1]:.2f}',
             "the peg must stand free of surrounding material, so a socket can receive it",
         )
-    if abs(measured - d) > DIAMETER_TOL_MM:
+    if band is not None:
+        if not band[0] <= measured <= band[1]:
+            raise GateError(
+                "G3",
+                f'port "{key}" ({port["type"]}): expected Ø{band[0]:.2f}..{band[1]:.2f} for {port.get("params", {}).get("thread", "the thread")}, measured Ø{measured:.2f}',
+                f"build the stud at the thread's major Ø{d:g} (a plain cylinder or a modelled thread), standing out of the face at the pose",
+                expected=round(sum(band) / 2, 3), measured=round(measured, 3),
+            )
+    elif abs(measured - d) > DIAMETER_TOL_MM:
         raise GateError(
             "G3",
-            f'port "{key}" (SHAFT): expected Ø{d:g}, measured Ø{measured:.2f}',
+            f'port "{key}" ({ptype}): expected Ø{d:g}, measured Ø{measured:.2f}',
             f"resize the peg to Ø{d:g} as pinned in the contract",
             expected=d, measured=round(measured, 3),
         )
@@ -2041,7 +2071,7 @@ PROBED_PORT_TYPES = (
     "GROOVE", "SLOT", "SHAFT", "HOLE_PATTERN", "BOSS_PATTERN",
     "THREADED_HOLE", "INSERT_POCKET", "NUT_TRAP", "COUNTERBORE", "COUNTERSINK", "DOWEL_HOLE",
     "BEARING_SEAT", "BUSHING_BORE", "MOTOR_MOUNT", "MAGNET_POCKET", "HUB_BORE",
-    "LINEAR_BEARING_SEAT", "CLIP_GROOVE", "RAIL_MOUNT",
+    "LINEAR_BEARING_SEAT", "CLIP_GROOVE", "RAIL_MOUNT", "THREADED_STUD",
 )
 
 
@@ -2051,6 +2081,12 @@ def _probe_port(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
         return _probe_pattern(shape, port, _probe_screw_hole)
     if ptype == "BOSS_PATTERN":
         return _probe_pattern(shape, port, _probe_boss)
+    if ptype == "BORE" and port.get("params", {}).get("fit") in ("press", "slip"):
+        # A bore that declares its fit is graded against the shaft's nominal Ø
+        # and the process's band, like the hardware seats: params.diameter is
+        # then the part that goes in, not the hole.
+        band = _fit_band(port, _port_diameter(port))
+        return _probe_hole(shape, {**port, "params": {**port["params"], "diameter": sum(band) / 2}}, band)
     if ptype in HOLE_LIKE:
         return _probe_hole(shape, port)
     if ptype == "FLAT_FACE":
@@ -2059,6 +2095,8 @@ def _probe_port(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
         return _probe_boss(shape, port)
     if ptype == "SHAFT":
         return _probe_shaft(shape, port)
+    if ptype == "THREADED_STUD":
+        return _probe_threaded_stud(shape, port)
     if ptype in CHANNEL_LIKE:
         return _probe_channel(shape, port)
     if ptype in HARDWARE_PROBES:

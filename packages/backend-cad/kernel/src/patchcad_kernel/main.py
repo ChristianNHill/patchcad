@@ -160,7 +160,11 @@ pool = None  # set at startup; parent process stays OCP-free
 # 23 -> 24: a HUB_BORE with params.depth (how far its shaft runs in) fails G3
 # when its blind floor is shallower: a knob's 10mm D-bore took a shaft cut to
 # run its full 24mm height, and only G5 saw the 93mm3 of tip in its material.
-GATES_VERSION = 24
+# 24 -> 25: THREADED_STUD, a made part's male thread, probed as a peg graded
+# against the thread's pitch..major Ø band (the spaghetti shelf's foot stud).
+# A BORE declaring params.fit (press|slip) is graded on that fit's band
+# around the shaft's nominal Ø, like a hardware seat.
+GATES_VERSION = 25
 # Tap drills and clearances come from the catalog, so a catalog edit changes
 # verdicts too. Keyed by content, not by remembering to bump GATES_VERSION.
 CATALOG_DIGEST = hashlib.sha256(
@@ -553,7 +557,7 @@ class InstructionsBody(BaseModel):
 async def instructions_endpoint(body: InstructionsBody):
     """Step pictures, the hardware page and every page as SVG, the PDF and an
     HTML copy, cached by everything that draws them."""
-    digest = job_hash("instructions-v2", [p.model_dump() for p in body.parts], body.import_dir,
+    digest = job_hash("instructions-v3", [p.model_dump() for p in body.parts], body.import_dir,
                       import_stamp(body.import_dir, *(p.code for p in body.parts)), body.document)
     out_dir = CACHE_ROOT / digest
     meta_file = out_dir / "instructions.json"

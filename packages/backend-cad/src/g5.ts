@@ -154,6 +154,24 @@ export function threadAllowances(graph: GraphDoc): { a: string; b: string; volum
       if (depths.length) out.push({ a: screw.id, b: hostId, volume_mm3: allow(Math.max(...depths)) });
     }
   }
+  // A made part's male thread (THREADED_STUD) shares material with what it
+  // threads into, mated by its own edge: a tapped hole on another part, a
+  // catalog nut or insert (the spaghetti shelf's foot in its rod: 132 mm³).
+  for (const e of graph.edges) {
+    const ends = [[e.from, e.fromPort], [e.to, e.toPort]] as const;
+    const stud = ends.map(([id, port]) => ({ id, port: graph.nodes[id] && portOf(graph.nodes[id]!, port) })).find((x) => x.port?.type === "THREADED_STUD");
+    if (!stud) continue;
+    const [otherId, otherPort] = ends.find(([id]) => id !== stud.id) ?? [];
+    const other = otherId ? graph.nodes[otherId] : undefined;
+    const thread = String(stud.port!.params.thread ?? "");
+    if (!other || !METRIC[thread] || out.some((x) => [x.a, x.b].includes(stud.id) && [x.a, x.b].includes(other.id))) continue;
+    const hole = portOf(other, otherPort!);
+    const len = [stud.port!.params.length, hole && THREADED_PORTS.has(hole.type) ? hole.params.depth : undefined, other.kind === "nut" || other.kind === "insert" ? engagementLength(other.kind, thread, skuOf(other)?.family, num(graph, param(other, "length"))) ?? undefined : undefined]
+      .map((v) => (v === undefined || v === null ? NaN : num(graph, v as number | string)))
+      .filter(Number.isFinite);
+    if (!len.length || !(hole && THREADED_PORTS.has(hole.type)) && other.kind !== "nut" && other.kind !== "insert") continue;
+    out.push({ a: stud.id, b: other.id, volume_mm3: threadEngagementVolume(thread, Math.min(...len)) * 1.5 });
+  }
   return out;
 }
 
@@ -351,7 +369,17 @@ export function fitFindings(graph: GraphDoc): CheckFinding[] {
       outer = diameterOf(graph, bore.n, bore.port!);
       if (!s || !outer) continue;
       inner = s.d;
-      expected = FDM_SLIP_FIT_MM / 2;
+      // A declared fit, or a machined pair, takes its process's band (radial:
+      // half the Ø band); a plain printed bore keeps the FDM slip allowance.
+      const machined = isMachined(sourcingOf(bore.n).process) || isMachined(sourcingOf(shaft.n).process);
+      const fit = bore.port!.params.fit === "press" ? "press" : bore.port!.params.fit === "slip" || machined ? "slip" : undefined;
+      if (fit) {
+        const [lo, hi] = (machined ? MACHINED_FIT_BANDS_MM : FDM_FIT_BANDS_MM)[fit];
+        [expected, tol] = [Math.round(((lo + hi) / 4) * 1e4) / 1e4, Math.round(((hi - lo) / 4) * 1e4) / 1e4 + 0.01];
+        // A fitted bore declares the shaft's nominal Ø; unmeasured, it is
+        // taken at the middle of its band, as a seat is.
+        if (bore.port!.params.fit && !outer.measured) outer = { d: outer.d + 2 * expected, measured: false };
+      } else expected = FDM_SLIP_FIT_MM / 2;
       what = `${shaft.n.id}.${shaft.port!.name} Ø${inner.toFixed(2)} in ${bore.n.id}.${bore.port!.name}`;
     } else if (screw && hole && screw !== hole) {
       const thread = threadOf(screw.n);

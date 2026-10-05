@@ -168,6 +168,30 @@ describe("resolveHardware", () => {
     expect(resolveHardware(node({ kind: "threaded_rod", params: { thread: "M4" } }))).not.toContain("IsoThread");
   });
 
+  it("builds thumb screws, set screws and wing nuts from their SKUs in the screw and nut frames", () => {
+    // DIN 464 M4: collar Ø8 × 3.5 on the seat, knurl Ø16 up to h 9.5, thread -z.
+    const thumb = resolveHardware(node({ params: { sku: "DIN464-M4x10" } }))!;
+    expect(thumb).toContain('p.get("length", 10)');
+    expect(thumb).toContain("collar = Pos(0, 0, 1.75) * Cylinder(4, 3.5)");
+    expect(thumb).toContain("knurl = Pos(0, 0, 3.5) * extrude(Polygon(*pts, align=None), 6)");
+    expect(thumb).toContain("shank = Pos(0, 0, -L / 2) * Cylinder(2, L)");
+    // ISO 4026 M5: flush plane on z = 0, 2.5 socket 2 deep, 0.75 point chamfer to Ø3.5 at -L.
+    const set = resolveHardware(node({ params: { sku: "ISO4026-M5x8" } }))!;
+    expect(set).toContain('p.get("length", 8)');
+    expect(set).toContain("point = Pos(0, 0, -L + 0.375) * Cone(1.75, 2.5, 0.75)");
+    expect(set).toContain("Pos(0, 0, -2) * extrude(RegularPolygon(2.5 / math.sqrt(3), 6), 2.01)");
+    // DIN 315 M6: hub Ø13 → Ø11 over 8, wings to ±16.5 and h 17, tapped Ø5 through.
+    const wing = resolveHardware(node({ kind: "nut", params: { sku: "DIN315-M6" } }))!;
+    expect(wing).toContain("hub = Pos(0, 0, 4) * Cone(6.5, 5.5, 8)");
+    expect(wing).toContain("(16.5, 17)");
+    expect(wing).toContain("(-16.5, 17)");
+    expect(wing).toContain("Cylinder(5 / 2, 34)");
+    // By thread alone a fastener is still an SHCS and a nut still a hex nut.
+    expect(skuOf(node({ kind: "nut", params: { thread: "M6" } }))?.family).toBe("hex_nut");
+    expect(skuOf(node({ kind: "nut", params: { sku: "DIN315-M6" } }))?.family).toBe("wing_nut");
+    expect(skuOf(node({ params: { sku: "ISO4026-M3x3" } }))).toMatchObject({ family: "set_screw", key: "M3", length: 3 });
+  });
+
   it("takes the thread from live params first, contract default second", () => {
     expect(resolveHardware(node({ kind: "nut", params: { thread: "M5" } }))).toContain(
       `${METRIC.M5!.nutAf}`,

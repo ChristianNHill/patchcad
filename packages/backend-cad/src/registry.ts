@@ -127,6 +127,46 @@ export function screwCode(family: string, thread: string, defaultLength = 12): s
 }
 
 /**
+ * DIN 464 knurled thumb screw, framed like an SHCS: the collar's underside is
+ * the seat on z = 0, collar then knurled head running +z to the overall head
+ * height, and the thread (a plain cylinder at the major Ø, as screwCode's
+ * shank) hanging -z for `length`. The knurl is a straight knurl drawn as a
+ * star polygon about a 1.2 mm pitch, ridges on the table's dk.
+ */
+export function thumbScrewCode(thread: string, defaultLength: number): string {
+  const r = familyDims("thumb_screw", thread)!;
+  const d = major(thread);
+  const [dk, h, ds, k] = [dim(r, "headD"), dim(r, "headH"), dim(r, "collarD"), dim(r, "collarH")];
+  const ridges = Math.round((Math.PI * dk) / 1.2);
+  return module(`    L = p.get("length", ${defaultLength})
+    pts = [((${dk / 2} - (i % 2) * ${(dk * 0.025).toFixed(3)}) * math.cos(i * math.pi / ${ridges}), (${dk / 2} - (i % 2) * ${(dk * 0.025).toFixed(3)}) * math.sin(i * math.pi / ${ridges})) for i in range(${2 * ridges})]
+    collar = Pos(0, 0, ${k / 2}) * Cylinder(${ds / 2}, ${k})
+    knurl = Pos(0, 0, ${k}) * extrude(Polygon(*pts, align=None), ${h - k})
+    shank = Pos(0, 0, -L / 2) * Cylinder(${d / 2}, L)
+    return collar + knurl + shank
+`);
+}
+
+/**
+ * ISO 4026 flat-point set screw. It has no head and so no seat: like the csk
+ * its frame is the FLUSH plane, the socket end on z = 0 and the body running
+ * -z for `length` (overall), so a set screw mated at a tapped hole's mouth
+ * sits flush with it. The point is a 45° chamfer from the thread Ø (major,
+ * as screwCode's shank) down to dp at z = -length.
+ */
+export function setScrewCode(thread: string, defaultLength: number): string {
+  const r = familyDims("set_screw", thread)!;
+  const d = major(thread);
+  const dp = dim(r, "pointD");
+  const c = (d - dp) / 2;
+  return module(`    L = p.get("length", ${defaultLength})
+    body = Pos(0, 0, -(L - ${c}) / 2) * Cylinder(${d / 2}, L - ${c})
+    point = Pos(0, 0, -L + ${c / 2}) * Cone(${dp / 2}, ${d / 2}, ${c})
+    return body + point - ${socket(dim(r, "socketAf"), 0, dim(r, "socketDepth"))}
+`);
+}
+
+/**
  * Hex nut, seating face on z = 0 and body running +z — the same datum the
  * screw head uses, so a nut mates onto a surface the same way.
  *
@@ -140,6 +180,27 @@ export function nutCode(thread: string): string {
   return module(`    body = extrude(RegularPolygon(${af} / math.sqrt(3), 6), ${h})
     bore = Pos(0, 0, ${h} / 2) * Cylinder(${tap(thread)} / 2, ${h} * 2)
     return body - bore
+`);
+}
+
+/**
+ * DIN 315 wing nut, framed like the hex nut: the hub's bearing face on z = 0,
+ * body running +z. The hub is a cone from d2 at the seat to d3 at its top
+ * (hub height m); the two wings are one wingT-thick plate in the xz plane,
+ * spanning e along x and rising to the overall height h. Tapped bore at the
+ * tap drill Ø, as nutCode's.
+ */
+export function wingNutCode(thread: string): string {
+  const r = familyDims("wing_nut", thread)!;
+  const [e, h, d2, d3, m, t] = ["span", "height", "hubD", "hubTopD", "hubH", "wingT"].map((k) => dim(r, k)) as [number, number, number, number, number, number];
+  const r0 = d3 / 4;
+  const tip = e / 2 - (e / 2 - r0) * 0.45;
+  const wing = [[r0, m * 0.3], [e / 2, h * 0.45], [e / 2, h], [tip, h], [r0, m]];
+  const pts = (sx: number) => wing.map(([x, z]) => `(${Math.round(sx * x! * 1000) / 1000}, ${Math.round(z! * 1000) / 1000})`).join(", ");
+  const plate = (sx: number) => `extrude(Plane.XZ * Polygon(${pts(sx)}, align=None), amount=${t / 2}, both=True)`;
+  return module(`    hub = Pos(0, 0, ${m / 2}) * Cone(${d2 / 2}, ${d3 / 2}, ${m})
+    body = hub + ${plate(1)} + ${plate(-1)}
+    return body - Pos(0, 0, ${h / 2}) * Cylinder(${tap(thread)} / 2, ${h * 2})
 `);
 }
 
@@ -687,7 +748,10 @@ const CODEGEN: Record<string, (key: string, sku: Sku, fit: number) => string> = 
   shcs: (k, s) => screwCode("shcs", k, lengthOf("shcs", k, s)),
   button: (k, s) => screwCode("button", k, lengthOf("button", k, s)),
   csk: (k, s) => screwCode("csk", k, lengthOf("csk", k, s)),
+  thumb_screw: (k, s) => thumbScrewCode(k, lengthOf("thumb_screw", k, s)),
+  set_screw: (k, s) => setScrewCode(k, lengthOf("set_screw", k, s)),
   hex_nut: (k) => nutCode(k),
+  wing_nut: (k) => wingNutCode(k),
   heatset_std: (k) => insertCode(k, "heatset_std"),
   heatset_short: (k) => insertCode(k, "heatset_short"),
   wood_insert: (k, s) => woodInsertCode(k, lengthOf("wood_insert", k, s)),

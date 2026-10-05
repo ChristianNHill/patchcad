@@ -4,6 +4,7 @@ import { solveAssembly, type AssemblyNode } from "./assembly.js";
 import { graphMates, isJointHardware } from "./expand.js";
 import { resolvePose } from "./bindings.js";
 import { CATALOG, skuFor, type Sku } from "./catalog.js";
+import { designationOf, gearDesignation, orderLinks, type OrderLink } from "./ordering.js";
 import { skuOf } from "./registry.js";
 import { sourcingOf } from "./sourcing.js";
 
@@ -19,7 +20,6 @@ import { sourcingOf } from "./sourcing.js";
  * screws through one seat are one row of four.
  */
 
-export const UNVERIFIED_PN = "unverified — order by standard";
 const FILAMENT_D_MM = 1.75;
 
 /** g/cm³, first match wins; printed parts default to PLA. */
@@ -51,9 +51,12 @@ export interface BuyRow {
   sku: string;
   description: string;
   standard: string;
+  /** What to ask a supplier for: "ISO 4762 M3×12 socket head cap screw". */
+  designation: string;
   qty: number;
   nodes: string[];
-  vendors: { vendor: string; pn: string; url: string }[] | typeof UNVERIFIED_PN;
+  /** Verified vendor entries (PN + date) first, then labelled search links. */
+  orderFrom: OrderLink[];
 }
 
 interface MadeRow {
@@ -140,19 +143,29 @@ function gearRow(node: NodeRecord): Omit<BuyRow, "qty" | "nodes"> | null {
   const sku = node.kind === "gear" ? skuFor("spur_gear", `m${param("module")}`) : undefined;
   if (!sku) return null;
   const z = param("teeth");
-  return { sku: `${sku.id}-z${z}`, description: `spur_gear ${sku.key} z${z}`, standard: CATALOG.families.spur_gear!.standard ?? "—", vendors: UNVERIFIED_PN };
+  const designation = gearDesignation(param("module"), z);
+  return {
+    sku: `${sku.id}-z${z}`,
+    description: `spur_gear ${sku.key} z${z}`,
+    standard: CATALOG.families.spur_gear!.standard ?? "—",
+    designation,
+    orderFrom: orderLinks(null, "spur_gear", designation),
+  };
 }
 
 export function buyRow(node: NodeRecord): Omit<BuyRow, "qty" | "nodes"> {
   const sku = skuAtLength(node);
-  if (!sku) return gearRow(node) ?? { sku: node.kind, description: node.title, standard: "—", vendors: UNVERIFIED_PN };
+  if (!sku) {
+    return gearRow(node) ?? { sku: node.kind, description: node.title, standard: "—", designation: node.title, orderFrom: orderLinks(null, undefined, node.title) };
+  }
   const family = CATALOG.families[sku.family]!;
-  const vendors = Object.entries(sku.vendors ?? {}).map(([vendor, v]) => ({ vendor, pn: v.pn, url: v.url }));
+  const designation = designationOf(node, sku);
   return {
     sku: sku.id,
     description: `${sku.family} ${sku.key}${sku.length !== undefined ? `×${sku.length}` : ""}${sku.material ? `, ${sku.material}` : ""}`,
     standard: family.standard ?? `none (${family.dimsSource} dims)`,
-    vendors: vendors.length > 0 ? vendors : UNVERIFIED_PN,
+    designation,
+    orderFrom: orderLinks(sku, sku.family, designation),
   };
 }
 
@@ -209,19 +222,26 @@ const csvCell = (v: unknown) => {
 
 /** One table, three sections, then what is unverified or was never generated. */
 export function bomCsv(bom: Bom): string {
-  const head = ["section", "item", "description", "standard", "process", "material", "qty", "volume_mm3", "mass_g", "filament_m", "vendors", "vendor_package", "status"];
+  const head = [
+    "section", "item", "description", "designation", "standard", "process", "material", "qty", "volume_mm3", "mass_g", "filament_m",
+    "verified_pn", "search_link", "vendor_package", "status",
+  ];
   const rows: unknown[][] = [
-    ...bom.buy.map((r) => [
-      "buy", r.sku, r.description, r.standard, "", "", r.qty, "", "", "",
-      typeof r.vendors === "string" ? r.vendors : r.vendors.map((v) => `${v.vendor} ${v.pn}`).join("; "), "", "generated",
-    ]),
-    ...bom.print.map((r) => ["print", r.nodeId, r.title, "", r.process, r.material, r.qty, r.volumeMm3, r.massG, r.filamentM, "", "", "generated"]),
+    ...bom.buy.map((r) => {
+      const verified = r.orderFrom.filter((o) => o.kind === "verified").map((o) => `${o.vendor} ${o.pn} (verified ${o.verifiedAt})`);
+      const search = r.orderFrom.find((o) => o.kind === "search");
+      return [
+        "buy", r.sku, r.description, r.designation, r.standard, "", "", r.qty, "", "", "",
+        verified.join("; "), search ? search.url : "", "", "generated",
+      ];
+    }),
+    ...bom.print.map((r) => ["print", r.nodeId, r.title, "", "", r.process, r.material, r.qty, r.volumeMm3, r.massG, r.filamentM, "", "", "", "generated"]),
     ...bom.fabricate.map((r) => [
-      "fabricate", r.nodeId, r.title, "", r.process, r.material, r.qty, r.volumeMm3, r.massG, "", "",
+      "fabricate", r.nodeId, r.title, "", "", r.process, r.material, r.qty, r.volumeMm3, r.massG, "", "", "",
       r.vendorPackage ?? "", r.ready ? "custom — send to vendor" : "gates not passed",
     ]),
-    ...bom.unverified.map((r) => [r.class, r.nodeId, r.title, "", r.process, "", "", "", "", "", "", "", `unverified candidate — failed ${r.failedStage}`]),
-    ...bom.notGenerated.map((r) => [r.class, r.nodeId, r.title, "", "", "", "", "", "", "", "", "", `not generated (${r.status})`]),
+    ...bom.unverified.map((r) => [r.class, r.nodeId, r.title, "", "", r.process, "", "", "", "", "", "", "", "", `unverified candidate — failed ${r.failedStage}`]),
+    ...bom.notGenerated.map((r) => [r.class, r.nodeId, r.title, "", "", "", "", "", "", "", "", "", "", "", `not generated (${r.status})`]),
   ];
   return [head, ...rows].map((r) => r.map(csvCell).join(",")).join("\n") + "\n";
 }

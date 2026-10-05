@@ -1072,6 +1072,8 @@ def build(p):
             for sy in (-15.5, 15.5):
                 part = part - bore(3.4, 20, sx, sy)
         return part
+    if k == "stud":
+        return part + Pos(0, 0, top + p.length / 2) * Cylinder(p.d / 2, p.length)
     if k == "dbore":
         return part - (Pos(0, 0, top - 5) * Cylinder(p.d / 2, 10) & Pos(p.flat - 10, 0, top - 5) * Box(20, 20, 10))
     if k == "groove":
@@ -1126,6 +1128,12 @@ def build(p):
         ("LINEAR_BEARING_SEAT shorter than its bushing", {"case": "seat", "d": 11.95, "depth": 15, "lip": 8}, "LINEAR_BEARING_SEAT", {"od": 12, "length": 19, "fit": "press"}, "the seat is 15.00mm deep"),
         ("CLIP_GROOVE Ø4 e-clip groove on a Ø5 shaft", {"case": "groove", "d": 4, "w": 0.74, "at": 0}, "CLIP_GROOVE", {"diameter": 4, "width": 0.74, "shaft_diameter": 5}, None),
         ("CLIP_GROOVE 0.3mm off its place", {"case": "groove", "d": 4, "w": 0.74, "at": 0.3}, "CLIP_GROOVE", {"diameter": 4, "width": 0.74, "shaft_diameter": 5}, "groove's middle"),
+        ("THREADED_STUD M8 at major Ø", {"case": "stud", "d": 7.8, "length": 20}, "THREADED_STUD", {"thread": "M8", "length": 20}, None),
+        ("THREADED_STUD M8 at pitch Ø", {"case": "stud", "d": 7.3, "length": 20}, "THREADED_STUD", {"thread": "M8", "length": 20}, None),
+        ("THREADED_STUD too thin for M8", {"case": "stud", "d": 6, "length": 20}, "THREADED_STUD", {"thread": "M8", "length": 20}, "for M8, measured Ø6.00"),
+        ("THREADED_STUD shorter than declared", {"case": "stud", "d": 7.8, "length": 12}, "THREADED_STUD", {"thread": "M8", "length": 20}, "expected length 20"),
+        ("BORE slip fit on Ø16", {"case": "tap", "d": 16.15, "depth": 20}, "BORE", {"diameter": 16, "fit": "slip"}, None),
+        ("BORE slip fit cut at the shaft's Ø", {"case": "tap", "d": 16.0, "depth": 20}, "BORE", {"diameter": 16, "fit": "slip"}, "expected Ø16.05..16.25"),
         ("RAIL_MOUNT MGN9 land, five holes at 20", {"case": "rail"}, "RAIL_MOUNT", {"width": 9, "length": 100, "pitch": 20, "count": 5, "hole_diameter": 4, "depth": 6}, None),
         ("RAIL_MOUNT declared on a 25 pitch", {"case": "rail"}, "RAIL_MOUNT", {"width": 9, "length": 100, "pitch": 25, "count": 5, "hole_diameter": 4, "depth": 6}, "member"),
     ]:
@@ -2046,6 +2054,17 @@ def instructions(client: httpx.Client) -> None:
     check("instructions: the step picture is a PNG", picture is not None and picture.content[:4] == b"\x89PNG")
     again = client.post("/instructions/document", json=body).json()
     check("instructions: the same document is a cache hit", again.get("cached") is True and again.get("pdf") == first.get("pdf"))
+    search = "https://www.mcmaster.com/6%20mm%20pin"
+    ordered = {**document, "order": [{"id": "PIN-6x12", "designation": "Ø6×12 pin", "qty": 1,
+                                      "links": [{"vendor": "McMaster-Carr", "url": search, "kind": "search"}]}]}
+    with_order = client.post("/instructions/document", json={**body, "document": ordered}, timeout=120).json()
+    order_pages = with_order.get("pages") or []
+    last = client.get(order_pages[-1]).text if order_pages else ""
+    pdf_bytes = client.get(with_order.get("pdf", "/none")).content
+    check("instructions: bought parts end on a 'Where to order' page, its search links live in the SVG and the PDF",
+          len(order_pages) == 4 and "Where to order" in last and f'href="{search}"' in last
+          and "Search McMaster-Carr" in last and b"/URI" in pdf_bytes,
+          str(with_order)[:300])
     check("instructions: only instruction files are served from the cache directory",
           client.get(pages[0].replace("page-1.svg", "instructions.json")).status_code == 404 if pages else False)
 

@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "notes": {
+    "purpose": "where to SEARCH for a bought part by its standard designation. A search link is never a product: a part number appears only from a catalog sku's verified vendor entry (hardware.json skus[].vendors).",
+    "templates": "{q} is replaced by the URL-encoded search terms. Each template is the vendor's own site-search URL form, checked 2026-10-04 against a URL the vendor itself serves; nothing is fetched or scraped at run time.",
+    "order": "a group lists its suppliers best-fit first and a general marketplace last."
+  },
+  "vendors": {
+    "mcmaster": { "name": "McMaster-Carr", "search": "https://www.mcmaster.com/{q}" },
+    "misumi": { "name": "MISUMI", "search": "https://us.misumi-ec.com/vona2/result/?Keyword={q}" },
+    "vxb": { "name": "VXB Bearings", "search": "https://vxb.com/search?q={q}" },
+    "cnckitchen": { "name": "CNC Kitchen", "search": "https://cnckitchen.store/search?q={q}" },
+    "stepperonline": { "name": "StepperOnline", "search": "https://www.omc-stepperonline.com/index.php?route=product/search&search={q}" },
+    "pololu": { "name": "Pololu", "search": "https://www.pololu.com/search?query={q}" },
+    "adafruit": { "name": "Adafruit", "search": "https://www.adafruit.com/search?q={q}" },
+    "digikey": { "name": "Digi-Key", "search": "https://www.digikey.com/en/products/result?keywords={q}" },
+    "amazon": { "name": "Amazon", "search": "https://www.amazon.com/s?k={q}" }
+  },
+  "groups": {
+    "fasteners": ["mcmaster", "misumi", "amazon"],
+    "nuts_washers": ["mcmaster", "misumi", "amazon"],
+    "inserts": ["cnckitchen", "mcmaster", "amazon"],
+    "wood_fasteners": ["mcmaster", "amazon"],
+    "bearings": ["vxb", "mcmaster", "misumi", "amazon"],
+    "shafts": ["misumi", "mcmaster", "amazon"],
+    "motion": ["misumi", "mcmaster", "amazon"],
+    "transmission": ["misumi", "mcmaster", "amazon"],
+    "steppers": ["stepperonline", "pololu", "digikey", "amazon"],
+    "motors": ["pololu", "digikey", "amazon"],
+    "servos": ["pololu", "adafruit", "amazon"],
+    "magnets": ["mcmaster", "misumi", "amazon"],
+    "seals": ["mcmaster", "misumi", "amazon"],
+    "standoffs": ["digikey", "mcmaster", "amazon"],
+    "filament": ["mcmaster", "amazon"],
+    "general": ["mcmaster", "amazon"]
+  },
+  "byCategory": {
+    "fasteners": "fasteners",
+    "bearings": "bearings",
+    "plain_bearings": "bearings",
+    "shafts": "shafts",
+    "linear": "motion",
+    "transmission": "transmission",
+    "motors": "motors",
+    "misc": "general"
+  },
+  "byFamily": {
+    "hex_nut": "nuts_washers",
+    "washer": "nuts_washers",
+    "eclip": "nuts_washers",
+    "heatset_std": "inserts",
+    "heatset_short": "inserts",
+    "wood_insert": "wood_fasteners",
+    "wood_dowel": "wood_fasteners",
+    "confirmat": "wood_fasteners",
+    "chipboard": "wood_fasteners",
+    "cam_lock": "wood_fasteners",
+    "cam_bolt": "wood_fasteners",
+    "dowel_screw": "wood_fasteners",
+    "wire_nail": "wood_fasteners",
+    "filament_pin": "filament",
+    "nema17": "steppers",
+    "nema14": "steppers",
+    "sg90": "servos",
+    "mg996r": "servos",
+    "sts3215": "servos",
+    "disc_magnet": "magnets",
+    "oring": "seals",
+    "standoff": "standoffs"
+  }
+}

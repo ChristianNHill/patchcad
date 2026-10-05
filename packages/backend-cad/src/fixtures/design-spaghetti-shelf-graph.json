@@ -1,0 +1,1743 @@
+{
+ "schemaVersion": 1,
+ "id": "eval-design-spaghetti-shelf",
+ "backend": "cad",
+ "brief": {
+  "goal": "a tall open shelving unit after the Spaghetti Shelf System by Frederik Fialin, 1200mm wide, 370mm deep and 2500mm tall: four vertical 16mm stainless steel rods, 800mm apart along the width and 300mm apart front to back, each standing on a small levelling foot; six 1200x370x18mm okoume plywood shelves evenly spaced from 300mm up to 2300mm, overhanging the rods by 200mm at each end. Each shelf rests on two stainless cross brackets, a flat bar running front to back under the shelf with a clamp block at each end gripping a rod by a hand-tightened thumb screw, so the levels can be moved and the unit taken apart without tools.",
+  "design": "Quiet minimalist furniture after Fialin's Spaghetti shelf: slender brushed-stainless lines against warm, flat plywood. Steel parts get small crisp chamfers and no decoration. Plywood edges get a light eased round so the laminations read cleanly. Everything should look deliberately thin and light, never chunky.",
+  "refs": []
+ },
+ "nodes": {
+  "shelf": {
+   "id": "shelf",
+   "kind": "part",
+   "title": "Okoume plywood shelf",
+   "spec": "Flat 1200x370x18 okoume plywood board, CNC-routed; six are made, one per level, evenly spaced 400 mm apart from 300 mm to 2300 mm. Four through holes let the steel rods pass on an 800 x 300 grid, leaving 200 mm overhang at each end. It rests loose on two stainless cross brackets and lifts off without tools.",
+   "contract": {
+    "name": "Shelf",
+    "summary": "1200x370x18 plywood board with four \u00d818 rod holes on an 800x300 grid. Two bracket seats on its underside at x = \u00b1400.",
+    "params": [
+     {
+      "type": "number",
+      "name": "width",
+      "description": "shelf length side to side",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 1200,
+      "min": 600,
+      "max": 1800
+     },
+     {
+      "type": "number",
+      "name": "depth",
+      "description": "shelf depth front to back",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 370,
+      "min": 250,
+      "max": 500
+     },
+     {
+      "type": "number",
+      "name": "thickness",
+      "description": "plywood sheet thickness",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 18,
+      "min": 12,
+      "max": 25
+     },
+     {
+      "type": "number",
+      "name": "rod_span_x",
+      "description": "distance between the left and right rod pairs",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 800,
+      "min": 400,
+      "max": 1400
+     },
+     {
+      "type": "number",
+      "name": "rod_span_y",
+      "description": "distance between the front and back rods",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 300,
+      "min": 200,
+      "max": 440
+     },
+     {
+      "type": "number",
+      "name": "rod_hole",
+      "description": "diameter of the holes the rods pass through",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 18,
+      "min": 16.5,
+      "max": 24
+     }
+    ],
+    "provides": [
+     {
+      "key": "bracket_seat_l",
+      "type": "FLAT_FACE",
+      "description": "underside strip over the left rod pair"
+     },
+     {
+      "key": "bracket_seat_r",
+      "type": "FLAT_FACE",
+      "description": "underside strip over the right rod pair"
+     }
+    ],
+    "requires": [],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "CNC",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "bracket_seat_l",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "-param(shelf.rod_span_x) / 2",
+         0,
+         "-param(shelf.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "size": 25
+       }
+      },
+      {
+       "name": "bracket_seat_r",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(shelf.rod_span_x) / 2",
+         0,
+         "-param(shelf.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "size": 25
+       }
+      },
+      {
+       "name": "rod_holes",
+       "type": "HOLE_PATTERN",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "param(shelf.thickness) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(shelf.rod_hole)",
+        "nx": 2,
+        "ny": 2,
+        "pitch_x": "param(shelf.rod_span_x)",
+        "pitch_y": "param(shelf.rod_span_y)"
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "box",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "dims": [
+         "param(shelf.width)",
+         "param(shelf.depth)",
+         "param(shelf.thickness)"
+        ]
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {},
+     "visualChecks": [
+      "Is the part a single flat rectangular board?",
+      "Are there exactly four round holes through the board, arranged in a rectangle?",
+      "Do the holes sit well in from the short ends, leaving a long overhang at each end?"
+     ],
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "x",
+       "min": 1199.5,
+       "max": 1200.5
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "y",
+       "min": 369.5,
+       "max": 370.5
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "z",
+       "min": 17.5,
+       "max": 18.5
+      }
+     ],
+     "sourcing": {
+      "class": "fabricate",
+      "process": "cnc",
+      "material": "18mm okoume plywood",
+      "finish": "clear hardwax oil",
+      "qty": 6
+     }
+    },
+    "hash": "82e67891160e262c"
+   },
+   "params": {},
+   "hidden": false,
+   "artifact": {
+    "code": "# stripped\n",
+    "testCode": "",
+    "hash": "7ef5c4bc6d935b3d"
+   },
+   "thread": [],
+   "status": "ready",
+   "measurements": {
+    "version": 1,
+    "paramsHash": "08f44b07b5901a25",
+    "data": {
+     "volume_mm3": 7970615.662111244,
+     "area_mm2": 942463.750773463,
+     "solids": 1,
+     "shells": [
+      1
+     ],
+     "bbox": {
+      "min": [
+       -600,
+       -185,
+       -9
+      ],
+      "max": [
+       600,
+       185,
+       9
+      ],
+      "size": [
+       1200,
+       370,
+       18
+      ]
+     },
+     "printability": {
+      "min_wall": {
+       "thin_wall_p2_mm": 18,
+       "index": 1,
+       "recommended_mm": 0.8
+      },
+      "overhang": {
+       "warn_area_fraction": 0.0012,
+       "fail_area_fraction": 0.0001,
+       "index": 0.999
+      },
+      "composite": 0.999
+     },
+     "ports": [
+      {
+       "key": "bracket_seat_l",
+       "type": "FLAT_FACE",
+       "probed_size": 25
+      },
+      {
+       "key": "bracket_seat_r",
+       "type": "FLAT_FACE",
+       "probed_size": 25
+      },
+      {
+       "key": "rod_holes",
+       "type": "HOLE_PATTERN",
+       "count": 4,
+       "members": [
+        {
+         "key": "rod_holes #1/4",
+         "type": "HOLE_PATTERN",
+         "measured_diameter": 18,
+         "center_offset": 0,
+         "tilt_deg": 0,
+         "through": true
+        },
+        {
+         "key": "rod_holes #2/4",
+         "type": "HOLE_PATTERN",
+         "measured_diameter": 18,
+         "center_offset": 0,
+         "tilt_deg": 0,
+         "through": true
+        },
+        {
+         "key": "rod_holes #3/4",
+         "type": "HOLE_PATTERN",
+         "measured_diameter": 18,
+         "center_offset": 0,
+         "tilt_deg": 0,
+         "through": true
+        },
+        {
+         "key": "rod_holes #4/4",
+         "type": "HOLE_PATTERN",
+         "measured_diameter": 18,
+         "center_offset": 0,
+         "tilt_deg": 0,
+         "through": true
+        }
+       ]
+      }
+     ],
+     "envelope": {
+      "vertices_checked": 7666,
+      "violations": 0
+     },
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "x",
+       "measured": 1200
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "y",
+       "measured": 370
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "z",
+       "measured": 18
+      }
+     ],
+     "process": {
+      "kind": "cnc",
+      "tool_radius": 1.5,
+      "sharp_internal_corners": 0,
+      "pockets": 0,
+      "undercut_area_mm2": 0
+     }
+    }
+   },
+   "version": 1,
+   "history": [],
+   "cost": {
+    "calls": 3,
+    "inputTokens": 16473,
+    "outputTokens": 1792,
+    "usd": 0.0756302
+   }
+  },
+  "bracket": {
+   "id": "bracket",
+   "kind": "part",
+   "title": "Stainless cross bracket",
+   "spec": "Front-to-back stainless flat bar that the shelf rests on, with a cube clamp block welded under each end. Each block has a vertical \u00d816.4 bore that slides over a rod and a horizontal M6 hole from its outer end face into the bore for a hand-tightened thumb screw (knurled knob head, no tool) that grips the rod at any height. Twelve are made, two under each of the six shelves.",
+   "contract": {
+    "name": "Cross bracket",
+    "summary": "30 wide flat bar along y with its top face at z=0. Clamp blocks at y = \u00b1150 have vertical rod bores and M6 thumb-screw holes entering from the outer ends. rod_face on the front block's +x side is where the rod clamp joint sits.",
+    "params": [
+     {
+      "type": "number",
+      "name": "rod_spacing",
+      "description": "centre distance between the front and back rods it clamps",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 300,
+      "min": 200,
+      "max": 440
+     },
+     {
+      "type": "number",
+      "name": "rod_bore",
+      "description": "bore that slides over the rod",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 16.4,
+      "min": 16.1,
+      "max": 17
+     },
+     {
+      "type": "number",
+      "name": "bar_width",
+      "description": "width of the flat bar the shelf sits on",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 30,
+      "min": 20,
+      "max": 50
+     },
+     {
+      "type": "number",
+      "name": "bar_thickness",
+      "description": "thickness of the flat bar",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 6,
+      "min": 4,
+      "max": 10
+     },
+     {
+      "type": "number",
+      "name": "block_size",
+      "description": "edge length of each cube clamp block",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 30,
+      "min": 26,
+      "max": 40
+     }
+    ],
+    "provides": [
+     {
+      "key": "thumb_seat_front",
+      "type": "FLAT_FACE",
+      "description": "annular outer end face of the front block around the M6 hole"
+     },
+     {
+      "key": "thumb_seat_back",
+      "type": "FLAT_FACE",
+      "description": "annular outer end face of the back block around the M6 hole"
+     },
+     {
+      "key": "rod_bore_front",
+      "type": "BORE",
+      "description": "front block's vertical bore; a rod passes through it"
+     },
+     {
+      "key": "rod_bore_back",
+      "type": "BORE",
+      "description": "back block's vertical bore; a rod passes through it"
+     }
+    ],
+    "requires": [
+     {
+      "key": "shelf_face",
+      "type": "FLAT_FACE",
+      "description": "top of the flat bar, under the shelf"
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "CNC",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "shelf_face",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "size": "param(bracket.bar_width) - 5"
+       }
+      },
+      {
+       "name": "rod_face",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "-param(bracket.block_size) / 2",
+         "-param(bracket.rod_spacing) / 2",
+         "-param(bracket.block_size) / 2"
+        ],
+        "zAxis": [
+         -1,
+         0,
+         0
+        ],
+        "xAxis": [
+         0,
+         0,
+         1
+        ]
+       },
+       "params": {
+        "size": 6
+       }
+      },
+      {
+       "name": "rod_bore_front",
+       "type": "BORE",
+       "pose": {
+        "origin": [
+         0,
+         "-param(bracket.rod_spacing) / 2",
+         "-param(bracket.block_size)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(bracket.rod_bore)"
+       }
+      },
+      {
+       "name": "rod_bore_back",
+       "type": "BORE",
+       "pose": {
+        "origin": [
+         0,
+         "param(bracket.rod_spacing) / 2",
+         "-param(bracket.block_size)"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(bracket.rod_bore)"
+       }
+      },
+      {
+       "name": "thumb_screw_front",
+       "type": "THREADED_HOLE",
+       "pose": {
+        "origin": [
+         0,
+         "-(param(bracket.rod_spacing) / 2 + param(bracket.block_size) / 2)",
+         "-param(bracket.block_size) / 2"
+        ],
+        "zAxis": [
+         0,
+         -1,
+         0
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "thread": "M6",
+        "depth": "param(bracket.block_size) / 2 - param(bracket.rod_bore) / 2"
+       }
+      },
+      {
+       "name": "thumb_screw_back",
+       "type": "THREADED_HOLE",
+       "pose": {
+        "origin": [
+         0,
+         "param(bracket.rod_spacing) / 2 + param(bracket.block_size) / 2",
+         "-param(bracket.block_size) / 2"
+        ],
+        "zAxis": [
+         0,
+         1,
+         0
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "thread": "M6",
+        "depth": "param(bracket.block_size) / 2 - param(bracket.rod_bore) / 2"
+       }
+      },
+      {
+       "name": "thumb_seat_front",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         "-(param(bracket.rod_spacing) / 2 + param(bracket.block_size) / 2)",
+         "-param(bracket.block_size) / 2"
+        ],
+        "zAxis": [
+         0,
+         -1,
+         0
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 8
+       }
+      },
+      {
+       "name": "thumb_seat_back",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         "param(bracket.rod_spacing) / 2 + param(bracket.block_size) / 2",
+         "-param(bracket.block_size) / 2"
+        ],
+        "zAxis": [
+         0,
+         1,
+         0
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 8
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "box",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          "-param(bracket.bar_thickness) / 2"
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "dims": [
+         "param(bracket.bar_width)",
+         "param(bracket.rod_spacing) + param(bracket.block_size)",
+         "param(bracket.bar_thickness)"
+        ]
+       },
+       {
+        "kind": "box",
+        "pose": {
+         "origin": [
+          0,
+          "-param(bracket.rod_spacing) / 2",
+          "-param(bracket.block_size) / 2"
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "dims": [
+         "param(bracket.block_size)",
+         "param(bracket.block_size)",
+         "param(bracket.block_size)"
+        ]
+       },
+       {
+        "kind": "box",
+        "pose": {
+         "origin": [
+          0,
+          "param(bracket.rod_spacing) / 2",
+          "-param(bracket.block_size) / 2"
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "dims": [
+         "param(bracket.block_size)",
+         "param(bracket.block_size)",
+         "param(bracket.block_size)"
+        ]
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {},
+     "visualChecks": [
+      "Is the part a straight flat bar with a block hanging under each end?",
+      "Does each end block have a vertical round hole through it?",
+      "Is there a small horizontal hole in the outer end face of each block?",
+      "Is the top of the bar flush and flat from end to end?"
+     ],
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "y",
+       "min": 316,
+       "max": 370
+      }
+     ],
+     "sourcing": {
+      "class": "fabricate",
+      "process": "cnc",
+      "material": "304 stainless steel",
+      "finish": "brushed",
+      "qty": 12,
+      "allowUndercuts": true
+     }
+    },
+    "hash": "d2f4f74a316e79cc"
+   },
+   "params": {},
+   "hidden": false,
+   "artifact": {
+    "code": "# stripped\n",
+    "testCode": "",
+    "hash": "f8c478219a4088c7"
+   },
+   "thread": [],
+   "status": "error_contract",
+   "measurements": {
+    "version": 1,
+    "paramsHash": "08f44b07b5901a25",
+    "data": {
+     "volume_mm3": 89655.32805014148,
+     "area_mm2": 32267.091867542378,
+     "solids": 1,
+     "shells": [
+      1
+     ],
+     "bbox": {
+      "min": [
+       -15,
+       -165.0000001,
+       -30.0000001
+      ],
+      "max": [
+       15,
+       165.0000001,
+       1e-07
+      ],
+      "size": [
+       30,
+       330.0000002,
+       30.000000200000002
+      ]
+     },
+     "printability": {
+      "min_wall": {
+       "thin_wall_p2_mm": 6,
+       "index": 1,
+       "recommended_mm": 0.8
+      },
+      "overhang": {
+       "warn_area_fraction": 0.0005,
+       "fail_area_fraction": 0.2521,
+       "index": 0.748
+      },
+      "composite": 0.865
+     },
+     "ports": [
+      {
+       "key": "shelf_face",
+       "type": "FLAT_FACE",
+       "probed_size": 25
+      },
+      {
+       "key": "rod_face",
+       "type": "FLAT_FACE",
+       "probed_size": 6
+      },
+      {
+       "key": "rod_bore_front",
+       "type": "BORE",
+       "measured_diameter": 16.4,
+       "center_offset": 0,
+       "tilt_deg": 0,
+       "through": true
+      },
+      {
+       "key": "rod_bore_back",
+       "type": "BORE",
+       "measured_diameter": 16.4,
+       "center_offset": 0,
+       "tilt_deg": 0,
+       "through": true
+      },
+      {
+       "key": "thumb_screw_front",
+       "type": "THREADED_HOLE",
+       "measured_diameter": 5,
+       "center_offset": 0,
+       "tilt_deg": 0,
+       "through": true,
+       "breakout_depth": 23.2,
+       "measured_depth": 7.293
+      },
+      {
+       "key": "thumb_screw_back",
+       "type": "THREADED_HOLE",
+       "measured_diameter": 5,
+       "center_offset": 0,
+       "tilt_deg": 0,
+       "through": true,
+       "breakout_depth": 23.2,
+       "measured_depth": 7.293
+      },
+      {
+       "key": "thumb_seat_front",
+       "type": "FLAT_FACE",
+       "ring_diameter": 8
+      },
+      {
+       "key": "thumb_seat_back",
+       "type": "FLAT_FACE",
+       "ring_diameter": 8
+      }
+     ],
+     "envelope": {
+      "vertices_checked": 2188,
+      "violations": 0
+     },
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "y",
+       "measured": 330
+      }
+     ],
+     "process": {
+      "kind": "cnc",
+      "setups": "two or more setups (features open sideways; reach from +Z/-Z was not checked)",
+      "tool_radius": 1.5,
+      "sharp_internal_corners": 0,
+      "pockets": 1,
+      "worst_depth_per_width": 0.09
+     }
+    }
+   },
+   "version": 1,
+   "history": [],
+   "cost": {
+    "calls": 3,
+    "inputTokens": 17805,
+    "outputTokens": 3789,
+    "usd": 0.14446260000000002
+   },
+   "statusDetail": {
+    "stage": "assembly",
+    "message": "G5 clash: bracket and rod occupy the same space: 10.7 mm\u00b3 of shared material near [-392.12, -150, -24]. Both parts pass their own gates, so the fault is in a mate offset or a port pose, not in either part's code.\nG5 clash: bracket and rod#1 occupy the same space: 10.7 mm\u00b3 of shared material near [-392.12, 150, -24]. Both parts pass their own gates, so the fault is in a mate offset or a port pose, not in either part's code.",
+    "attribution": "contract-infeasible"
+   }
+  },
+  "foot": {
+   "id": "foot",
+   "kind": "part",
+   "title": "Levelling foot",
+   "spec": "Small round floor pad with an integral M8 threaded stud standing up from its top. The stud screws into the tapped bottom end of a rod, and turning the foot raises or lowers that corner to level the unit.",
+   "contract": {
+    "name": "Levelling foot",
+    "summary": "\u00d840 pad with an M8 stud on +z; the rod's end face rests on the pad's top shoulder around the stud.",
+    "params": [
+     {
+      "type": "number",
+      "name": "pad_diameter",
+      "description": "diameter of the floor pad",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 40,
+      "min": 25,
+      "max": 60
+     },
+     {
+      "type": "number",
+      "name": "pad_height",
+      "description": "how tall the pad stands",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 12,
+      "min": 8,
+      "max": 20
+     },
+     {
+      "type": "number",
+      "name": "stud_length",
+      "description": "how far the threaded stud reaches into the rod",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 20,
+      "min": 12,
+      "max": 30
+     }
+    ],
+    "provides": [],
+    "requires": [
+     {
+      "key": "rod_seat",
+      "type": "FLAT_FACE",
+      "description": "annular top shoulder of the pad around the stud, where the rod end sits"
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "rod_seat",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "param(foot.pad_height) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 13
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": "param(foot.pad_diameter)",
+        "h": "param(foot.pad_height)"
+       },
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          "param(foot.pad_height) / 2 + param(foot.stud_length) / 2 - 1"
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 8,
+        "h": "param(foot.stud_length) + 2"
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {},
+     "visualChecks": [
+      "Is the part a round flat pad with a single threaded stud rising from the centre of its top?",
+      "Is the bottom of the pad flat for standing on the floor?"
+     ],
+     "assertions": [
+      {
+       "kind": "helix",
+       "radius": 3.66,
+       "z": [
+        8,
+        25
+       ],
+       "pitch": 1.25
+      }
+     ]
+    },
+    "hash": "c87b7d1a8f77bc7c"
+   },
+   "params": {},
+   "hidden": false,
+   "artifact": {
+    "code": "# stripped\n",
+    "testCode": "",
+    "hash": "86ef5aef2f353b26"
+   },
+   "thread": [],
+   "status": "error_contract",
+   "measurements": {
+    "version": 1,
+    "paramsHash": "08f44b07b5901a25",
+    "data": {
+     "volume_mm3": 15823.070009497962,
+     "area_mm2": 4744.166993134895,
+     "solids": 1,
+     "shells": [
+      1
+     ],
+     "bbox": {
+      "min": [
+       -20,
+       -20,
+       -6
+      ],
+      "max": [
+       20,
+       20,
+       26.00000010022495
+      ],
+      "size": [
+       40,
+       40,
+       32.00000010022495
+      ]
+     },
+     "printability": {
+      "min_wall": {
+       "thin_wall_p2_mm": 1.122,
+       "index": 0.997,
+       "recommended_mm": 0.8
+      },
+      "overhang": {
+       "warn_area_fraction": 0,
+       "fail_area_fraction": 0.0539,
+       "index": 0.946
+      },
+      "composite": 0.971
+     },
+     "ports": [
+      {
+       "key": "rod_seat",
+       "type": "FLAT_FACE",
+       "ring_diameter": 13
+      }
+     ],
+     "envelope": {
+      "vertices_checked": 27106,
+      "violations": 0
+     },
+     "assertions": [
+      {
+       "kind": "helix",
+       "measured": {
+        "starts": 1,
+        "hand": "right",
+        "pitch": 1.25,
+        "amplitude": 0.309
+       }
+      }
+     ],
+     "process": {
+      "kind": "fdm",
+      "min_wall": 1.122,
+      "stability": {
+       "tip_angle_deg": 70.63,
+       "gamma_deg": 10,
+       "footprint_mm2": 1181.88
+      },
+      "overhang_area_fraction": 0.0539,
+      "bridge_span_mm": 0,
+      "findings": [
+       {
+        "rule": "overhang",
+        "message": "5% of the surface overhangs more than 60\u00b0 from vertical: it needs support printed in its own frame",
+        "measured": 0.0539
+       }
+      ]
+     }
+    }
+   },
+   "version": 1,
+   "history": [],
+   "cost": {
+    "calls": 3,
+    "inputTokens": 14592,
+    "outputTokens": 4101,
+    "usd": 0.098307
+   },
+   "statusDetail": {
+    "stage": "assembly",
+    "message": "G5 clash: foot and rod occupy the same space: 131.8 mm\u00b3 of shared material near [-399.95, -149.86, 210.36]. Both parts pass their own gates, so the fault is in a mate offset or a port pose, not in either part's code.",
+    "attribution": "contract-infeasible"
+   }
+  },
+  "rod": {
+   "id": "rod",
+   "kind": "part",
+   "title": "Stainless upright rod",
+   "spec": "Plain \u00d816 stainless steel round bar, cut to length, with an M8 tapped hole in its bottom end for the levelling foot. Six clamp stations, one per shelf level, mark where a cross bracket's clamp block grips it; the bracket can slide along the rod and lock anywhere with a hand-tightened thumb screw. Four identical rods stand on a 800 x 300 grid.",
+   "contract": {
+    "name": "Upright rod",
+    "summary": "\u00d816 rod along z, centred on the origin; bottom end carries an M8 tapped hole and seats on a foot. Six clamp stations on its +x side at 400 mm pitch, the lowest 273 mm above its bottom end, where cross brackets clamp and slide.",
+    "params": [
+     {
+      "type": "number",
+      "name": "length",
+      "description": "rod length; the foot adds the rest of the 2500 overall height",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 2488,
+      "min": 1000,
+      "max": 3000
+     },
+     {
+      "type": "number",
+      "name": "diameter",
+      "description": "rod diameter",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 16,
+      "min": 12,
+      "max": 20
+     },
+     {
+      "type": "number",
+      "name": "level_pitch",
+      "description": "vertical spacing between shelf levels",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 400,
+      "min": 200,
+      "max": 600
+     }
+    ],
+    "provides": [
+     {
+      "key": "foot_end",
+      "type": "FLAT_FACE",
+      "description": "annular bottom end face that rests on the foot's shoulder"
+     },
+     {
+      "key": "level_1",
+      "type": "FLAT_FACE",
+      "description": "clamp station for the lowest shelf's bracket"
+     },
+     {
+      "key": "level_2",
+      "type": "FLAT_FACE",
+      "description": "clamp station, level 2"
+     },
+     {
+      "key": "level_3",
+      "type": "FLAT_FACE",
+      "description": "clamp station, level 3"
+     },
+     {
+      "key": "level_4",
+      "type": "FLAT_FACE",
+      "description": "clamp station, level 4"
+     },
+     {
+      "key": "level_5",
+      "type": "FLAT_FACE",
+      "description": "clamp station, level 5"
+     },
+     {
+      "key": "level_6",
+      "type": "FLAT_FACE",
+      "description": "clamp station for the top shelf's bracket"
+     }
+    ],
+    "requires": [
+     {
+      "key": "clamp_station",
+      "type": "BORE",
+      "description": "the plain rod section the lowest bracket's bore slides onto"
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "CNC",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "foot_end",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "-param(rod.length) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 13
+       }
+      },
+      {
+       "name": "foot_thread",
+       "type": "THREADED_HOLE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "-param(rod.length) / 2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "thread": "M8",
+        "depth": 25
+       }
+      },
+      {
+       "name": "clamp_station",
+       "type": "SHAFT",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "-param(rod.length) / 2 + 258"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(rod.diameter)"
+       }
+      },
+      {
+       "name": "level_1",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(rod.diameter) / 2",
+         0,
+         "-param(rod.length) / 2 + 273"
+        ],
+        "zAxis": [
+         1,
+         0,
+         0
+        ],
+        "xAxis": [
+         0,
+         0,
+         1
+        ]
+       },
+       "params": {
+        "size": 6
+       }
+      },
+      {
+       "name": "level_2",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(rod.diameter) / 2",
+         0,
+         "-param(rod.length) / 2 + 273 + param(rod.level_pitch)"
+        ],
+        "zAxis": [
+         1,
+         0,
+         0
+        ],
+        "xAxis": [
+         0,
+         0,
+         1
+        ]
+       },
+       "params": {
+        "size": 6
+       }
+      },
+      {
+       "name": "level_3",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(rod.diameter) / 2",
+         0,
+         "-param(rod.length) / 2 + 273 + 2 * param(rod.level_pitch)"
+        ],
+        "zAxis": [
+         1,
+         0,
+         0
+        ],
+        "xAxis": [
+         0,
+         0,
+         1
+        ]
+       },
+       "params": {
+        "size": 6
+       }
+      },
+      {
+       "name": "level_4",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(rod.diameter) / 2",
+         0,
+         "-param(rod.length) / 2 + 273 + 3 * param(rod.level_pitch)"
+        ],
+        "zAxis": [
+         1,
+         0,
+         0
+        ],
+        "xAxis": [
+         0,
+         0,
+         1
+        ]
+       },
+       "params": {
+        "size": 6
+       }
+      },
+      {
+       "name": "level_5",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(rod.diameter) / 2",
+         0,
+         "-param(rod.length) / 2 + 273 + 4 * param(rod.level_pitch)"
+        ],
+        "zAxis": [
+         1,
+         0,
+         0
+        ],
+        "xAxis": [
+         0,
+         0,
+         1
+        ]
+       },
+       "params": {
+        "size": 6
+       }
+      },
+      {
+       "name": "level_6",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(rod.diameter) / 2",
+         0,
+         "-param(rod.length) / 2 + 273 + 5 * param(rod.level_pitch)"
+        ],
+        "zAxis": [
+         1,
+         0,
+         0
+        ],
+        "xAxis": [
+         0,
+         0,
+         1
+        ]
+       },
+       "params": {
+        "size": 6
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": "param(rod.diameter)",
+        "h": "param(rod.length)"
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {},
+     "visualChecks": [
+      "Is the part a single long straight round rod?",
+      "Is there a threaded hole in the bottom end only?"
+     ],
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "x",
+       "min": 15.8,
+       "max": 16.2
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "y",
+       "min": 15.8,
+       "max": 16.2
+      }
+     ],
+     "sourcing": {
+      "class": "fabricate",
+      "process": "cnc",
+      "material": "316 stainless steel",
+      "finish": "brushed",
+      "qty": 4
+     }
+    },
+    "hash": "5e7de1e9069d1766"
+   },
+   "params": {},
+   "hidden": false,
+   "artifact": {
+    "code": "# stripped\n",
+    "testCode": "",
+    "hash": "595753085f5ca4a9"
+   },
+   "thread": [],
+   "status": "error_contract",
+   "measurements": {
+    "version": 1,
+    "paramsHash": "08f44b07b5901a25",
+    "data": {
+     "volume_mm3": 502306.5082357841,
+     "area_mm2": 127353.2915313546,
+     "solids": 1,
+     "shells": [
+      1
+     ],
+     "bbox": {
+      "min": [
+       -8,
+       -8,
+       -1244
+      ],
+      "max": [
+       8.000000000000334,
+       8.000000000000002,
+       1244
+      ],
+      "size": [
+       16.000000000000334,
+       16,
+       2488
+      ]
+     },
+     "printability": {
+      "min_wall": {
+       "thin_wall_p2_mm": 4.6,
+       "index": 1,
+       "recommended_mm": 0.8
+      },
+      "overhang": {
+       "warn_area_fraction": 0,
+       "fail_area_fraction": 0.0003,
+       "index": 1
+      },
+      "composite": 1
+     },
+     "ports": [
+      {
+       "key": "foot_end",
+       "type": "FLAT_FACE",
+       "ring_diameter": 13
+      },
+      {
+       "key": "foot_thread",
+       "type": "THREADED_HOLE",
+       "measured_diameter": 6.8,
+       "center_offset": 0,
+       "tilt_deg": 0,
+       "through": false,
+       "measured_depth": 25
+      },
+      {
+       "key": "clamp_station",
+       "type": "SHAFT",
+       "measured_diameter": 16
+      },
+      {
+       "key": "level_1",
+       "type": "FLAT_FACE",
+       "probed_size": 6
+      },
+      {
+       "key": "level_2",
+       "type": "FLAT_FACE",
+       "probed_size": 6
+      },
+      {
+       "key": "level_3",
+       "type": "FLAT_FACE",
+       "probed_size": 6
+      },
+      {
+       "key": "level_4",
+       "type": "FLAT_FACE",
+       "probed_size": 6
+      },
+      {
+       "key": "level_5",
+       "type": "FLAT_FACE",
+       "probed_size": 6
+      },
+      {
+       "key": "level_6",
+       "type": "FLAT_FACE",
+       "probed_size": 6
+      }
+     ],
+     "envelope": {
+      "vertices_checked": 1732,
+      "violations": 0
+     },
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "x",
+       "measured": 16
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "y",
+       "measured": 16
+      }
+     ],
+     "process": {
+      "kind": "cnc",
+      "tool_radius": 1.5,
+      "sharp_internal_corners": 0,
+      "pockets": 0,
+      "undercut_area_mm2": 0
+     }
+    }
+   },
+   "version": 1,
+   "history": [],
+   "cost": {
+    "calls": 5,
+    "inputTokens": 49435,
+    "outputTokens": 21855,
+    "usd": 0.6049358
+   },
+   "statusDetail": {
+    "stage": "assembly",
+    "message": "G5 clash: bracket and rod occupy the same space: 10.7 mm\u00b3 of shared material near [-392.12, -150, -24]. Both parts pass their own gates, so the fault is in a mate offset or a port pose, not in either part's code.\nG5 clash: bracket and rod#1 occupy the same space: 10.7 mm\u00b3 of shared material near [-392.12, 150, -24]. Both parts pass their own gates, so the fault is in a mate offset or a port pose, not in either part's code.\nG5 clash: foot and rod occupy the same space: 131.8 mm\u00b3 of shared material near [-399.95, -149.86, 210.36]. Both parts pass their own gates, so the fault is in a mate offset or a port pose, not in either part's code.",
+    "attribution": "contract-infeasible"
+   }
+  }
+ },
+ "edges": [
+  {
+   "id": "e0-shelf-bracket",
+   "from": "shelf",
+   "fromPort": "bracket_seat_l",
+   "to": "bracket",
+   "toPort": "shelf_face"
+  },
+  {
+   "id": "e1-shelf-bracket",
+   "from": "shelf",
+   "fromPort": "bracket_seat_r",
+   "to": "bracket",
+   "toPort": "shelf_face"
+  },
+  {
+   "id": "e2-bracket-rod",
+   "from": "bracket",
+   "fromPort": "rod_bore_front",
+   "to": "rod",
+   "toPort": "clamp_station"
+  },
+  {
+   "id": "e3-bracket-rod",
+   "from": "bracket",
+   "fromPort": "rod_bore_back",
+   "to": "rod",
+   "toPort": "clamp_station"
+  },
+  {
+   "id": "e4-rod-foot",
+   "from": "rod",
+   "fromPort": "foot_end",
+   "to": "foot",
+   "toPort": "rod_seat"
+  }
+ ],
+ "assembly": {
+  "entryNodeId": "shelf"
+ },
+ "joints": [],
+ "rev": 53
+}

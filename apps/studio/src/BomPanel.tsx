@@ -4,11 +4,12 @@ import { API } from "./api.js";
 import { BusyButton } from "./BusyButton.js";
 import { download } from "./download.js";
 import { Modal } from "./Modal.js";
+import { orderLinkText, orderLinkTitle, type OrderLink } from "./order-links.js";
 import { useStudio } from "./store.js";
 
 /** Mirrors `@patchcad/backend-cad` bom.ts `Bom`; the studio does not import the backend. */
 interface Bom {
-  buy: { sku: string; description: string; standard: string; qty: number; vendors: { vendor: string; pn: string; url: string }[] | string }[];
+  buy: { sku: string; description: string; standard: string; designation: string; qty: number; orderFrom: OrderLink[] }[];
   print: { nodeId: string; title: string; qty: number; material: string; volumeMm3: number | null; massG: number | null; filamentM: number | null }[];
   fabricate: {
     nodeId: string;
@@ -100,18 +101,21 @@ function BomPanel({ onClose }: { onClose: () => void }) {
               <tr key={r.sku}>
                 <td className="bom__mono">{r.sku}</td>
                 <td>
-                  {r.description}
+                  {r.designation}
                   <div className="bom__sub">{r.standard}</div>
                 </td>
                 <td className="bom__num">×{r.qty}</td>
                 <td className="bom__sub">
-                  {typeof r.vendors === "string"
-                    ? r.vendors
-                    : r.vendors.map((v) => (
-                        <a key={v.vendor} href={v.url} target="_blank" rel="noreferrer">
-                          {v.vendor} {v.pn}
+                  <ul className="bom__order" aria-label={`where to order ${r.designation}`}>
+                    {r.orderFrom.map((o) => (
+                      <li key={`${o.kind}:${o.vendor}`}>
+                        <a href={o.url} target="_blank" rel="noreferrer" title={orderLinkTitle(o)}>
+                          {orderLinkText(o)}
                         </a>
-                      ))}
+                        {o.kind === "verified" && <span className="bom__verified">verified {o.verifiedAt}</span>}
+                      </li>
+                    ))}
+                  </ul>
                 </td>
               </tr>
             ))}

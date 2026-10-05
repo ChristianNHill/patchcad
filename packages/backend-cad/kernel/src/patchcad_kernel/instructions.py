@@ -327,13 +327,22 @@ class Page:
     """SVG in page millimetres, y down (drawing.Sheet's conventions)."""
 
     def __init__(self) -> None:
-        self.items: list[str] = []
+        # An element, or (url, element) for linked text: the SVG/HTML wraps it
+        # in <a>, the PDF gets a link annotation over `links`' box instead.
+        self.items: list[str | tuple[str, str]] = []
+        self.links: list[tuple[float, float, float, float, str]] = []  # x, y, w, h (mm), url
 
     def text(self, x: float, y: float, s: str, size: float = 3.6, bold: bool = False, colour: str = "#37352f",
-             anchor: str = "start") -> None:
+             anchor: str = "start", href: str | None = None) -> None:
         weight = ' font-weight="bold"' if bold else ""
-        self.items.append(f'<text x="{x:.2f}" y="{y:.2f}" font-family="Helvetica" font-size="{size}"{weight} '
-                          f'text-anchor="{anchor}" fill="{colour}">{escape(_latin1(s))}</text>')
+        el = (f'<text x="{x:.2f}" y="{y:.2f}" font-family="Helvetica" font-size="{size}"{weight} '
+              f'text-anchor="{anchor}" fill="{colour}">{escape(_latin1(s))}</text>')
+        if href:
+            # Helvetica averages ~0.5 em per character: close enough for a hit box.
+            self.links.append((x, y - size, len(s) * size * 0.5, size * 1.2, href))
+            self.items.append((href, el))
+        else:
+            self.items.append(el)
 
     def para(self, x: float, y: float, s: str, width: float, size: float = 3.6, bold: bool = False) -> float:
         """Wrapped text; returns the y below it."""
@@ -356,10 +365,16 @@ class Page:
         uri = "data:image/png;base64," + base64.b64encode(png).decode()
         self.items.append(f'<image x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" href="{uri}"/>')
 
-    def svg(self) -> str:
+    def svg(self, links: bool = True) -> str:
+        """links=False drops the <a> wrappers: the PDF's SVG reader draws the
+        text and the link annotations are added on the page instead."""
+        items = [i if isinstance(i, str)
+                 else f'<a href="{escape(i[0], {chr(34): "&quot;"})}" target="_blank">{i[1]}</a>' if links
+                 else i[1]
+                 for i in self.items]
         return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{PAGE_W}mm" height="{PAGE_H}mm" '
                 f'viewBox="0 0 {PAGE_W} {PAGE_H}">\n<rect width="{PAGE_W}" height="{PAGE_H}" fill="#ffffff"/>\n'
-                + "\n".join(self.items) + "\n</svg>\n")
+                + "\n".join(items) + "\n</svg>\n")
 
 
 def _footer(page: Page, title: str, n: int) -> None:
@@ -420,7 +435,10 @@ def _hardware_pages(doc: dict[str, Any], tiles: dict[str, bytes], first: int) ->
                 page.image(x + 2, y + 2, 34, 34, tiles[item["id"]])
             page.text(x + 40, y + 13, f"{item['qty']}x", 8, bold=True)
             yy = page.para(x + 40, y + 21, item["label"], 46, 3.3, bold=True)
-            page.text(x + 40, yy + 0.5, item["id"], 2.7, colour="#615f5a")
+            # What to order it as (the "Where to order" page has the links).
+            for line in _wrap(item.get("designation") or item["id"], 32)[:3]:
+                page.text(x + 40, yy + 0.5, line, 2.6, colour="#615f5a")
+                yy += 3.2
             if item.get("gauge_mm"):
                 _gauge(page, x + 4, y + 43, float(item["gauge_mm"]))
         if c == len(chunks) - 1:
@@ -440,6 +458,51 @@ def _hardware_pages(doc: dict[str, Any], tiles: dict[str, bytes], first: int) ->
                     y += 5
         _footer(page, doc.get("title", ""), first + c)
         pages.append(page)
+    return pages
+
+
+def _order_pages(doc: dict[str, Any], first: int) -> list[Page]:
+    """Every bought part with its qty and where to get it: a part number only
+    where a person verified one, otherwise labelled search links."""
+    order = doc.get("order") or []
+    if not order:
+        return []
+    pages: list[Page] = []
+
+    def new_page() -> tuple[Page, float]:
+        page = Page()
+        page.text(15, 24, "Where to order" if not pages else "Where to order (continued)", 7, bold=True)
+        y = page.para(15, 31, "A part number is shown only where someone checked it on the vendor's page. "
+                              "Search links look up the part's designation; they are not specific products.",
+                      180, 3.2)
+        pages.append(page)
+        return page, y + 4
+
+    page, y = new_page()
+    for entry in order:
+        links = entry.get("links") or []
+        verified = sum(1 for link in links if link.get("kind") == "verified")
+        height = 6 + 4.9 * (len(_wrap(entry["designation"], 70)) - 1) + 3.6 * (len(links) + verified) + 4
+        if y + height > 278:
+            page, y = new_page()
+        page.line(15, y - 4, 195, y - 4, 0.2, "#cfcfcc")
+        page.text(15, y, f"{entry['qty']}x", 4.2, bold=True)
+        yy = page.para(28, y, entry["designation"], 140, 3.6, bold=True)
+        page.text(195, y, entry["id"], 2.6, colour="#615f5a", anchor="end")
+        for link in links:
+            url = link["url"]
+            shown = url if len(url) <= 120 else url[:117] + "..."
+            if link.get("kind") == "verified":
+                page.text(28, yy, f"{link['vendor']} part number {link['pn']} (verified {link['verifiedAt']})", 2.8, bold=True)
+                yy += 3.6
+                page.text(62, yy, shown, 2.2, colour="#0070d7", href=url)
+            else:
+                page.text(28, yy, f"Search {link['vendor']}", 2.8)
+                page.text(62, yy, shown, 2.2, colour="#0070d7", href=url)
+            yy += 3.6
+        y = yy + 6
+    for i, p in enumerate(pages):
+        _footer(p, doc.get("title", ""), first + i)
     return pages
 
 
@@ -498,6 +561,7 @@ def build_document(posed: dict[str, tuple[np.ndarray, np.ndarray]], items: dict[
     pages += _hardware_pages(doc, tiles, len(pages) + 1)
     for step, picture in zip(doc.get("steps", []), pictures):
         pages.append(_step_page(doc, step, picture, tiles, len(pages) + 1))
+    pages += _order_pages(doc, len(pages) + 1)
 
     svgs = [p.svg() for p in pages]
     for i, s in enumerate(svgs):
@@ -505,9 +569,11 @@ def build_document(posed: dict[str, tuple[np.ndarray, np.ndarray]], items: dict[
             f.write(s)
     pdf = FPDF(unit="mm", format="A4")
     pdf.set_creator("PatchCAD")
-    for s in svgs:
+    for p in pages:
         pdf.add_page()
-        SVGObject(s).draw_to_page(pdf)
+        SVGObject(p.svg(links=False)).draw_to_page(pdf)
+        for x, y, w, h, url in p.links:
+            pdf.link(x, y, w, h, url)
     tmp = os.path.join(out_dir, f"instructions.{os.getpid()}.tmp.pdf")
     pdf.output(tmp)
     os.replace(tmp, os.path.join(out_dir, "instructions.pdf"))

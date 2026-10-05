@@ -69,6 +69,8 @@ export const CadJoint = z.object({
    *  is thinner than wallA (a pocket in a's underside). Defaults to wallA. */
   wallMotor: Dim.optional(),
   allowPrinted: z.boolean().optional(),
+  /** Fixed onto a rod: the part is clamped and moved by hand (a thumb screw). */
+  toolFree: z.boolean().optional().describe("fixed, b's BORE onto a's SHAFT station: clamped and moved by hand, no tools (a thumb screw, not a set screw)"),
   /** Revolute, printed: a and b print as one piece, the pin captive in its
    *  knuckles with clearance, so nothing is assembled (or swept going in). */
   printInPlace: z.boolean().optional().describe("revolute: a and b print together as one piece, the hinge pin captive with clearance (a print-in-place hinge or fidget). Only when both are FDM, the pin is integral, and the brief says it prints assembled or it can never come apart; never with hardware"),
@@ -152,6 +154,9 @@ export interface JointInput {
    *  between a's knuckles, so nothing fixed to a can enter b along the axis. */
   trappedB?: boolean;
   printInPlace?: boolean;
+  toolFree?: boolean;
+  /** a.port is a SHAFT station and b.port a BORE: the rod's Ø (expand.ts). */
+  onRod?: number;
 }
 
 /** One catalog part a joint needs. `role` becomes the node id suffix. */
@@ -186,7 +191,8 @@ export type Recipe =
   | "belt_carriage"
   | "confirmat"
   | "cam_lock"
-  | "stud";
+  | "stud"
+  | "rod_clamp";
 
 /** ca·wallA + cb·wallB + k, mm: a length bound the expansion re-derives as a
  *  T1 binding, so a wall edit re-picks the screw length with no LLM call. */
@@ -302,6 +308,50 @@ function decision(rule: string, recipe: Recipe, summary: string, reasons: string
 
 const fixed = (i: JointInput) => (i.motion ?? "fixed") === "fixed";
 const fastens = (i: JointInput) => fixed(i) && i.intent !== "alignment";
+
+/** C1: b slides onto a's rod and is clamped there by one radial screw in
+ *  its wall: a DIN 464 thumb screw when it moves by hand (toolFree), else an
+ *  ISO 4026 set screw, flush. Under a medium load or more a DIN 705 collar
+ *  under b holds it up as well, so the screw only locates. The spaghetti
+ *  shelf's brackets had no rule at all: its thumb screws were hand-wired and
+ *  the plan checks deleted them. wallB is b's radial wall at the clamp; the
+ *  screw is the longest stocked one that ends at the bore wall. */
+const C1: JointRule = {
+  id: "C1",
+  when: (i) => fixed(i) && i.onRod !== undefined,
+  uses: ["thumb_screw", "set_screw", "collar"],
+  fit: (i) => {
+    const d = i.onRod!;
+    const family = i.toolFree ? "thumb_screw" : "set_screw";
+    const want = i.threadHint ?? (d <= 8 ? "M4" : d <= 14 ? "M5" : "M6");
+    const order = ["M8", "M6", "M5", "M4", "M3"].filter((t) => !i.threadHint || t === i.threadHint);
+    const shortfalls: string[] = [];
+    for (const thread of [want, ...order.filter((t) => t !== want && Number(t.slice(1)) < Number(want.slice(1)))]) {
+      const lengths = standardLengths(family, thread);
+      if (!lengths.length) continue;
+      // The tip stops at the bore wall (the bore's slip leaves it clear of the
+      // rod), no more than 2mm short of it so it still bears when tightened.
+      const L = [...lengths].reverse().find((l) => l <= i.wallB + 0.01 && l >= i.wallB - 2);
+      if (L === undefined) {
+        shortfalls.push(`${thread}: no stocked ${family === "thumb_screw" ? "thumb" : "set"} screw ${mm(i.wallB - 2)}..${mm(i.wallB)} long (${lengths.join(", ")})`);
+        continue;
+      }
+      const collar = atLeast(i.load, "medium") ? familyDims("collar", String(d)) : undefined;
+      if (atLeast(i.load, "medium") && !collar) shortfalls.push(`no stocked collar for a Ø${d} rod to carry the load`);
+      return decision("C1", "rod_clamp", `${family === "thumb_screw" ? "DIN 464" : "ISO 4026"} ${thread}×${L} ${family === "thumb_screw" ? "thumb" : "set"} screw clamping b on the Ø${d} rod${collar ? ", on a DIN 705 collar" : ""}`, [
+        `fixed, b on a's rod: one radial screw clamps it`,
+        i.toolFree ? "moved by hand: a knurled thumb screw" : "set with a hex key: a flush set screw",
+        `${thread}${thread === want ? ` for a Ø${d} rod` : `, the largest that fits wallB ${mm(i.wallB)}`}; ${L}mm ends at the bore wall`,
+        ...(collar ? [`${i.load} load: a collar under b carries it`] : []),
+      ], {
+        thread,
+        parts: [{ role: "screw", family, key: thread, length: L }, ...(collar ? [{ role: "collar", family: "collar", key: String(d) }] : [])],
+        dims: { d, wall: i.wallB },
+      });
+    }
+    return `C1: ${shortfalls.join("; ") || `wallB ${mm(i.wallB)} holds no clamp screw`}`;
+  },
+};
 
 /** R1: ISO 2338 dowel, press in a, slip in b. Common practice engages a
  *  dowel at least 1·d in each part (1.5·d preferred, so a 3·d pin first): a
@@ -1557,7 +1607,7 @@ const PB: JointRule = {
 };
 
 /** First fit wins. Motion rules come first: a revolute joint is never bolted. */
-export const JOINT_RULES: JointRule[] = [D1, DB, DG, M1f, M1, M1h, M1p, M2pin, M2, M2d, PL, PB, P1, P2, W1, W2, W4, W5, W6, W3, R8, R1, R1b, R2, R3, R4, R7, R5, R6, R3f];
+export const JOINT_RULES: JointRule[] = [D1, DB, DG, M1f, M1, M1h, M1p, M2pin, M2, M2d, PL, PB, P1, P2, C1, W1, W2, W4, W5, W6, W3, R8, R1, R1b, R2, R3, R4, R7, R5, R6, R3f];
 
 export function selectJoint(input: JointInput): JointDecision | { error: string } {
   const tag = input.id ? `${input.id}: ` : "";

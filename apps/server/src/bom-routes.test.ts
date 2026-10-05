@@ -56,6 +56,33 @@ describe("bom routes", () => {
     expect((await a.inject("/api/project/bom?format=xml")).statusCode).toBe(400);
   });
 
+  it("labels a bought part with its designation and where to search for it, with no part number", async () => {
+    const a = Fastify();
+    const doc = graph("cad");
+    doc.nodes.screw = {
+      ...doc.nodes.plate!,
+      id: "screw",
+      kind: "fastener",
+      title: "Screw",
+      status: "ready",
+      params: { sku: "ISO4762-M3x12" },
+      artifact: { code: "def build(p): pass", hash: "h", testCode: "" },
+    } as (typeof doc.nodes)[string];
+    registerBomRoutes(a, () => ({ dir: "/somewhere/projects/my-bracket", backend: { id: "cad" }, store: { doc } }), {} as CadBackend);
+    const json = (await a.inject("/api/project/bom")).json();
+    expect(json.buy).toHaveLength(1);
+    expect(json.buy[0]).toMatchObject({ designation: "ISO 4762 M3×12 socket head cap screw", qty: 1 });
+    expect(json.buy[0].orderFrom[0]).toEqual({
+      vendor: "McMaster-Carr", kind: "search", url: "https://www.mcmaster.com/ISO%204762%20M3x12%20socket%20head%20cap%20screw",
+    });
+    expect(json.buy[0].orderFrom.some((o: { pn?: string }) => o.pn)).toBe(false);
+    const csv = (await a.inject("/api/project/bom?format=csv")).body.split("\n");
+    expect(csv[0]).toContain("designation");
+    expect(csv[0]).toContain("verified_pn,search_link");
+    expect(csv.find((l) => l.startsWith("buy,"))).toContain("ISO 4762 M3×12 socket head cap screw");
+    expect(csv.find((l) => l.startsWith("buy,"))).toContain("https://www.mcmaster.com/ISO%204762%20M3x12%20socket%20head%20cap%20screw");
+  });
+
   it("has no vendor package for an unknown or uncooked part", async () => {
     const a = await app("cad");
     expect((await a.inject("/api/project/parts/nope/vendor-package")).statusCode).toBe(404);

@@ -212,3 +212,40 @@ describe("kinematicJoints on instanced parts", () => {
     expect(joints[0]!.moving).toEqual(["blade", "blade#1", "blade#2"]);
   });
 });
+
+describe("copies carry what hangs on them", () => {
+  const down = (x: number, y: number, z: number): Pose => ({ origin: [x, y, z], zAxis: [0, 0, -1], xAxis: [1, 0, 0] });
+  const up = (x: number, y: number, z: number): Pose => ({ origin: [x, y, z], zAxis: [0, 0, 1], xAxis: [1, 0, 0] });
+  // A shelf carries two brackets (one node, two seats); each bracket carries a
+  // rod; each rod carries a foot. Only the first edge of each pair exists.
+  const nodes: { id: string; ports: Record<string, Pose> }[] = [
+    { id: "shelf", ports: { seat_l: down(-400, 0, 0), seat_r: down(400, 0, 0) } },
+    { id: "bracket", ports: { top: up(0, 0, 0), bore: down(0, 0, -10) } },
+    { id: "rod", ports: { station: up(0, 0, 100), end: down(0, 0, 0), side: up(5, 0, 50) } },
+    { id: "foot", ports: { seat: up(0, 0, 0) } },
+    { id: "wall", ports: { face: up(0, 0, 0) } },
+  ];
+  const mates = [
+    { fromNode: "shelf", fromPort: "seat_l", toNode: "bracket", toPort: "top" },
+    { fromNode: "shelf", fromPort: "seat_r", toNode: "bracket", toPort: "top" },
+    { fromNode: "bracket", fromPort: "bore", toNode: "rod", toPort: "station" },
+    { fromNode: "rod", fromPort: "end", toNode: "foot", toPort: "seat" },
+  ];
+  const xs = (ms: Mat4[]) => ms.map((m) => Math.round(m[12]!)).sort((a, b) => a - b);
+
+  it("multiplies down the chain: every bracket gets its rod, every rod its foot", () => {
+    const { instances, problems } = solveAssembly(nodes.slice(0, 4), mates, "shelf");
+    expect(problems).toEqual([]);
+    expect(xs(instances.bracket!)).toEqual([-400, 400]);
+    expect(xs(instances.rod!)).toEqual([-400, 400]);
+    expect(xs(instances.foot!)).toEqual([-400, 400]);
+  });
+
+  it("a part also held by something else stays one part", () => {
+    // The rod is also fixed to the wall, so it is held between bracket and
+    // wall: it is not copied onto the second bracket, nor is its foot.
+    const { instances } = solveAssembly(nodes, [...mates, { fromNode: "shelf", fromPort: "seat_l", toNode: "wall", toPort: "face" }, { fromNode: "wall", fromPort: "face", toNode: "rod", toPort: "side" }], "shelf");
+    expect(instances.rod).toHaveLength(1);
+    expect(instances.foot).toHaveLength(1);
+  });
+});

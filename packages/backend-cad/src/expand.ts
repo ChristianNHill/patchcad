@@ -193,9 +193,22 @@ export function jointInput(graph: GraphDoc, j: CadJoint, joints: readonly unknow
     flush: j.flush, count: j.count, threadHint: j.threadHint, shaftHint: j.shaftHint, strokeMm: j.strokeMm,
     ratio: j.ratio, centerMm: j.centerMm, wallMotor, allowPrinted: j.allowPrinted, prefer: j.prefer, boreA, depthA, roomA,
     ...pairOf(graph, j, b, joints as CadJoint[]),
-    trappedB: aheadA !== undefined && aheadA > wallB + 1, printInPlace: j.printInPlace,
+    trappedB: aheadA !== undefined && aheadA > wallB + 1, printInPlace: j.printInPlace, toolFree: j.toolFree,
+    ...onRodOf(graph, a, j.a.port, b, j.b.port),
     guided: j.motion === "prismatic" && guidedElsewhere(graph, j, joints as CadJoint[]),
   };
+}
+
+/** b's BORE onto a's SHAFT station: the rod's Ø, for C1. */
+function onRodOf(graph: GraphDoc, a: NodeRecord, ap: string, b: NodeRecord, bp: string): { onRod?: number } {
+  const [pa, pb] = [payloadOf(a).ports?.find((p) => p.name === ap), payloadOf(b).ports?.find((p) => p.name === bp)];
+  if (pa?.type !== "SHAFT" || pb?.type !== "BORE") return {};
+  try {
+    const d = resolveDim(graph, (pa.params.diameter ?? pa.params.d) as D);
+    return Number.isFinite(d) && d > 0 ? { onRod: d } : {};
+  } catch {
+    return {};
+  }
 }
 
 /** Whether a slide's moving body (b, and the parts fixed joints and part
@@ -1522,7 +1535,36 @@ function camLock(c: Ctx) {
   patternRing(c, B, j.b.port, d.dims.edgeHole!, rho);
 }
 
+/** C1: one radial screw through b's wall onto the rod, at the middle of b's
+ *  bore, its seat on b's outer surface facing out along the bore's +x; under
+ *  load a collar on the rod against b's bore face. b stays placed by its own
+ *  BORE → SHAFT edge, so what is minted here rides every copy of b. */
+function rodClamp(c: Ctx) {
+  const { x, j, vb, d, B, fb } = c;
+  const screw = part(d, "screw")!;
+  const keep = part(d, "collar");
+  const sid = hardwareId(j.id, "screw");
+  const bore = x.port(B, j.b.port);
+  const rawDepth = bore.params.depth;
+  const depth = typeof rawDepth === "number" ? rawDepth : typeof rawDepth === "string" ? resolvedOr(x.graph, rawDepth, 10) ?? 10 : 10;
+  const r = d.dims.d! / 2 + FDM_SLIP_FIT_MM / 2;
+  const wall = d.dims.wall!;
+  const outer = at(fb, round(r + wall), 0, round(-depth / 2));
+  const pose: Pose = { origin: outer.origin, zAxis: fb.x.map((v) => round(v) || 0) as Vec, xAxis: fb.z.map((v) => round(v) || 0) as Vec };
+  const name = `${vb}_clamp`;
+  x.addPort(B, "provides", { name, type: "THREADED_HOLE", pose, params: { thread: d.thread!, depth: wall } }, "THREADED_HOLE", `${screw.family} ${d.thread} clamping ${B.id} on the rod for ${j.id}`);
+  x.mint(j.id, screw, d.summary, [{ side: "requires", port: { name: "head", type: "FLAT_FACE", pose: SEAT_POSE as unknown as Pose, params: { ring_diameter: CATALOG.threads[d.thread!]!.clearance + 1 } }, decl: "THREADED_HOLE" }], screw.length);
+  x.addEdge(B.id, name, sid, "head");
+  if (keep) {
+    const od = n(keep, "od");
+    x.addPort(B, "provides", { name: `${vb}_stop`, type: "FLAT_FACE", pose: at(fb, 0, 0, 0), params: { ring_diameter: round(od) } }, "FLAT_FACE", `the collar under ${B.id} for ${j.id}`);
+    x.mint(j.id, keep, d.summary, [{ side: "requires", port: { name: "seat", type: "FLAT_FACE", pose: SEAT_POSE as unknown as Pose, params: { ring_diameter: d.dims.d! + 1 } }, decl: "FLAT_FACE" }]);
+    x.addEdge(B.id, `${vb}_stop`, hardwareId(j.id, "collar"), "seat");
+  }
+}
+
 const RECIPES: Record<JointDecision["recipe"], ((c: Ctx) => void) | undefined> = {
+  rod_clamp: rodClamp,
   flanged_bearing: flangedBearing,
   stud,
   tapped: fastener,

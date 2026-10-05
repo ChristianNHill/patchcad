@@ -1,5 +1,6 @@
 import { z } from "zod";
 import raw from "../catalog/hardware.json" with { type: "json" };
+import rawSuppliers from "../catalog/suppliers.json" with { type: "json" };
 
 /**
  * The hardware catalog: every standard part the registry can build, as data.
@@ -98,6 +99,45 @@ export const Catalog = z
 export type Catalog = z.infer<typeof Catalog>;
 
 export const CATALOG: Catalog = Catalog.parse(raw);
+
+/**
+ * Where to SEARCH for a bought part (`catalog/suppliers.json`): vendors with a
+ * site-search URL template, groups of them best-fit first, and which group a
+ * family (else its catalog category) orders from. A search link is never a
+ * product; part numbers come only from a sku's verified `vendors` entry.
+ */
+const SupplierVendor = z.object({
+  name: z.string().min(1),
+  search: z
+    .string()
+    .url()
+    .refine((t) => t.startsWith("https://") && t.split("{q}").length === 2, "an https search URL with exactly one {q}"),
+});
+
+export const Suppliers = z
+  .object({
+    version: z.number(),
+    notes: z.record(z.string()).optional(),
+    vendors: z.record(SupplierVendor),
+    groups: z.record(z.array(z.string()).min(1)),
+    byCategory: z.record(z.enum(CATEGORIES), z.string()),
+    byFamily: z.record(z.string()),
+  })
+  .superRefine((s, ctx) => {
+    for (const [group, vendors] of Object.entries(s.groups)) {
+      for (const v of vendors) if (!s.vendors[v]) ctx.addIssue({ code: "custom", path: ["groups", group], message: `unknown vendor ${v}` });
+    }
+    for (const c of CATEGORIES) {
+      if (!s.groups[s.byCategory[c] ?? ""]) ctx.addIssue({ code: "custom", path: ["byCategory", c], message: "no group for this category" });
+    }
+    for (const [family, group] of Object.entries(s.byFamily)) {
+      if (!CATALOG.families[family]) ctx.addIssue({ code: "custom", path: ["byFamily", family], message: "not a catalog family" });
+      if (!s.groups[group]) ctx.addIssue({ code: "custom", path: ["byFamily", family], message: `unknown group ${group}` });
+    }
+  });
+export type Suppliers = z.infer<typeof Suppliers>;
+
+export const SUPPLIERS: Suppliers = Suppliers.parse(rawSuppliers);
 
 /** Designations compare case-insensitively, and numerically when they are
  *  numbers: "m4" is M4, "3.0" is the 3 row. */

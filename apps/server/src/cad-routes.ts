@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { unverifiedCandidate, type CadBackend } from "@patchcad/backend-cad";
+import { buyRow, skuOf, sourcingOf, unverifiedCandidate, type CadBackend } from "@patchcad/backend-cad";
 import { registerBomRoutes } from "./bom-routes.js";
 import { registerInstructionRoutes } from "./instructions-routes.js";
 import { effectiveParams } from "./project.js";
@@ -115,7 +115,7 @@ export function registerCadRoutes(app: FastifyInstance, s: Session): void {
     const { scene, problems } = cad.solveScene(project.store.doc);
     // Resolve each cooked node's mesh URL via the kernel's content-addressed
     // cache (instant for anything already executed this session).
-    const meshes: Record<string, { glb: string; status: string; printability?: unknown }> = {};
+    const meshes: Record<string, { glb: string; status: string; printability?: unknown; designation?: string }> = {};
     for (const node of Object.values(project.store.doc.nodes)) {
       // Hidden: no mesh, so nothing renders. The scene's matrices above still
       // cover every node, so the parts that remain do not move.
@@ -128,6 +128,8 @@ export function registerCadRoutes(app: FastifyInstance, s: Session): void {
           glb: kernelUrl(req, result.glb),
           status: node.status,
           printability: (result.measurements as { printability?: unknown }).printability,
+          // Catalog hardware only: the viewport labels it with what to order.
+          ...(sourcingOf(node).class === "buy" && (skuOf(node) || node.kind === "gear") ? { designation: buyRow(node).designation } : {}),
         };
       }
     }

@@ -340,13 +340,27 @@ export function solveAssembly(
     }
   }
 
-  // COPIES CARRY THEIR HARDWARE. A nut seated in a leg is placed from that
+  // COPIES CARRY WHAT HANGS ON THEM. A nut seated in a leg is placed from that
   // leg's first copy only; the leg's other copies got none, and the round
-  // stool's four joints stacked four nut sets on leg #0 (27 G5 clashes).
+  // stool's four joints stacked four nut sets on leg #0 (27 G5 clashes). The
+  // same holds for any part mated to nothing but the copied part and what
+  // hangs below it: the spaghetti shelf's rods and feet sat on bracket #0
+  // only (6 parts placed of 26). A part also mated elsewhere is one part, held
+  // between them, and stays single.
   // In placement order, so a carried node's own carried nodes follow it.
+  const parentOf = (id: string) => {
+    const by = placedBy[id];
+    return by ? (by.fromNode === id ? by.toNode : by.fromNode) : undefined;
+  };
+  const below = (id: string, other: string) => {
+    for (let cur: string | undefined = other; cur; cur = parentOf(cur)) if (cur === id) return true;
+    return false;
+  };
+  const hangsOn = (id: string, parent: string) =>
+    mates.every((m) => (m.fromNode !== id && m.toNode !== id) || [m.fromNode, m.toNode].every((n) => n === id || n === parent || below(id, n)));
   for (const id of order) {
     const by = placedBy[id];
-    if (!by || !carried(id)) continue;
+    if (!by || !(carried(id) || hangsOn(id, parentOf(id)!))) continue;
     const parent = by.fromNode === id ? by.toNode : by.fromNode;
     const extra = instances[parent] ?? [];
     if (!extra.length) continue;

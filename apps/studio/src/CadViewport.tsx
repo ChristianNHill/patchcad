@@ -8,6 +8,7 @@ import { useStudio } from "./store.js";
 import { API } from "./api";
 import { download } from "./download.js";
 import { fmtMm, measure, sectionOffset, sectionPlane, type Axis, type MeasurePoint, type Vec3 } from "./measure.js";
+import { viewportLabel } from "./order-links.js";
 
 /**
  * The CAD preview pane: per-node GLB meshes (straight from the kernel's
@@ -18,7 +19,7 @@ import { fmtMm, measure, sectionOffset, sectionPlane, type Axis, type MeasurePoi
 
 interface SceneData {
   scene: { nodes: Record<string, { title: string; matrix?: number[]; matrices?: number[][]; version: number }>; problems: string[] };
-  meshes: Record<string, { glb: string; status: string; printability?: { composite?: number } }>;
+  meshes: Record<string, { glb: string; status: string; printability?: { composite?: number }; designation?: string }>;
 }
 
 const loader = new GLTFLoader();
@@ -277,6 +278,7 @@ function CadViewportInner() {
   const [measuring, setMeasuring] = useState(false);
   const [picks, setPicks] = useState<MeasurePoint[]>([]);
   const [section, setSection] = useState<{ on: boolean; axis: Axis; t: number }>({ on: false, axis: 2, t: 0.5 });
+  const [hovered, setHovered] = useState<string | null>(null);
 
   const onCenter = useCallback((id: string, min: [number, number, number], max: [number, number, number]) => {
     setBounds((prev) => {
@@ -419,7 +421,29 @@ function CadViewportInner() {
     [measuring, clip, clipPlane],
   );
 
+  /** The catalog part under the pointer, for its "what to order" label. */
+  const onHover = useCallback(
+    (e: ThreeEvent<PointerEvent>) => {
+      const hit = e.intersections.find((h) => !clip || clipPlane.distanceToPoint(h.point) >= 0);
+      const id = (hit?.object.userData.nodeId as string | undefined) ?? null;
+      setHovered((prev) => (prev === id ? prev : id));
+    },
+    [clip, clipPlane],
+  );
+
   const reading = picks.length === 2 ? measure(picks[0]!, picks[1]!) : null;
+
+  const designations = useMemo(
+    () => Object.fromEntries(Object.entries(data?.meshes ?? {}).map(([id, m]) => [id, m.designation])),
+    [data],
+  );
+  const hwLabel = measuring ? null : viewportLabel(hovered, selectedNodeId, designations);
+  const hwAnchor = useMemo((): [number, number, number] | null => {
+    const b = hwLabel && bounds[hwLabel.nodeId];
+    if (!b) return null;
+    const o = offsets[hwLabel.nodeId] ?? [0, 0, 0];
+    return [(b.min[0] + b.max[0]) / 2 + o[0], (b.min[1] + b.max[1]) / 2 + o[1], b.max[2] + o[2]];
+  }, [hwLabel?.nodeId, bounds, offsets]);
 
   if (!graph) return null;
   const parts = Object.entries(data?.meshes ?? {});
@@ -466,7 +490,7 @@ function CadViewportInner() {
           side={THREE.DoubleSide}
         />
         <FitCamera box={unionBox} partsKey={liveIds.join("|")} />
-        <group onClick={onPick}>
+        <group onClick={onPick} onPointerMove={onHover} onPointerOut={() => setHovered(null)}>
           {parts.map(([id, mesh]) => {
             const n = data?.scene.nodes[id];
             return (
@@ -484,6 +508,13 @@ function CadViewportInner() {
             );
           })}
         </group>
+        {hwLabel && hwAnchor && (
+          <Html position={hwAnchor} center zIndexRange={[10, 0]}>
+            <span className="cad-viewport__hw-label" title={hwLabel.text}>
+              {hwLabel.text}
+            </span>
+          </Html>
+        )}
         {measuring &&
           picks.map((p, i) => (
             <Html key={i} position={p.point} center>
