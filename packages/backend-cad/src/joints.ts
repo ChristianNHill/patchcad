@@ -1704,6 +1704,9 @@ export function honours(d: JointDecision, raw: NonNullable<CadJoint["prefer"]>):
   const p = statedPrefer(raw);
   if (p.recipe && p.recipe !== d.rule && p.recipe !== d.recipe) return false;
   if (!p.family) return true;
+  // A stated bearing is the wheel's own when b carries them built in (a
+  // catalog V-wheel's two 625s): real-linear-actuator stated "bearing 625".
+  if (d.dims.builtIn && sameFamily(p.family, "bearing")) return true;
   return d.parts.some((x) => sameFamily(p.family!, x.family) && (!p.key || x.key === canonicalKey(x.family, p.key)));
 }
 
@@ -1711,7 +1714,9 @@ export function honours(d: JointDecision, raw: NonNullable<CadJoint["prefer"]>):
  *  and when none fits, the error says what the stated part needs. Never a
  *  substitute. */
 function selectStated(input: JointInput, raw: NonNullable<CadJoint["prefer"]>, tag: string): JointDecision | { error: string } {
-  const p = statedPrefer(raw);
+  let p = statedPrefer(raw);
+  // b's own bearings serve a stated bearing: the rule picks only the axle.
+  if (input.bBuiltIn !== undefined && p.family && sameFamily(p.family, "bearing")) p = { ...p, family: undefined, key: undefined };
   // The rules read the stated part from the input: give them the catalog's.
   if (p !== raw) input = { ...input, prefer: p };
   const say = `${tag}stated ${statedName(p)}`;

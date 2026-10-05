@@ -257,7 +257,12 @@ export function assemblyPlanDefects(graph: GraphDoc): { node: string; other: str
         !prims.some((o) => contains(o, at(u + du! * members.r, v + dv! * members.r), margin + 0.05))));
       if (out.length) {
         const fmtP = (q: Vec3) => `[${q.map(round1).join(", ")}]`;
-        problems.push({ node: n.id, other: n.id, message: `${n.id}: ${p.type} "${p.name}" puts ${out.length} of its ${members.list.length} Ø${round1(2 * members.r)} holes outside ${n.id}'s envelope, at ${out.map(([u, v]) => fmtP(at(u, v))).join(", ")} in ${n.id}'s frame, so G3 can never find them. The pattern's pitch_x runs along the port's xAxis ${fmtP(x as Vec3)} and pitch_y along ${fmtP(y)}: check that is the direction you meant (a long pitch across a short side), then make ${n.id} reach past the holes or bring the port in; for a joint's motor, a bigger part or a ratio that takes a shorter stocked belt.` });
+        const extents = prims.map((o) => {
+          const lo = [0, 1, 2].map((k) => o.c[k]! - o.axes.reduce((t, ax, i) => t + Math.abs(ax[k]!) * o.half[i]!, 0));
+          const hi = [0, 1, 2].map((k) => o.c[k]! + o.axes.reduce((t, ax, i) => t + Math.abs(ax[k]!) * o.half[i]!, 0));
+          return `${fmtP(lo as Vec3)}..${fmtP(hi as Vec3)}`;
+        }).join(" and ");
+        problems.push({ node: n.id, other: n.id, message: `${n.id}: ${p.type} "${p.name}" puts ${out.length} of its ${members.list.length} Ø${round1(2 * members.r)} holes outside ${n.id}'s envelope (${extents}), at ${out.map(([u, v]) => fmtP(at(u, v))).join(", ")} in ${n.id}'s frame, so G3 can never find them. The pattern's pitch_x runs along the port's xAxis ${fmtP(x as Vec3)} and pitch_y along ${fmtP(y)}: check that is the direction you meant (a long pitch across a short side), then make ${n.id} reach past the holes or bring the port in; for a joint's motor, a bigger part or a ratio that takes a shorter stocked belt.` });
       }
     }
   }

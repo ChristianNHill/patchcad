@@ -226,7 +226,7 @@
       "category": "fasteners", "kind": "fastener", "keyedBy": "size", "skuPrefix": "CONFIRMAT",
       "note": "one-piece furniture connector screw: 90° countersunk head with a 4 mm hex socket, plain shoulder, coarse wood thread modelled at its core Ø; drill drillA through the face panel and drillB into the edge", "dimsSource": "family-typical",
       "dims": { "7": { "d": 7, "core": 4, "headD": 10, "shoulderL": 9, "socketAf": 4, "drillA": 7, "drillB": 5 } },
-      "lengths": { "7": [50] }
+      "lengths": { "7": [50, 60, 70] }
     },
     "chipboard": {"category": "fasteners", "kind": "fastener", "keyedBy": "size", "skuPrefix": "DIN7505", "standard": "DIN 7505 A", "note": "countersunk chipboard / wood screw, Pozi PZ2, 90° head (headD, DIN 7505 A dk); thread modelled at its core Ø (d2 max), which is under pilotHard, so a pilot drilled at pilotHard shares nothing with it. pilotSoft/pilotHard are the usual softwood/hardwood pilots (trade table, not the standard). DIN 7505 is withdrawn and heads vary by maker: k is 2.0-3.65 across sources, so the head is modelled as the 90° cone from d to headD. Sources: globalfastener.com DIN 7505 table; fasten.it; lengths from finescrews.com", "dimsSource": "standard", "dims": {"3.5": {"d": 3.5, "core": 2.15, "pitch": 1.6, "headD": 7, "pilotSoft": 2, "pilotHard": 2.5}, "4": {"d": 4, "core": 2.5, "pitch": 1.8, "headD": 8, "pilotSoft": 2.5, "pilotHard": 3}, "4.5": {"d": 4.5, "core": 2.7, "pitch": 2, "headD": 9, "pilotSoft": 3, "pilotHard": 3.5}, "5": {"d": 5, "core": 3, "pitch": 2.2, "headD": 10, "pilotSoft": 3, "pilotHard": 3.5}}, "lengths": {"3.5": [12, 16, 20, 25], "4": [16, 20, 25, 30, 35, 40, 45, 50], "4.5": [20, 25, 30, 35, 40, 45, 50], "5": [30, 35, 40, 45, 50, 60, 70, 80]}},
     "cam_lock": {

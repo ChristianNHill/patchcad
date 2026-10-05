@@ -470,7 +470,14 @@ export function kinematicJoints(
         if (!placed.length) group(joints[0]!).moving.push(n);
         placed.forEach((m, i) => {
           const at = transformPoint(m, [0, 0, 0]);
-          const nearest = pool(n).reduce((best, j) => (axisDistance(group(j), at) < axisDistance(group(best), at) ? j : best));
+          // On one line (a pinewood car's left and right axle nails share the
+          // axle's axis), the nearer joint along it: the right wheel was
+          // given to the left nail and the right joint swept nothing.
+          const along = (j: KinematicJoint) => Math.hypot(...at.map((v, k) => v - group(j).origin[k]!));
+          const nearest = pool(n).reduce((best, j) => {
+            const [dj, db] = [axisDistance(group(j), at), axisDistance(group(best), at)];
+            return dj < db - 1e-6 || (Math.abs(dj - db) <= 1e-6 && along(j) < along(best)) ? j : best;
+          });
           if (joints.includes(nearest)) group(nearest).moving.push(i === 0 ? n : `${n}#${i}`);
         });
       }

@@ -349,6 +349,9 @@ describe("pinewood car: four wheels on axle nails", () => {
     expect(lintAll(out).filter((m) => /both turn about one axis|stated|wheel-/.test(m))).toEqual([]);
     const { instances } = solved(out);
     expect(instances.wheel).toHaveLength(4);
+    // Each nail's joint turns its own wheel: left and right share the axis line.
+    const joints = new CadBackend().solveScene(graphOf(out)).joints.filter((j) => j.id.startsWith("wheel-"));
+    expect(joints.map((j) => `${j.id}:${j.moving.filter((k) => k.startsWith("wheel")).length}`).sort()).toEqual(["wheel-fl:1", "wheel-fr:1", "wheel-rl:1", "wheel-rr:1"]);
   });
 });
 
