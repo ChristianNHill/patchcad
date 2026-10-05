@@ -120,7 +120,7 @@ export function threadAllowances(graph: GraphDoc): { a: string; b: string; volum
       if ((owner || mOwner) && owner !== mOwner && !rides) continue;
       // A joint's screw into its own motor (a servo's case pilots) engages
       // over the screw's length: the case is catalog, so no port says how deep.
-      const len = m.kind === "motor" ? (owner && owner === mOwner ? num(graph, param(screw, "length")) : null) : engagementLength(m.kind, thread, skuOf(m)?.family);
+      const len = m.kind === "motor" ? (owner && owner === mOwner ? num(graph, param(screw, "length")) : null) : engagementLength(m.kind, thread, skuOf(m)?.family, num(graph, param(m, "length")));
       if (len != null && Number.isFinite(len)) out.push({ a: screw.id, b: m.id, volume_mm3: allow(len) });
     }
     // A tapped hole or a boss pilot is matched by the mate that seats the

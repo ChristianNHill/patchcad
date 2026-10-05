@@ -84,6 +84,9 @@ describe("grounded facts match what the probes and gates actually measured", () 
     // The part's own family: a short insert engages 4mm, not the standard 8.1.
     expect(engagementLength("insert", "M4", "heatset_short")).toBe(4);
     expect(engagementLength("fastener", "M4")).toBeNull();
+    // Wood inserts are sold by length: their dims row has none.
+    expect(engagementLength("insert", "M6", "wood_insert", 12)).toBe(12);
+    expect(engagementLength("insert", "M6", "wood_insert")).toBeGreaterThan(0);
   });
 
   it("refuses a designation it cannot read rather than guessing", () => {

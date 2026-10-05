@@ -43,7 +43,7 @@
         {
           "motion": "revolute",
           "hardware": [
-            "dowel|shaft"
+            "dowel|shaft|pin|filament_pin"
           ],
           "travel": 60
         }

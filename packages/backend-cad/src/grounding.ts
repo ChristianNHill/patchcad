@@ -15,7 +15,7 @@
  * they would be numbers I cannot check, and a grounding table nobody verified
  * is worse than an honest gap because the model would trust it.
  */
-import { dim, familyDims, threadSpec } from "./catalog.js";
+import { dim, familyDims, standardLengths, threadSpec } from "./catalog.js";
 import { METRIC } from "./registry.js";
 
 /** Nominal major diameter, from the designation. M4 -> 4. */
@@ -91,11 +91,18 @@ export function threadEngagementVolume(thread: string, engagementLength: number)
 
 /** Engagement length for a screw into each mating kind, from the catalog.
  *  `family` is the part's own (skuOf): a short heat-set insert engages less
- *  than a standard one. */
-export function engagementLength(kind: string, thread: string, family?: string): number | null {
+ *  than a standard one. A family sold by length (wood inserts) has no
+ *  `length` in its dims row: the part's own `length` param says, else its
+ *  shortest stocked length. */
+export function engagementLength(kind: string, thread: string, family?: string, length?: number): number | null {
   if (kind === "nut") return rowDim(family ?? "hex_nut", "height")(thread) ?? null;
-  if (kind === "insert") return rowDim(family ?? "heatset_std", "length")(thread) ?? null;
-  return null;
+  if (kind !== "insert") return null;
+  const fam = family ?? "heatset_std";
+  const row = familyDims(fam, thread);
+  if (!row) return null;
+  if (typeof row.length === "number") return row.length;
+  if (length != null && Number.isFinite(length) && length > 0) return length;
+  return standardLengths(fam, thread)[0] ?? null;
 }
 
 /**
