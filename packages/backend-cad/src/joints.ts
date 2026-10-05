@@ -671,15 +671,23 @@ const W2: JointRule = {
  *  b's edge, its shoulder in a's Ø7 hole, its thread in b's Ø5 pilot. */
 const W3: JointRule = {
   id: "W3",
-  when: (i) => fastens(i) && wood(i),
+  // A metric thread hint asks for a machine screw (into a cross-dowel nut),
+  // which a confirmat's wood thread is not.
+  when: (i) => fastens(i) && wood(i) && !/^M\d/.test(i.threadHint ?? ""),
+  can: (i) => fastens(i) && wood(i),
   uses: ["confirmat"],
   fit: (i) => {
     const r = familyDims("confirmat", "7")!;
-    const L = standardLengths("confirmat", "7")[0]!;
+    // The shortest stocked length that leaves 25mm (about 3.5·d) of thread
+    // in b's edge: a 38mm panel takes a 7×70 (real-cube-shelf, which the
+    // 7×50 left 12mm).
+    const ENGAGE = 25;
+    const lengths = standardLengths("confirmat", "7");
+    const L = lengths.find((l) => l - i.wallA >= ENGAGE) ?? lengths[lengths.length - 1]!;
     const hh = (dim(r, "headD") - dim(r, "d")) / 2;
     const thread = L - i.wallA;
     if (i.wallA < hh + dim(r, "shoulderL") / 2) return `wallA ${mm(i.wallA)} < confirmat head ${mm(hh)} + half its shoulder ${mm(dim(r, "shoulderL") / 2)}`;
-    if (thread < L / 2) return `wallA ${mm(i.wallA)} leaves the ${L}mm confirmat only ${mm(thread)} of thread in b (needs ${L / 2})`;
+    if (thread < ENGAGE) return `wallA ${mm(i.wallA)} leaves the longest stocked confirmat (${L}mm) only ${mm(thread)} of thread in b (needs ${ENGAGE})`;
     if (i.wallB < thread + 1 + WOOD_SKIN_MM) return `wallB ${mm(i.wallB)} < confirmat reach ${mm(thread)} + 1 + ${WOOD_SKIN_MM}`;
     if (i.lateral !== undefined && i.lateral < dim(r, "drillB") + 2 * WOOD_SKIN_MM) return `lateral ${mm(i.lateral)} < Ø${dim(r, "drillB")} pilot + 2·${WOOD_SKIN_MM}`;
     return decision("W3", "confirmat", `7×${L} confirmat screw`, [`wood, ${i.intent}: a confirmat connector screw, never a tapped hole or an insert`], {

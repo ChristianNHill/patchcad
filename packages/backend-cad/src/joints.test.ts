@@ -410,6 +410,10 @@ describe("material classes (real-step-stool)", () => {
     expect(ok(stool).rule).toBe("W2");
     const d = ok({ ...stool, intent: "permanent" });
     expect([d.rule, d.recipe, d.thread]).toEqual(["R6", "side_nut_trap", "M6"]);
+    // A stated "confirmat 7x70" through a 38mm KALLAX panel: the 70 reaches,
+    // the 50 left 12mm of thread (real-cube-shelf-1x2).
+    const kallax = { processA: "CNC" as const, processB: "CNC" as const, materialA: "particle board", materialB: "particle board", wallA: 38, wallB: 38, intent: "permanent" as const, prefer: { family: "confirmat", key: "7x70" } };
+    expect(ok(kallax).parts).toEqual([{ role: "screw", family: "confirmat", key: "7", length: 70 }]);
     // A metal a on a wood b is still not tapped into the wood.
     expect(ok({ ...stool, materialA: "steel" }).rule).not.toBe("R2");
     // Into metal it is.
