@@ -910,19 +910,26 @@ function hubBearings(c: Ctx) {
   const kw = keep.family === "collar" ? n(keep, "width") : n(keep, "thickness");
   const [ida, idb, aid, kid] = [hardwareId(j.id, "hub_bearing_a"), hardwareId(j.id, "hub_bearing_b"), hardwareId(j.id, axle.role), hardwareId(j.id, keep.role)];
   unmate(c);
-  x.addParam(B, `${vb}_seat_od`, `bearing OD for ${j.id}`, `hw:bearingSeatD:param:${ida}.sku`);
-  x.addParam(B, `${vb}_seat_w`, `seat depth for ${j.id}`, `hw:bearingWidth:param:${ida}.sku`);
+  // One bearing (a thin wheel, a light load) sits at b's far face, the axle
+  // through a clearance bore in the rest of b.
+  const two = !!part(d, "hub_bearing_a");
+  x.addParam(B, `${vb}_seat_od`, `bearing OD for ${j.id}`, `hw:bearingSeatD:param:${two ? ida : idb}.sku`);
+  x.addParam(B, `${vb}_seat_w`, `seat depth for ${j.id}`, `hw:bearingWidth:param:${two ? ida : idb}.sku`);
   const seat: CadPortT["params"] = { od: `param(${B.id}.${vb}_seat_od)`, width: `param(${B.id}.${vb}_seat_w)`, fit: "press" };
-  x.addPort(B, "provides", { name: `${vb}_seat_a`, type: "BEARING_SEAT", pose: at(fb, 0, 0, 0), params: seat });
+  if (two) x.addPort(B, "provides", { name: `${vb}_seat_a`, type: "BEARING_SEAT", pose: at(fb, 0, 0, 0), params: seat });
   x.addPort(B, "provides", { name: `${vb}_seat_b`, type: "BEARING_SEAT", pose: at(fb, 0, 0, times(-1, j.wallB), true), params: seat });
-  for (const [id, role] of [[ida, "hub_bearing_a"], [idb, "hub_bearing_b"]] as const) {
+  const web = c.i.wallB - d.dims.width!;
+  if (!two && web > 0.2) {
+    x.addPort(B, "provides", { name: `${vb}_axle_bore`, type: "BORE", pose: at(fb, 0, 0, 0), params: { diameter: round(d.dims.d! + FDM_SLIP_FIT_MM), depth: round(web) } }, "BORE", `the axle's way through b to its bearing for ${j.id}`);
+  }
+  for (const [id, role] of (two ? [[ida, "hub_bearing_a"], [idb, "hub_bearing_b"]] as const : [[idb, "hub_bearing_b"]] as const)) {
     const p = part(d, role)!;
     x.mint(j.id, p, d.summary, [
       { side: "requires", port: { name: "seat", type: "FLAT_FACE", pose: INSET_POSE as unknown as Pose, params: { ring_diameter: n(p, "od") - 1 } }, decl: "BEARING_SEAT" },
       { side: "provides", port: { name: "bore", type: "FLAT_FACE", pose: SEAT_POSE as unknown as Pose, params: { ring_diameter: d.dims.d! + 1 } }, decl: "FLAT_FACE" },
     ]);
   }
-  x.addEdge(B.id, `${vb}_seat_a`, ida, "seat");
+  if (two) x.addEdge(B.id, `${vb}_seat_a`, ida, "seat");
   x.addEdge(B.id, `${vb}_seat_b`, idb, "seat");
   x.mint(j.id, keep, d.summary, [{ side: "requires", port: { name: "seat", type: "FLAT_FACE", pose: SEAT_POSE as unknown as Pose, params: { ring_diameter: d.dims.d! + 1 } }, decl: "FLAT_FACE" }]);
   x.addEdge(idb, "bore", kid, "seat");

@@ -1422,6 +1422,22 @@ describe("a wheel on its own bearings, on an axle fixed in a thin plate", () => 
     expect(lintAll(out)).toEqual([]);
   });
 
+  it("a wheel too thin for two takes one bearing at its far face, the axle through a bore (real-spool-holder)", () => {
+    const plate = part("plate", 7, [face("gear_0", 0, 30, [0, 0, -1])]);
+    const gear = part("gear", 9, [face("hub_face", 0, 30, [0, 0, 1])], {
+      envelope: { volumes: [{ kind: "cylinder", pose: { origin: [0, 0, -4.5], zAxis: [0, 0, 1], xAxis: [1, 0, 0] }, d: 30, h: 9 }], clearance: 0.4 } as never,
+    });
+    const out = expandJoints({
+      ...plates({}), nodes: [plate, gear] as never, entryNodeId: "plate",
+      joints: [{ id: "gear-0", a: { node: "plate", port: "gear_0" }, b: { node: "gear", port: "hub_face" }, intent: "serviceable", motion: "revolute", duty: "continuous", load: "light", wallA: 7, wallB: 9, prefer: { family: "bearing", key: "608" } }],
+    } as ArchitectOutput);
+    expect(out.joints![0]!.expanded).toBe("M1h|hub_bearing_b=bearing:608|axle_shaft=d_shaft:8|axle_collar=collar:8");
+    expect(ports(out, "gear")).toEqual(expect.arrayContaining(["gear_0_seat_b:BEARING_SEAT", "gear_0_axle_bore:BORE"]));
+    expect(ports(out, "gear")).not.toContain("gear_0_seat_a:BEARING_SEAT");
+    expect(solved(out).problems).toEqual([]);
+    expect(lintAll(out)).toEqual([]);
+  });
+
   it("seats one bearing set in the wheel and carries it to every copy (real-round-stool, real-linear-actuator)", () => {
     // Was: each joint's bearings, all four sets on wheel #0.
     const out = gantry(4);

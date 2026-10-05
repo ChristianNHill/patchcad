@@ -876,13 +876,22 @@ const M1h: JointRule = {
   can: (i) => revolute(i) && !i.driven && i.wallA < shaftFor(i),
   uses: SPINDLE,
   fit: (i) => {
-    const s = spindleFor({ ...i, wallA: i.wallB, wallB: Infinity, minWallA: minWallOf(i), roomA: undefined, depthA: undefined });
-    if (typeof s === "string") return s.replace("wallA", "wallB").replace(" in a ", " in b ");
+    const inB = { ...i, wallA: i.wallB, wallB: Infinity, minWallA: minWallOf(i), roomA: undefined, depthA: undefined };
+    const two = spindleFor(inB);
+    // A wheel too thin for two takes one, at its far face, when the load is
+    // light: a spool holder's 30mm gear on one 608 (real-spool-holder), the
+    // way the product is built. The axle carries the moment in a.
+    const light = i.load === "none" || i.load === "light";
+    const s = typeof two === "string" && light && !i.pairedB ? spindleFor(inB, true) : two;
+    if (typeof s === "string") return (typeof two === "string" ? two : s).replace("wallA", "wallB").replace(" in a ", " in b ");
     if (i.wallA < s.d / 2) return `wallA ${mm(i.wallA)} < axle socket ${mm(s.d / 2)} (half its Ø)`;
-    const role: Record<string, string> = { bearing_a: "hub_bearing_a", bearing_b: "hub_bearing_b" };
-    return decision("M1h", "hub_bearings", `2×${s.key} bearings in b on a Ø${s.d} axle fixed in a`, [
+    const one = s !== two;
+    const role: Record<string, string> = one ? { bearing_a: "hub_bearing_b" } : { bearing_a: "hub_bearing_a", bearing_b: "hub_bearing_b" };
+    return decision("M1h", "hub_bearings", `${one ? "one" : "2×"}${one ? ` ${s.key} bearing` : `${s.key} bearings`} in b on a Ø${s.d} axle fixed in a`, [
       `revolute, ${i.duty === "continuous" ? "continuous" : `${i.load} load`}: rolling bearings, seated in b because a is too thin for two`,
-      ...s.reasons.map((r) => r.replace("wallA", "wallB")),
+      ...(one
+        ? [`Ø${s.d} axle for a ${i.load} load`, `${s.key}: one, at b's far face: wallB ${mm(i.wallB)} holds one, not two; a light load, the axle takes the moment in a`, ...s.reasons.slice(3)]
+        : s.reasons.map((r) => r.replace("wallA", "wallB"))),
     ], { parts: s.parts.map((p) => ({ ...p, role: role[p.role] ?? `axle_${p.role}` })), dims: { d: s.d, od: s.od, width: s.width } });
   },
 };
