@@ -167,6 +167,26 @@ describe("feasibleSequence", () => {
     expect(seq.sequenceProblems).toEqual([]);
   });
 
+  it("a linear bearing goes into its carriage first, and the carriage slides on before the second end block", async () => {
+    // asm-linear-slide (2026-10-05): rods fixed in two end blocks, an LM8UU in
+    // each carriage seat. Slid onto the rods on their own, the bearings left
+    // the carriage nothing to go on by, and the near block capped the rods.
+    const g = GraphDoc.parse(JSON.parse(readFileSync(new URL("./fixtures/asm-linear-slide-graph.json", import.meta.url), "utf8")));
+    const scene = new CadBackend().solveScene(g);
+    const naive = buildSequence(g, scene);
+    expect(naive.steps[0]!.action).toBe("press");
+    expect(naive.steps[0]!.title).toBe("Press 2× LM8UU linear bearings into the Carriage");
+    const carriage = naive.steps[stepOf(naive, "carriage")]!;
+    expect(carriage.action).toBe("slide");
+    expect(carriage.moving.map((m) => m.key).sort()).toEqual(["carriage", "slide-left_linear_bearing", "slide-right_linear_bearing"]);
+    expect(new Set(carriage.moving.map((m) => m.direction.join(","))).size).toBe(1);
+    // Placed once: by the press, never by a step of their own.
+    expect(naive.sequenceProblems).toEqual([]);
+    const seq = await feasibleSequence(g, scene, blocks([["carriage", "near-block"]]));
+    expect(stepOf(seq, "carriage")).toBeLessThan(stepOf(seq, "near-block"));
+    expect(seq.sequenceProblems).toEqual([]);
+  });
+
   it("presses a blocked bearing from inside when the kernel can reach that start, and only then", async () => {
     const { g, scene } = example("cad-rotor");
     // Say the base blocks bearing_a's way in. Pressed the other way, outward

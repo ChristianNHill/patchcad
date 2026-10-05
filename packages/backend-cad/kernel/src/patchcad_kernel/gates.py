@@ -2765,8 +2765,9 @@ def _probe_hub_bore(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
     fit = "press" if port.get("params", {}).get("fit") == "press" else "slip"
     band = _band(port, d, fit)
     flat = _port_dim_opt(port, ("flat", "flat_distance"))
+    need = _port_dim_opt(port, DEPTH_KEYS)
     if flat is None:
-        return _banded(shape, port, band)
+        return _hub_depth(shape, port, _banded(shape, port, band), need)
     frame = _frame(port["pose"])
     o, x, y, z = frame
     w = -PROBE_DEPTH_MM
@@ -2799,7 +2800,30 @@ def _probe_hub_bore(shape: Any, port: dict[str, Any]) -> dict[str, Any]:
         raise GateError("G3", f'port "{key}" (HUB_BORE): {got} along +xAxis, expected it {flat:g}mm from the axis',
                         f"cut the D-flat {flat:g}mm from the bore axis, facing +xAxis",
                         expected=flat, **({} if at is None else {"measured": round(at, 3)}))
-    return {"key": key, "type": "HUB_BORE", "measured_diameter": round(measured, 3), "measured_flat": round(at, 3)}
+    return _hub_depth(shape, port, {"key": key, "type": "HUB_BORE", "measured_diameter": round(measured, 3), "measured_flat": round(at, 3)},
+                      need, cu, cv)
+
+
+def _hub_depth(shape: Any, port: dict[str, Any], result: dict[str, Any], need: float | None,
+               cu: float = 0.0, cv: float = 0.0) -> dict[str, Any]:
+    """The shaft runs `depth` into the hub (its contract says how far): a blind
+    bore shorter than that leaves the shaft's tip in the part's material. The
+    floor is read on the axis; a bore that runs through has none."""
+    if need is None or result.get("through"):
+        return result
+    floor = result.get("measured_depth")
+    if floor is None:
+        frame = _frame(port["pose"])
+        floor = _axial_depth(shape, frame, cu, cv, need + 2 * PROBE_DEPTH_MM + 1.0)
+        r = result.get("measured_diameter", _port_diameter(port)) / 2 + PROBE_INSET_MM
+        if floor is None or _breaks_out(shape, frame, cu, cv, r, floor):
+            return result
+        result = result | {"measured_depth": round(floor, 3)}
+    if floor < need - FIT_EPS_MM:
+        raise GateError("G3", f'port "{port.get("key", "?")}" (HUB_BORE): the shaft runs {need:g}mm in, the bore is {floor:.2f}mm deep',
+                        f"cut the bore at least {need:g}mm deep from the port face, or right through",
+                        expected=need, measured=round(floor, 3))
+    return result
 
 
 HARDWARE_PROBES = {

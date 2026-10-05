@@ -210,6 +210,11 @@ describe("a spinning rotor", () => {
     expect(ports(out, "rotor")).toEqual(["base_face:FLAT_FACE", "j1_hub:HUB_BORE"]);
     expect(param(out, "base", "j1_seat_od")).toBe(16);
     expect(param(out, "rotor", "j1_flat")).toBe(2);
+    // A slip hub says how far its shaft runs in too: asm-knob-dshaft's 10mm
+    // bore took a shaft cut for its whole height (G3 now reads the floor).
+    const hub = (out.nodes.find((n) => n.id === "rotor")!.contract.payload as CadContractPayload).ports.find((p) => p.name === "j1_hub")!;
+    expect(hub.params).toMatchObject({ depth: "param(rotor.thickness)" });
+    expect(hub.params).not.toHaveProperty("fit");
   });
 
   it("places the rotor through the shaft, clear of the housing, and passes every lint", () => {

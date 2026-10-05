@@ -157,7 +157,10 @@ pool = None  # set at startup; parent process stays OCP-free
 # its joint axis (37 and 113 deg, >= 99% shared) against parts that hold still:
 # a V-wheel or roller on its rail sweeps only its rest pose, which the static
 # clash check already judged.
-GATES_VERSION = 23
+# 23 -> 24: a HUB_BORE with params.depth (how far its shaft runs in) fails G3
+# when its blind floor is shallower: a knob's 10mm D-bore took a shaft cut to
+# run its full 24mm height, and only G5 saw the 93mm3 of tip in its material.
+GATES_VERSION = 24
 # Tap drills and clearances come from the catalog, so a catalog edit changes
 # verdicts too. Keyed by content, not by remembering to bump GATES_VERSION.
 CATALOG_DIGEST = hashlib.sha256(

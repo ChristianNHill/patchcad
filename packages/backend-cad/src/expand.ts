@@ -988,7 +988,10 @@ function hubOn(c: Ctx, shaft: HardwarePick, sid: string, from: string) {
     x.addParam(B, `${vb}_flat`, `D-flat distance from the axis for ${j.id}`, `hw:hubFlat:param:${sid}.sku`);
     hub.flat = `param(${B.id}.${vb}_flat)`;
   }
-  if (j.hubFit === "press") Object.assign(hub, { fit: "press", depth: hubDepth(c) });
+  // The shaft is cut to run hubDepth into b, slip or press: b's bore must be
+  // that deep, or its tip sits in b's material (G3 reads the floor).
+  hub.depth = hubDepth(c);
+  if (j.hubFit === "press") hub.fit = "press";
   x.addPort(B, "requires", { name: `${vb}_hub`, type: "HUB_BORE", pose: at(fb, 0, 0, 0), params: hub });
   x.addEdge(sid, from, B.id, `${vb}_hub`);
   ringFace(c, B, j.b.port, sum(`param(${B.id}.${vb}_shaft_d)`, 2.4));
@@ -1214,7 +1217,7 @@ function directDrive(c: Ctx) {
   x.addPort(A, "provides", { name: `${v}_motor_mount`, type: mountType, pose: mountPose, params: mountParams },
     mountType, typeof row.tabZ === "number" && row.tabZ > 0 ? `servo tab screws; cut a ${g("bodyL") + 0.6}×${g("bodyW") + 0.6} opening for the case, centred here` : "");
   x.addEdge(A.id, `${v}_motor_mount`, mid, "mount");
-  const hub: CadPortT["params"] = { diameter: d.dims.d! };
+  const hub: CadPortT["params"] = { diameter: d.dims.d!, depth: d.dims.engage! };
   if (stepper || motor.family === "n20") hub.flat = round(g("shaftD") / 2 - g("flatDepth"));
   // A screwed horn: b's face sits on the horn's top, no bore.
   x.addPort(B, "requires", horned

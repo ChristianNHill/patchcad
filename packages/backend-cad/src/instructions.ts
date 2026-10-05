@@ -117,6 +117,9 @@ interface Link {
   port: string;
   other: Copy;
   otherPort: string;
+  /** The pressed-in part whose port this is, when `self` carries it (a
+   *  carriage riding its rod through the linear bearing seated in it). */
+  via?: Copy;
 }
 
 const BEARINGS = new Set(["bearing", "bushing", "linear_bearing"]);
@@ -157,7 +160,8 @@ const unit = (v: number[]): Vec3 => {
 
 function lengthOf(node: NodeRecord): number | undefined {
   const len = Number(mergedParams(node).length);
-  return Number.isFinite(len) && len > 0 ? len : undefined;
+  // A cut-to-length rod is cut to a tenth of a millimetre at best.
+  return Number.isFinite(len) && len > 0 ? Math.round(len * 10) / 10 : undefined;
 }
 
 /** "M3×10 button head screw", "625 ball bearing", "158 mm GT2 closed belt". */
@@ -242,13 +246,28 @@ function copyLinks(graph: GraphDoc, scene: SceneLike) {
       }
     }
   }
+  // A linear bearing seated in a made part is pressed into it on the bench,
+  // and that part then rides the rod through it: it inherits the bearing's
+  // rod mates. Slid onto the rods alone, a bearing leaves its carriage to go
+  // on over it, which no retaining lip allows.
+  const made = (id: string) => sourcingOf(graph.nodes[id]!).class !== "buy";
+  const carriers = new Map<string, Copy>();
+  for (const l of [...links]) {
+    if (graph.nodes[l.self.node]!.kind !== "linear_bearing" || !made(l.other.node)) continue;
+    carriers.set(l.self.key, l.other);
+    for (const r of links.filter((x) => x.self.key === l.self.key && graph.nodes[x.other.node]!.kind === "shaft")) {
+      links.push({ self: l.other, port: r.port, other: r.other, otherPort: r.otherPort, via: r.self });
+      links.push({ self: r.other, port: r.otherPort, other: l.other, otherPort: r.port });
+    }
+  }
   /** The way a copy travels when this link places it: along its own port's +z. */
   const approach = (l: Link): Vec3 => {
-    const m = mul(l.self.matrix, poseToMat(ports.get(l.self.node)![l.port]!));
+    const own = l.via ?? l.self;
+    const m = mul(own.matrix, poseToMat(ports.get(own.node)![l.port]!));
     return unit([m[8]!, m[9]!, m[10]!]);
   };
-  const portAt = (l: Link) => transformPoint(l.self.matrix, ports.get(l.self.node)![l.port]!.origin);
-  return { copies, links, approach, portAt };
+  const portAt = (l: Link) => transformPoint((l.via ?? l.self).matrix, ports.get((l.via ?? l.self).node)![l.port]!.origin);
+  return { copies, links, approach, portAt, carriers };
 }
 
 /** The order, from the mates; no geometry is consulted (see feasibleSequence). */
@@ -260,7 +279,8 @@ function plan(graph: GraphDoc, scene: SceneLike, opts: SequenceOptions) {
   const nodes = Object.values(graph.nodes);
   const byId = graph.nodes;
   const order = new Map(nodes.map((n, i) => [n.id, i]));
-  const { copies, links, approach, portAt } = copyLinks(graph, scene);
+  const { copies, links, approach, portAt, carriers } = copyLinks(graph, scene);
+  const carried = (n: NodeRecord) => (copies.get(n.id) ?? []).some((c) => carriers.has(c.key));
   const problems: string[] = [];
   const bom = buildBom(graph);
   const skuId = (n: NodeRecord) => bom.buy.find((r) => r.nodes.includes(n.id))?.sku ?? skuOf(n)?.id ?? n.kind;
@@ -287,7 +307,7 @@ function plan(graph: GraphDoc, scene: SceneLike, opts: SequenceOptions) {
   const hingePin = (n: NodeRecord) =>
     (n.kind === "pin" || n.kind === "dowel") && (graph.joints ?? []).some((j) => j.id === jointOwner(graph, n.id) && j.motion === "revolute");
   const role = (n: NodeRecord): "insert" | "fastener" | "item" =>
-    PREINSTALLED.has(n.kind) && !hingePin(n) ? "insert" : FASTENERS.has(n.kind) && !(n.kind === "washer" && shaftBorne(n)) ? "fastener" : "item";
+    (PREINSTALLED.has(n.kind) && !hingePin(n)) || carried(n) ? "insert" : FASTENERS.has(n.kind) && !(n.kind === "washer" && shaftBorne(n)) ? "fastener" : "item";
   const items = nodes.filter((n) => role(n) === "item");
   const fasteners = nodes.filter((n) => role(n) === "fastener");
   const inserts = nodes.filter((n) => role(n) === "insert");
@@ -452,7 +472,7 @@ function plan(graph: GraphDoc, scene: SceneLike, opts: SequenceOptions) {
   const placed = new Set<string>();
   const placedKeys = new Set<string>();
   const steps: AssemblyStep[] = [];
-  const hostOf = (c: Copy) => links.find((l) => l.self.key === c.key && role(byId[l.other.node]!) !== "insert")?.other;
+  const hostOf = (c: Copy) => carriers.get(c.key) ?? links.find((l) => l.self.key === c.key && role(byId[l.other.node]!) !== "insert")?.other;
   const label = (n: NodeRecord) => (isBuy(n) ? hardwareLabel(n) : n.title);
   const hostPhrase = (ids: string[]) => {
     const tally = new Map<string, number>();
@@ -466,7 +486,9 @@ function plan(graph: GraphDoc, scene: SceneLike, opts: SequenceOptions) {
   const moves = (ids: string[], within: Set<string>) =>
     ids.flatMap((id) =>
       (copies.get(id) ?? []).map((c) => {
-        const l = links.find((x) => x.self.key === c.key && within.has(x.other.node)) ?? links.find((x) => x.self.key === c.key);
+        // Never the bearing pressed into it: it goes on by what that rides.
+        const own = links.filter((x) => x.self.key === c.key && carriers.get(x.other.key)?.key !== c.key);
+        const l = own.find((x) => within.has(x.other.node)) ?? own[0];
         return { key: c.key, direction: l ? approach(l) : ([0, 0, -1] as Vec3), host: l?.other.node };
       }),
     );
@@ -483,19 +505,19 @@ function plan(graph: GraphDoc, scene: SceneLike, opts: SequenceOptions) {
   };
   const count = (id: string) => Math.max(1, copies.get(id)?.length ?? 1);
   const movingKeys = (ids: string[], within: Set<string>) => {
-    const m = moves(ids, within);
+    const m: (ReturnType<typeof moves>[number] & { carrier?: string })[] = moves(ids, within);
     // A part carries the inserts already pressed into it.
     for (const ins of inserts) for (const c of copies.get(ins.id) ?? []) {
       const host = hostOf(c);
       const carrier = host && m.find((x) => x.key === host.key);
-      if (carrier && !m.some((x) => x.key === c.key)) m.push({ key: c.key, direction: carrier.direction, host: carrier.host });
+      if (carrier && !m.some((x) => x.key === c.key)) m.push({ key: c.key, direction: carrier.direction, host: carrier.host, carrier: carrier.key });
     }
     return m;
   };
   const visible = () =>
     [...placedKeys].filter((k) => {
       const node = k.split("#")[0]!;
-      if (!PREINSTALLED.has(byId[node]!.kind)) return true;
+      if (role(byId[node]!) !== "insert") return true;
       const host = hostOf((copies.get(node) ?? []).find((c) => c.key === k)!);
       return !host || placedKeys.has(host.key);
     });
@@ -508,7 +530,7 @@ function plan(graph: GraphDoc, scene: SceneLike, opts: SequenceOptions) {
   const byHost = new Map<string, { ids: Set<string>; keys: { key: string; direction: Vec3 }[] }>();
   for (const ins of inserts)
     for (const c of copies.get(ins.id) ?? []) {
-      const l = links.find((x) => x.self.key === c.key);
+      const l = links.find((x) => x.self.key === c.key && (!carriers.has(c.key) || x.other.key === carriers.get(c.key)!.key));
       const host = l?.other.node ?? "";
       const g = byHost.get(host) ?? { ids: new Set(), keys: [] };
       g.ids.add(ins.id);
@@ -526,6 +548,7 @@ function plan(graph: GraphDoc, scene: SceneLike, opts: SequenceOptions) {
       notes: [...g.ids].map((id) => byId[id]!.kind).map((k) =>
         k === "magnet" ? "Press each magnet in flush. Check its pole against its partner first, so the pair attracts."
         : k === "dowel" ? "Tap each dowel in square until it stops. The part that goes on next slides over what sticks out."
+        : k === "linear_bearing" ? "Press each linear bearing in square until it sits in its seat, pushing on its outer shell only."
         : "Heat each insert with the soldering iron and press it straight down until it sits flush. Let it cool before you load it.").filter((v, i, a) => a.indexOf(v) === i),
       context: (copies.get(host) ?? []).map((c) => c.key),
       moving: g.keys,
@@ -578,8 +601,9 @@ function plan(graph: GraphDoc, scene: SceneLike, opts: SequenceOptions) {
     const fs = fastenersReady();
     for (const f of fs) placed.add(f.id);
     const ns = ids.map((id) => byId[id]!);
-    const mv = movingKeys(ids, within).map((m) =>
-      opts.reversed?.includes(m.key.split("#")[0]!) || opts.inside?.includes(m.key) ? { ...m, direction: m.direction.map((v) => -v || 0) as Vec3 } : m);
+    const flipped = (key: string) => opts.reversed?.includes(key.split("#")[0]!) || opts.inside?.includes(key);
+    // What a part carries goes the way the part goes.
+    const mv = movingKeys(ids, within).map(({ carrier, ...m }) => (flipped(carrier ?? m.key) ? { ...m, direction: m.direction.map((v) => -v || 0) as Vec3 } : m));
     const mated = [...new Set(mv.filter((m) => !riders.includes(m.key.split("#")[0]!)).map((m) => m.host).filter((h): h is string => !!h && within.has(h)))];
     const holding = (id: string) => !!opts.held?.includes(id) || laid.has(id);
     const action = holding(ns[0]!.id) ? "place" : actionFor(ns[0]!, mated[0]);
@@ -662,7 +686,7 @@ function plan(graph: GraphDoc, scene: SceneLike, opts: SequenceOptions) {
         const keep = new Set(placedKeys);
         placedKeys.clear();
         for (const c of copies.get(first.id) ?? []) placedKeys.add(c.key);
-        for (const k of keep) if (PREINSTALLED.has(byId[k.split("#")[0]!]!.kind)) placedKeys.add(k);
+        for (const k of keep) if (role(byId[k.split("#")[0]!]!) === "insert") placedKeys.add(k);
         run(rest, own);
         const opening = steps[before];
         if (opening) {
@@ -781,7 +805,7 @@ function checkSequence(graph: GraphDoc, seq: AssemblySequence, copies: Map<strin
   for (const k of [...(copies.get(seq.base) ?? []).map((c) => c.key), ...seq.steps.flatMap(placedBy)])
     seen.set(k, (seen.get(k) ?? 0) + 1);
   for (const [id, cs] of copies) {
-    if (PREINSTALLED.has(graph.nodes[id]!.kind)) {
+    if (PREINSTALLED.has(graph.nodes[id]!.kind) || graph.nodes[id]!.kind === "linear_bearing") {
       // An insert rides along with its part, so it moves twice; it is placed once.
       // Pressed in first; a hinge pin instead goes in like any part, after both halves.
       const pressed = seq.steps.filter((s) => s.action === "press" && s.hardware.some((h) => h.nodes.includes(id)));
@@ -866,6 +890,8 @@ export type InsertionCheck = (
 export async function feasibleSequence(graph: GraphDoc, scene: SceneLike, check: InsertionCheck): Promise<AssemblySequence> {
   const opts: Required<SequenceOptions> = { before: [], dissolve: [], held: [], supports: [], reversed: [], inside: [] };
   const triedInside = new Set<string>();
+  /** What the inside-out sweep hit, per moving copy: the far side's blockers. */
+  const reverseBy = new Map<string, string[]>();
   const nodeOf = (key: string) => key.split("#")[0]!;
   let landing: string | null = null;
   try {
@@ -915,6 +941,7 @@ export async function feasibleSequence(graph: GraphDoc, scene: SceneLike, check:
       } catch {
         answers = []; // the main sweep below reports a kernel that stopped answering
       }
+      for (const a of answers) if (a.blocked.length) reverseBy.set(a.id.slice(3), [...new Set(a.blocked.map((x) => nodeOf(x.by)))]);
       const ok = answers.filter((a) => a.blocked.length === 0).map((a) => a.id.slice(3));
       if (ok.length) {
         opts.inside.push(...ok);
@@ -936,6 +963,16 @@ export async function feasibleSequence(graph: GraphDoc, scene: SceneLike, check:
         return ok && fresh.length ? fresh.map((y) => [x, y] as [string, string]) : null;
       }).find((pairs) => pairs);
       if (ahead) return () => opts.before.push(...ahead);
+      // Blocked by the base one way, it goes in the other way ahead of what
+      // stands on that side: a carriage on rods held at both ends goes on
+      // before the second end block, not after it.
+      const flip = [...new Set(b.blocked.map((x) => x.part))].map((key) => {
+        const x = nodeOf(key);
+        const ys = (reverseBy.get(key) ?? []).filter((y) => y !== x);
+        const ok = !opts.reversed.includes(x) && ys.length > 0 && ys.every((y) => deps.has(x) && deps.has(y) && y !== seq.base && !dependsOn(x, y));
+        return ok ? { x, pairs: ys.map((y) => [x, y] as [string, string]) } : null;
+      }).find((f) => f);
+      if (flip) return () => (opts.reversed.push(flip.x), opts.before.push(...flip.pairs));
       // A pin or shaft goes in from either end: try the other one.
       const pin = b.blocked.map((x) => nodeOf(x.part)).find((x) => !opts.reversed.includes(x) && ["pin", "dowel", "shaft"].includes(graph.nodes[x]?.kind ?? ""));
       if (pin) return () => opts.reversed.push(pin);

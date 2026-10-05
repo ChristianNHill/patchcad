@@ -1,0 +1,2067 @@
+{
+ "schemaVersion": 1,
+ "id": "eval-asm-linear-slide",
+ "backend": "cad",
+ "brief": {
+  "goal": "a manual linear slide: a printed 40x40x20mm carriage riding on two parallel 8mm steel rods 30mm apart, one LM8UU linear bearing on each rod, rods held by two printed end blocks 160mm apart, giving 100mm of carriage travel",
+  "design": "Plain functional machine parts: crisp rectangular blocks with a small 0.5 mm chamfer on outside edges, no decoration. Walls should read sturdy, and the carriage and end blocks should look like one matched set with the rods at the same mid-height.",
+  "refs": []
+ },
+ "nodes": {
+  "near-block": {
+   "id": "near-block",
+   "kind": "part",
+   "title": "Near end block",
+   "spec": "Printed end block that holds the near ends of both \u00d88 steel rods in two parallel sockets. A solid rectangular block that stands on its bottom face, with the rod sockets opening out of its inner face toward the carriage.",
+   "contract": {
+    "name": "Near end block",
+    "summary": "50\u00d720\u00d730 block; two \u00d88 rod sockets 30 apart open out of its +y face at mid-height, rods running along +y toward the carriage.",
+    "params": [
+     {
+      "type": "number",
+      "name": "width",
+      "description": "block width across both rods",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 50,
+      "min": 40,
+      "max": 90
+     },
+     {
+      "type": "number",
+      "name": "thickness",
+      "description": "how far the block runs along the rods, i.e. how deep the rods sit in it",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 20,
+      "min": 12,
+      "max": 40
+     },
+     {
+      "type": "number",
+      "name": "height",
+      "description": "how tall the block stands; the rods sit at mid-height",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 30,
+      "min": 24,
+      "max": 60
+     },
+     {
+      "type": "number",
+      "name": "rod_spacing",
+      "description": "centre distance between the two rods; follows the carriage",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 30,
+      "min": 20,
+      "max": 60
+     },
+     {
+      "type": "number",
+      "name": "slide_left_rod_d",
+      "description": "rod \u00d8 for slide-left",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 8
+     },
+     {
+      "type": "number",
+      "name": "slide_right_rod_d",
+      "description": "rod \u00d8 for slide-right",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 8
+     }
+    ],
+    "provides": [
+     {
+      "key": "rod_left",
+      "type": "FLAT_FACE",
+      "description": "inner face around the -x rod socket, facing the carriage"
+     },
+     {
+      "key": "rod_right",
+      "type": "FLAT_FACE",
+      "description": "inner face around the +x rod socket, facing the carriage"
+     },
+     {
+      "key": "slide_left_rod",
+      "type": "BORE",
+      "description": ""
+     },
+     {
+      "key": "slide_right_rod",
+      "type": "BORE",
+      "description": ""
+     }
+    ],
+    "requires": [],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "rod_left",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "-param(near-block.rod_spacing) / 2",
+         "param(near-block.thickness) / 2",
+         0
+        ],
+        "zAxis": [
+         0,
+         1,
+         0
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": "(param(near-block.slide_left_rod_d)) + 2.4"
+       }
+      },
+      {
+       "name": "rod_right",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(near-block.rod_spacing) / 2",
+         "param(near-block.thickness) / 2",
+         0
+        ],
+        "zAxis": [
+         0,
+         1,
+         0
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": "(param(near-block.slide_right_rod_d)) + 2.4"
+       }
+      },
+      {
+       "name": "slide_left_rod",
+       "type": "BORE",
+       "pose": {
+        "origin": [
+         "(-param(near-block.rod_spacing) / 2)",
+         "(param(near-block.thickness) / 2)",
+         0
+        ],
+        "zAxis": [
+         0,
+         1,
+         0
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(near-block.slide_left_rod_d)",
+        "depth": "(param(near-block.thickness)) - 1.2"
+       }
+      },
+      {
+       "name": "slide_right_rod",
+       "type": "BORE",
+       "pose": {
+        "origin": [
+         "(param(near-block.rod_spacing) / 2)",
+         "(param(near-block.thickness) / 2)",
+         0
+        ],
+        "zAxis": [
+         0,
+         1,
+         0
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(near-block.slide_right_rod_d)",
+        "depth": "(param(near-block.thickness)) - 1.2"
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "box",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "dims": [
+         "param(near-block.width)",
+         "param(near-block.thickness)",
+         "param(near-block.height)"
+        ]
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "rod_spacing": "expr: param(carriage.rod_spacing)",
+      "slide_left_rod_d": "hw:shaftD:param:slide-left_rod.sku",
+      "slide_right_rod_d": "hw:shaftD:param:slide-right_rod.sku"
+     },
+     "visualChecks": [
+      "Is the part a solid upright rectangular block?",
+      "Are there exactly two round rod sockets, side by side on the same face?",
+      "Do both rod sockets open on the face pointing toward +y?"
+     ],
+     "assertions": [
+      {
+       "kind": "symmetry",
+       "plane": "yz",
+       "tol": 0.05
+      }
+     ]
+    },
+    "hash": "ac17f964cb4473d7"
+   },
+   "params": {},
+   "hidden": false,
+   "artifact": {
+    "code": "# stripped: the sequencer reads mates, not code\n",
+    "testCode": "",
+    "hash": "bd0dacc9adbbc6d0"
+   },
+   "thread": [],
+   "status": "ready",
+   "measurements": {
+    "version": 1,
+    "paramsHash": "08f44b07b5901a25",
+    "data": {
+     "volume_mm3": 28060.68452626704,
+     "area_mm2": 7027.080552107763,
+     "solids": 1,
+     "shells": [
+      1
+     ],
+     "bbox": {
+      "min": [
+       -25,
+       -10,
+       -15
+      ],
+      "max": [
+       25,
+       10,
+       15
+      ],
+      "size": [
+       50,
+       20,
+       30
+      ]
+     },
+     "printability": {
+      "min_wall": {
+       "thin_wall_p2_mm": 1.2,
+       "index": 0.999,
+       "recommended_mm": 0.8
+      },
+      "overhang": {
+       "warn_area_fraction": 0.0126,
+       "fail_area_fraction": 0.0224,
+       "index": 0.973
+      },
+      "composite": 0.986
+     },
+     "ports": [
+      {
+       "key": "rod_left",
+       "type": "FLAT_FACE",
+       "ring_diameter": 10.4
+      },
+      {
+       "key": "rod_right",
+       "type": "FLAT_FACE",
+       "ring_diameter": 10.4
+      },
+      {
+       "key": "slide_left_rod",
+       "type": "BORE",
+       "measured_diameter": 8,
+       "center_offset": 0,
+       "tilt_deg": 0,
+       "through": false,
+       "measured_depth": 18.8
+      },
+      {
+       "key": "slide_right_rod",
+       "type": "BORE",
+       "measured_diameter": 8,
+       "center_offset": 0,
+       "tilt_deg": 0,
+       "through": false,
+       "measured_depth": 18.8
+      }
+     ],
+     "envelope": {
+      "vertices_checked": 1192,
+      "violations": 0
+     },
+     "assertions": [
+      {
+       "kind": "symmetry",
+       "plane": "yz",
+       "measured": 0
+      }
+     ],
+     "process": {
+      "kind": "fdm",
+      "min_wall": 1.2,
+      "stability": {
+       "tip_angle_deg": 32.24,
+       "gamma_deg": 10,
+       "footprint_mm2": 931
+      },
+      "overhang_area_fraction": 0.0213,
+      "bridge_span_mm": 0.2
+     }
+    }
+   },
+   "version": 1,
+   "history": [],
+   "cost": {
+    "calls": 3,
+    "inputTokens": 14535,
+    "outputTokens": 1908,
+    "usd": 0.067485
+   }
+  },
+  "far-block": {
+   "id": "far-block",
+   "kind": "part",
+   "title": "Far end block",
+   "spec": "Printed end block that holds the far ends of both \u00d88 steel rods, the mirror of the near block. A solid rectangular block standing on its bottom face, rod sockets opening out of its inner face back toward the carriage.",
+   "contract": {
+    "name": "Far end block",
+    "summary": "50\u00d720\u00d730 block; two \u00d88 rod sockets 30 apart open out of its -y face at mid-height, facing back along the rods toward the near block.",
+    "params": [
+     {
+      "type": "number",
+      "name": "width",
+      "description": "block width across both rods",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 50,
+      "min": 40,
+      "max": 90
+     },
+     {
+      "type": "number",
+      "name": "thickness",
+      "description": "how far the block runs along the rods, i.e. how deep the rods sit in it",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 20,
+      "min": 12,
+      "max": 40
+     },
+     {
+      "type": "number",
+      "name": "height",
+      "description": "how tall the block stands; the rods sit at mid-height",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 30,
+      "min": 24,
+      "max": 60
+     },
+     {
+      "type": "number",
+      "name": "rod_spacing",
+      "description": "centre distance between the two rods; follows the carriage",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 30,
+      "min": 20,
+      "max": 60
+     },
+     {
+      "type": "number",
+      "name": "slide_left_rod_d",
+      "description": "rod \u00d8 for slide-left",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 8
+     },
+     {
+      "type": "number",
+      "name": "slide_right_rod_d",
+      "description": "rod \u00d8 for slide-right",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 8
+     }
+    ],
+    "provides": [
+     {
+      "key": "rod_left",
+      "type": "FLAT_FACE",
+      "description": "inner face around the -x rod socket, facing back along the rod"
+     },
+     {
+      "key": "rod_right",
+      "type": "FLAT_FACE",
+      "description": "inner face around the +x rod socket, facing back along the rod"
+     }
+    ],
+    "requires": [
+     {
+      "key": "slide_left_rod_far",
+      "type": "BORE",
+      "description": ""
+     },
+     {
+      "key": "slide_right_rod_far",
+      "type": "BORE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "rod_left",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "-param(far-block.rod_spacing) / 2",
+         "-param(far-block.thickness) / 2",
+         0
+        ],
+        "zAxis": [
+         0,
+         -1,
+         0
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": "(param(far-block.slide_left_rod_d)) + 2.4"
+       }
+      },
+      {
+       "name": "rod_right",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(far-block.rod_spacing) / 2",
+         "-param(far-block.thickness) / 2",
+         0
+        ],
+        "zAxis": [
+         0,
+         -1,
+         0
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": "(param(far-block.slide_right_rod_d)) + 2.4"
+       }
+      },
+      {
+       "name": "slide_left_rod_far",
+       "type": "BORE",
+       "pose": {
+        "origin": [
+         "(-param(far-block.rod_spacing) / 2)",
+         "(-param(far-block.thickness) / 2)",
+         0
+        ],
+        "zAxis": [
+         0,
+         -1,
+         0
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(far-block.slide_left_rod_d)",
+        "depth": "(param(near-block.thickness)) - 1.2"
+       }
+      },
+      {
+       "name": "slide_right_rod_far",
+       "type": "BORE",
+       "pose": {
+        "origin": [
+         "(param(far-block.rod_spacing) / 2)",
+         "(-param(far-block.thickness) / 2)",
+         0
+        ],
+        "zAxis": [
+         0,
+         -1,
+         0
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "diameter": "param(far-block.slide_right_rod_d)",
+        "depth": "(param(near-block.thickness)) - 1.2"
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "box",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "dims": [
+         "param(far-block.width)",
+         "param(far-block.thickness)",
+         "param(far-block.height)"
+        ]
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "rod_spacing": "expr: param(carriage.rod_spacing)",
+      "slide_left_rod_d": "hw:shaftD:param:slide-left_rod.sku",
+      "slide_right_rod_d": "hw:shaftD:param:slide-right_rod.sku"
+     },
+     "visualChecks": [
+      "Is the part a solid upright rectangular block?",
+      "Are there exactly two round rod sockets, side by side on the same face?",
+      "Do both rod sockets open on the face pointing toward -y?"
+     ],
+     "assertions": [
+      {
+       "kind": "symmetry",
+       "plane": "yz",
+       "tol": 0.05
+      }
+     ]
+    },
+    "hash": "a7cada506ba73081"
+   },
+   "params": {},
+   "hidden": false,
+   "artifact": {
+    "code": "# stripped: the sequencer reads mates, not code\n",
+    "testCode": "",
+    "hash": "e9e315dc1c2934af"
+   },
+   "thread": [],
+   "status": "error_contract",
+   "measurements": {
+    "version": 1,
+    "paramsHash": "08f44b07b5901a25",
+    "data": {
+     "volume_mm3": 28060.68452626705,
+     "area_mm2": 7027.080552107762,
+     "solids": 1,
+     "shells": [
+      1
+     ],
+     "bbox": {
+      "min": [
+       -25,
+       -10,
+       -15
+      ],
+      "max": [
+       25,
+       10,
+       15
+      ],
+      "size": [
+       50,
+       20,
+       30
+      ]
+     },
+     "printability": {
+      "min_wall": {
+       "thin_wall_p2_mm": 1.2,
+       "index": 0.999,
+       "recommended_mm": 0.8
+      },
+      "overhang": {
+       "warn_area_fraction": 0.0126,
+       "fail_area_fraction": 0.0224,
+       "index": 0.973
+      },
+      "composite": 0.986
+     },
+     "ports": [
+      {
+       "key": "rod_left",
+       "type": "FLAT_FACE",
+       "ring_diameter": 10.4
+      },
+      {
+       "key": "rod_right",
+       "type": "FLAT_FACE",
+       "ring_diameter": 10.4
+      },
+      {
+       "key": "slide_left_rod_far",
+       "type": "BORE",
+       "measured_diameter": 8,
+       "center_offset": 0,
+       "tilt_deg": 0,
+       "through": false,
+       "measured_depth": 18.8
+      },
+      {
+       "key": "slide_right_rod_far",
+       "type": "BORE",
+       "measured_diameter": 8,
+       "center_offset": 0,
+       "tilt_deg": 0,
+       "through": false,
+       "measured_depth": 18.8
+      }
+     ],
+     "envelope": {
+      "vertices_checked": 1192,
+      "violations": 0
+     },
+     "assertions": [
+      {
+       "kind": "symmetry",
+       "plane": "yz",
+       "measured": 0
+      }
+     ],
+     "process": {
+      "kind": "fdm",
+      "min_wall": 1.2,
+      "stability": {
+       "tip_angle_deg": 32.24,
+       "gamma_deg": 10,
+       "footprint_mm2": 931
+      },
+      "overhang_area_fraction": 0.0213,
+      "bridge_span_mm": 0.2
+     }
+    }
+   },
+   "version": 1,
+   "history": [],
+   "cost": {
+    "calls": 3,
+    "inputTokens": 14556,
+    "outputTokens": 2038,
+    "usd": 0.056946199999999995
+   },
+   "statusDetail": {
+    "stage": "assembly",
+    "message": "Assembly: step 5 cannot be done: carriage cannot reach its place travelling along [0, -1, 0]; far-block is in the way 119.9mm out (15190.4 mm\u00b3 near [0, 160.84, 0]), and no order the mates allow gets it in first. Both parts keep inside their envelopes, so the contracts leave no way in (a port pointing into its part, a closed bore, a part seated off its shaft): no code change fixes it.",
+    "attribution": "contract-infeasible"
+   }
+  },
+  "carriage": {
+   "id": "carriage",
+   "kind": "part",
+   "title": "Carriage",
+   "spec": "Printed carriage block, 48 wide \u00d7 40 long \u00d7 20 tall, that slides along two parallel \u00d88 rods 30 mm apart, with one LM8UU linear bearing in a pocket for each rod. The rods run along y through the block at mid-height, and the top face stays flat. The block is 48 wide rather than the requested 40 so that solid wall surrounds each bearing pocket and the end faces have a full ring of flat around each bearing.",
+   "contract": {
+    "name": "Carriage",
+    "summary": "48\u00d740\u00d720 block; two LM8UU pockets run along y at x=\u00b115, z=0, through its full length, fully enclosed in wall. Faces at -y around each pocket face the near end block.",
+    "params": [
+     {
+      "type": "number",
+      "name": "width",
+      "description": "carriage width across the rods; it must leave solid wall outside each bearing",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 48,
+      "min": 48,
+      "max": 90
+     },
+     {
+      "type": "number",
+      "name": "length",
+      "description": "carriage length along the rods",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 40,
+      "min": 30,
+      "max": 80
+     },
+     {
+      "type": "number",
+      "name": "height",
+      "description": "carriage height; the rods pass through at mid-height",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 20,
+      "min": 18,
+      "max": 40
+     },
+     {
+      "type": "number",
+      "name": "rod_spacing",
+      "description": "centre distance between the two rods",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 30,
+      "min": 20,
+      "max": 60
+     },
+     {
+      "type": "number",
+      "name": "slide_left_lm_od",
+      "description": "linear bearing OD for slide-left",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 15
+     },
+     {
+      "type": "number",
+      "name": "slide_right_lm_od",
+      "description": "linear bearing OD for slide-right",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 15
+     }
+    ],
+    "provides": [
+     {
+      "key": "rod_left",
+      "type": "FLAT_FACE",
+      "description": "-y end face around the -x bearing pocket"
+     },
+     {
+      "key": "rod_right",
+      "type": "FLAT_FACE",
+      "description": "-y end face around the +x bearing pocket"
+     },
+     {
+      "key": "slide_left_lm_seat",
+      "type": "LINEAR_BEARING_SEAT",
+      "description": ""
+     },
+     {
+      "key": "slide_right_lm_seat",
+      "type": "LINEAR_BEARING_SEAT",
+      "description": ""
+     }
+    ],
+    "requires": [],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "rod_left",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "-param(carriage.rod_spacing) / 2",
+         "-param(carriage.length) / 2",
+         0
+        ],
+        "zAxis": [
+         0,
+         -1,
+         0
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": "(param(carriage.slide_left_lm_od)) + 2.4"
+       }
+      },
+      {
+       "name": "rod_right",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         "param(carriage.rod_spacing) / 2",
+         "-param(carriage.length) / 2",
+         0
+        ],
+        "zAxis": [
+         0,
+         -1,
+         0
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": "(param(carriage.slide_right_lm_od)) + 2.4"
+       }
+      },
+      {
+       "name": "slide_left_lm_seat",
+       "type": "LINEAR_BEARING_SEAT",
+       "pose": {
+        "origin": [
+         "(-param(carriage.rod_spacing) / 2)",
+         "(-param(carriage.length) / 2)",
+         0
+        ],
+        "zAxis": [
+         0,
+         -1,
+         0
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "od": "param(carriage.slide_left_lm_od)",
+        "length": 24,
+        "fit": "press",
+        "retention": "lip"
+       }
+      },
+      {
+       "name": "slide_right_lm_seat",
+       "type": "LINEAR_BEARING_SEAT",
+       "pose": {
+        "origin": [
+         "(param(carriage.rod_spacing) / 2)",
+         "(-param(carriage.length) / 2)",
+         0
+        ],
+        "zAxis": [
+         0,
+         -1,
+         0
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "od": "param(carriage.slide_right_lm_od)",
+        "length": 24,
+        "fit": "press",
+        "retention": "lip"
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "box",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "dims": [
+         "param(carriage.width)",
+         "param(carriage.length)",
+         "param(carriage.height)"
+        ]
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "slide_left_lm_od": "hw:bearingSeatD:param:slide-left_linear_bearing.sku",
+      "slide_right_lm_od": "hw:bearingSeatD:param:slide-right_linear_bearing.sku"
+     },
+     "visualChecks": [
+      "Is the carriage a rectangular block with a flat top face?",
+      "Are there exactly two parallel bores running front to back through the block?",
+      "Are both bores at the same height, side by side?"
+     ],
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "y",
+       "min": 39.5,
+       "max": 40.5
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "z",
+       "min": 19.5,
+       "max": 20.5
+      }
+     ]
+    },
+    "hash": "1dac1765b523c03c"
+   },
+   "params": {},
+   "hidden": false,
+   "artifact": {
+    "code": "# stripped: the sequencer reads mates, not code\n",
+    "testCode": "",
+    "hash": "8ed5587524f0b8ed"
+   },
+   "thread": [],
+   "status": "error_contract",
+   "measurements": {
+    "version": 1,
+    "paramsHash": "08f44b07b5901a25",
+    "data": {
+     "volume_mm3": 27407.546799087395,
+     "area_mm2": 10178.274170911705,
+     "solids": 1,
+     "shells": [
+      1
+     ],
+     "bbox": {
+      "min": [
+       -24,
+       -20,
+       -10
+      ],
+      "max": [
+       24,
+       20,
+       10
+      ],
+      "size": [
+       48,
+       40,
+       20
+      ]
+     },
+     "printability": {
+      "min_wall": {
+       "thin_wall_p2_mm": 1.532,
+       "index": 1,
+       "recommended_mm": 0.8
+      },
+      "overhang": {
+       "warn_area_fraction": 0.0314,
+       "fail_area_fraction": 0.0534,
+       "index": 0.936
+      },
+      "composite": 0.967
+     },
+     "ports": [
+      {
+       "key": "rod_left",
+       "type": "FLAT_FACE",
+       "ring_diameter": 17.4
+      },
+      {
+       "key": "rod_right",
+       "type": "FLAT_FACE",
+       "ring_diameter": 17.4
+      },
+      {
+       "key": "slide_left_lm_seat",
+       "type": "LINEAR_BEARING_SEAT",
+       "measured_diameter": 14.95,
+       "center_offset": 0,
+       "tilt_deg": 0,
+       "through": true,
+       "measured_depth": 24
+      },
+      {
+       "key": "slide_right_lm_seat",
+       "type": "LINEAR_BEARING_SEAT",
+       "measured_diameter": 14.95,
+       "center_offset": 0,
+       "tilt_deg": 0,
+       "through": true,
+       "measured_depth": 24
+      }
+     ],
+     "envelope": {
+      "vertices_checked": 2210,
+      "violations": 0
+     },
+     "assertions": [
+      {
+       "kind": "bbox_axis",
+       "axis": "y",
+       "measured": 40
+      },
+      {
+       "kind": "bbox_axis",
+       "axis": "z",
+       "measured": 20
+      }
+     ],
+     "process": {
+      "kind": "fdm",
+      "min_wall": 1.532,
+      "stability": {
+       "tip_angle_deg": 61.14,
+       "gamma_deg": 10,
+       "footprint_mm2": 1833
+      },
+      "overhang_area_fraction": 0.0508,
+      "bridge_span_mm": 0.37,
+      "findings": [
+       {
+        "rule": "overhang",
+        "message": "5% of the surface overhangs more than 60\u00b0 from vertical: it needs support printed in its own frame",
+        "measured": 0.0508
+       }
+      ]
+     }
+    }
+   },
+   "version": 1,
+   "history": [],
+   "cost": {
+    "calls": 3,
+    "inputTokens": 15270,
+    "outputTokens": 2935,
+    "usd": 0.0768854
+   },
+   "statusDetail": {
+    "stage": "assembly",
+    "message": "Assembly: step 5 cannot be done: carriage cannot reach its place travelling along [0, -1, 0]; far-block is in the way 119.9mm out (15190.4 mm\u00b3 near [0, 160.84, 0]), and no order the mates allow gets it in first. Both parts keep inside their envelopes, so the contracts leave no way in (a port pointing into its part, a closed bore, a part seated off its shaft): no code change fixes it.",
+    "attribution": "contract-infeasible"
+   }
+  },
+  "slide-left_rod": {
+   "id": "slide-left_rod",
+   "kind": "shaft",
+   "title": "slide-left rod",
+   "spec": "LM8UU on a \u00d88 rod. Catalog part 8, built by the registry, never generated.",
+   "contract": {
+    "name": "slide-left_rod",
+    "summary": "ROD-8 \u00d7 178.6",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "ROD-8"
+     },
+     {
+      "type": "number",
+      "name": "length",
+      "description": "length, mm",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 178.60000000000002
+     }
+    ],
+    "provides": [
+     {
+      "key": "slide",
+      "type": "FLAT_FACE",
+      "description": ""
+     },
+     {
+      "key": "far",
+      "type": "BORE",
+      "description": ""
+     }
+    ],
+    "requires": [
+     {
+      "key": "end",
+      "type": "BORE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "end",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "(param(near-block.thickness)) - 1.2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 4
+       }
+      },
+      {
+       "name": "slide",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "((param(near-block.thickness)) - 1.2) + 1"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 9
+       }
+      },
+      {
+       "name": "far",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "((param(near-block.thickness)) - 1.2) + (param(carriage.length)) + 101"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 4
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 9.6,
+        "h": 357.2
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "length": "expr: (((param(near-block.thickness)) - 1.2) + (param(carriage.length)) + 101) + ((param(near-block.thickness)) - 1.2)"
+     }
+    },
+    "hash": "5303980e482f208a"
+   },
+   "params": {},
+   "hidden": false,
+   "artifact": {
+    "code": "# stripped: the sequencer reads mates, not code\n",
+    "testCode": "",
+    "hash": "5195f8797da7e9f7"
+   },
+   "thread": [],
+   "status": "ready",
+   "measurements": {
+    "version": 1,
+    "paramsHash": "08f44b07b5901a25",
+    "data": {
+     "volume_mm3": 8977.415166898192,
+     "area_mm2": 4589.23854836397,
+     "solids": 1,
+     "shells": [
+      1
+     ],
+     "bbox": {
+      "min": [
+       -4,
+       -4,
+       0
+      ],
+      "max": [
+       4,
+       4,
+       178.60000000000002
+      ],
+      "size": [
+       8,
+       8,
+       178.60000000000002
+      ]
+     },
+     "printability": {
+      "min_wall": {
+       "thin_wall_p2_mm": 7.998,
+       "index": 1,
+       "recommended_mm": 0.8
+      },
+      "overhang": {
+       "warn_area_fraction": 0,
+       "fail_area_fraction": 0,
+       "index": 1
+      },
+      "composite": 1
+     }
+    }
+   },
+   "version": 1,
+   "history": [],
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   }
+  },
+  "slide-left_linear_bearing": {
+   "id": "slide-left_linear_bearing",
+   "kind": "linear_bearing",
+   "title": "slide-left linear bearing",
+   "spec": "LM8UU on a \u00d88 rod. Catalog LM-UU series (THK designation, matched across vendors); groove* are the retaining-ring grooves LM8UU, built by the registry, never generated.",
+   "contract": {
+    "name": "slide-left_linear_bearing",
+    "summary": "LIN-LM8UU",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "LIN-LM8UU"
+     }
+    ],
+    "provides": [],
+    "requires": [
+     {
+      "key": "seat",
+      "type": "LINEAR_BEARING_SEAT",
+      "description": ""
+     },
+     {
+      "key": "bore",
+      "type": "FLAT_FACE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "seat",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 14
+       }
+      },
+      {
+       "name": "bore",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 9
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 18,
+        "h": 48
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {}
+    },
+    "hash": "d399a237a80e904c"
+   },
+   "params": {},
+   "hidden": false,
+   "artifact": {
+    "code": "# stripped: the sequencer reads mates, not code\n",
+    "testCode": "",
+    "hash": "4903353180c92121"
+   },
+   "thread": [],
+   "status": "ready",
+   "measurements": {
+    "version": 1,
+    "paramsHash": "08f44b07b5901a25",
+    "data": {
+     "volume_mm3": 2999.3397674389207,
+     "area_mm2": 2046.6533660341431,
+     "solids": 1,
+     "shells": [
+      1
+     ],
+     "bbox": {
+      "min": [
+       -7.5,
+       -7.5,
+       0
+      ],
+      "max": [
+       7.5,
+       7.5,
+       24
+      ],
+      "size": [
+       15,
+       15,
+       24
+      ]
+     },
+     "printability": {
+      "min_wall": {
+       "thin_wall_p2_mm": 3.149,
+       "index": 1,
+       "recommended_mm": 0.8
+      },
+      "overhang": {
+       "warn_area_fraction": 0,
+       "fail_area_fraction": 0.0157,
+       "index": 0.984
+      },
+      "composite": 0.992
+     }
+    }
+   },
+   "version": 1,
+   "history": [],
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   }
+  },
+  "slide-right_rod": {
+   "id": "slide-right_rod",
+   "kind": "shaft",
+   "title": "slide-right rod",
+   "spec": "LM8UU on a \u00d88 rod. Catalog part 8, built by the registry, never generated.",
+   "contract": {
+    "name": "slide-right_rod",
+    "summary": "ROD-8 \u00d7 178.6",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "ROD-8"
+     },
+     {
+      "type": "number",
+      "name": "length",
+      "description": "length, mm",
+      "ui": {
+       "unit": "mm"
+      },
+      "default": 178.60000000000002
+     }
+    ],
+    "provides": [
+     {
+      "key": "slide",
+      "type": "FLAT_FACE",
+      "description": ""
+     },
+     {
+      "key": "far",
+      "type": "BORE",
+      "description": ""
+     }
+    ],
+    "requires": [
+     {
+      "key": "end",
+      "type": "BORE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "end",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "(param(near-block.thickness)) - 1.2"
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 4
+       }
+      },
+      {
+       "name": "slide",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "((param(near-block.thickness)) - 1.2) + 1"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 9
+       }
+      },
+      {
+       "name": "far",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         "((param(near-block.thickness)) - 1.2) + (param(carriage.length)) + 101"
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 4
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 9.6,
+        "h": 357.2
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {
+      "length": "expr: (((param(near-block.thickness)) - 1.2) + (param(carriage.length)) + 101) + ((param(near-block.thickness)) - 1.2)"
+     }
+    },
+    "hash": "9b4a7f60f7c4ac65"
+   },
+   "params": {},
+   "hidden": false,
+   "artifact": {
+    "code": "# stripped: the sequencer reads mates, not code\n",
+    "testCode": "",
+    "hash": "5195f8797da7e9f7"
+   },
+   "thread": [],
+   "status": "ready",
+   "measurements": {
+    "version": 1,
+    "paramsHash": "08f44b07b5901a25",
+    "data": {
+     "volume_mm3": 8977.415166898192,
+     "area_mm2": 4589.23854836397,
+     "solids": 1,
+     "shells": [
+      1
+     ],
+     "bbox": {
+      "min": [
+       -4,
+       -4,
+       0
+      ],
+      "max": [
+       4,
+       4,
+       178.60000000000002
+      ],
+      "size": [
+       8,
+       8,
+       178.60000000000002
+      ]
+     },
+     "printability": {
+      "min_wall": {
+       "thin_wall_p2_mm": 7.998,
+       "index": 1,
+       "recommended_mm": 0.8
+      },
+      "overhang": {
+       "warn_area_fraction": 0,
+       "fail_area_fraction": 0,
+       "index": 1
+      },
+      "composite": 1
+     }
+    }
+   },
+   "version": 1,
+   "history": [],
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   }
+  },
+  "slide-right_linear_bearing": {
+   "id": "slide-right_linear_bearing",
+   "kind": "linear_bearing",
+   "title": "slide-right linear bearing",
+   "spec": "LM8UU on a \u00d88 rod. Catalog LM-UU series (THK designation, matched across vendors); groove* are the retaining-ring grooves LM8UU, built by the registry, never generated.",
+   "contract": {
+    "name": "slide-right_linear_bearing",
+    "summary": "LIN-LM8UU",
+    "params": [
+     {
+      "type": "string",
+      "name": "sku",
+      "description": "catalog part",
+      "default": "LIN-LM8UU"
+     }
+    ],
+    "provides": [],
+    "requires": [
+     {
+      "key": "seat",
+      "type": "LINEAR_BEARING_SEAT",
+      "description": ""
+     },
+     {
+      "key": "bore",
+      "type": "FLAT_FACE",
+      "description": ""
+     }
+    ],
+    "payload": {
+     "units": "mm",
+     "process": {
+      "kind": "FDM",
+      "minWall": 1.2,
+      "nozzle": 0.4
+     },
+     "ports": [
+      {
+       "name": "seat",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 14
+       }
+      },
+      {
+       "name": "bore",
+       "type": "FLAT_FACE",
+       "pose": {
+        "origin": [
+         0,
+         0,
+         0
+        ],
+        "zAxis": [
+         0,
+         0,
+         -1
+        ],
+        "xAxis": [
+         1,
+         0,
+         0
+        ]
+       },
+       "params": {
+        "ring_diameter": 9
+       }
+      }
+     ],
+     "envelope": {
+      "volumes": [
+       {
+        "kind": "cylinder",
+        "pose": {
+         "origin": [
+          0,
+          0,
+          0
+         ],
+         "zAxis": [
+          0,
+          0,
+          1
+         ],
+         "xAxis": [
+          1,
+          0,
+          0
+         ]
+        },
+        "d": 18,
+        "h": 48
+       }
+      ],
+      "clearance": 0.4
+     },
+     "paramBindings": {}
+    },
+    "hash": "c1aa0159d2c393b9"
+   },
+   "params": {},
+   "hidden": false,
+   "artifact": {
+    "code": "# stripped: the sequencer reads mates, not code\n",
+    "testCode": "",
+    "hash": "4903353180c92121"
+   },
+   "thread": [],
+   "status": "ready",
+   "measurements": {
+    "version": 1,
+    "paramsHash": "08f44b07b5901a25",
+    "data": {
+     "volume_mm3": 2999.3397674389207,
+     "area_mm2": 2046.6533660341431,
+     "solids": 1,
+     "shells": [
+      1
+     ],
+     "bbox": {
+      "min": [
+       -7.5,
+       -7.5,
+       0
+      ],
+      "max": [
+       7.5,
+       7.5,
+       24
+      ],
+      "size": [
+       15,
+       15,
+       24
+      ]
+     },
+     "printability": {
+      "min_wall": {
+       "thin_wall_p2_mm": 3.149,
+       "index": 1,
+       "recommended_mm": 0.8
+      },
+      "overhang": {
+       "warn_area_fraction": 0,
+       "fail_area_fraction": 0.0157,
+       "index": 0.984
+      },
+      "composite": 0.992
+     }
+    }
+   },
+   "version": 1,
+   "history": [],
+   "cost": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "usd": 0
+   }
+  }
+ },
+ "edges": [
+  {
+   "id": "e0-near-block-slide-left_rod",
+   "from": "near-block",
+   "fromPort": "slide_left_rod",
+   "to": "slide-left_rod",
+   "toPort": "end"
+  },
+  {
+   "id": "e1-slide-left_rod-far-block",
+   "from": "slide-left_rod",
+   "fromPort": "far",
+   "to": "far-block",
+   "toPort": "slide_left_rod_far"
+  },
+  {
+   "id": "e2-carriage-slide-left_linear_bearing",
+   "from": "carriage",
+   "fromPort": "slide_left_lm_seat",
+   "to": "slide-left_linear_bearing",
+   "toPort": "seat"
+  },
+  {
+   "id": "e3-slide-left_rod-slide-left_linear_bearing",
+   "from": "slide-left_rod",
+   "fromPort": "slide",
+   "to": "slide-left_linear_bearing",
+   "toPort": "bore"
+  },
+  {
+   "id": "e4-near-block-slide-right_rod",
+   "from": "near-block",
+   "fromPort": "slide_right_rod",
+   "to": "slide-right_rod",
+   "toPort": "end"
+  },
+  {
+   "id": "e5-slide-right_rod-far-block",
+   "from": "slide-right_rod",
+   "fromPort": "far",
+   "to": "far-block",
+   "toPort": "slide_right_rod_far"
+  },
+  {
+   "id": "e6-carriage-slide-right_linear_bearing",
+   "from": "carriage",
+   "fromPort": "slide_right_lm_seat",
+   "to": "slide-right_linear_bearing",
+   "toPort": "seat"
+  },
+  {
+   "id": "e7-slide-right_rod-slide-right_linear_bearing",
+   "from": "slide-right_rod",
+   "fromPort": "slide",
+   "to": "slide-right_linear_bearing",
+   "toPort": "bore"
+  }
+ ],
+ "assembly": {
+  "entryNodeId": "near-block"
+ },
+ "joints": [
+  {
+   "id": "slide-left",
+   "a": {
+    "node": "near-block",
+    "port": "rod_left"
+   },
+   "b": {
+    "node": "carriage",
+    "port": "rod_left"
+   },
+   "intent": "removable",
+   "motion": "prismatic",
+   "duty": "occasional",
+   "load": "light",
+   "access": "both_sides",
+   "count": 1,
+   "wallA": "param(near-block.thickness)",
+   "wallB": "param(carriage.length)",
+   "shaftHint": 8,
+   "strokeMm": 100,
+   "far": {
+    "node": "far-block",
+    "port": "rod_left"
+   },
+   "prefer": {
+    "family": "lm_uu",
+    "key": "LM8UU"
+   },
+   "note": "\u00d88 steel rod held in both end blocks, one LM8UU in the carriage",
+   "expanded": "P1|rod=shaft:8|linear_bearing=lm_uu:LM8UU",
+   "minted": [
+    "slide_left_rod_d",
+    "slide_left_rod",
+    "slide_left_rod_far",
+    "slide_left_lm_od",
+    "slide_left_lm_seat"
+   ]
+  },
+  {
+   "id": "slide-right",
+   "a": {
+    "node": "near-block",
+    "port": "rod_right"
+   },
+   "b": {
+    "node": "carriage",
+    "port": "rod_right"
+   },
+   "intent": "removable",
+   "motion": "prismatic",
+   "duty": "occasional",
+   "load": "light",
+   "access": "both_sides",
+   "count": 1,
+   "wallA": "param(near-block.thickness)",
+   "wallB": "param(carriage.length)",
+   "shaftHint": 8,
+   "strokeMm": 100,
+   "far": {
+    "node": "far-block",
+    "port": "rod_right"
+   },
+   "prefer": {
+    "family": "lm_uu",
+    "key": "LM8UU"
+   },
+   "note": "\u00d88 steel rod held in both end blocks, one LM8UU in the carriage",
+   "expanded": "P1|rod=shaft:8|linear_bearing=lm_uu:LM8UU",
+   "minted": [
+    "slide_right_rod_d",
+    "slide_right_rod",
+    "slide_right_rod_far",
+    "slide_right_lm_od",
+    "slide_right_lm_seat"
+   ]
+  }
+ ],
+ "rev": 56
+}
