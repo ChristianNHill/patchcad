@@ -894,7 +894,7 @@ function spindle(c: Ctx) {
     ...(far
       ? [{ side: "provides" as const, port: { name: "hub_b", type: "FLAT_FACE" as const, pose: pose([0, 0, far.j.wallB], [0, 0, -1]), params: { ring_diameter: d.dims.d! / 2 } }, decl: "HUB_BORE" }]
       : []),
-  ], sum(hubAt, d.dims.engage ?? j.wallB));
+  ], sum(hubAt, hubDepth(c)));
   x.addEdge(one ? ida : outerNode, one ? "bore" : outerPort, sid, "end");
   hubOn(c, shaft, sid, "hub");
   ringFace(c, A, j.a.port, sum(`param(${A.id}.${v}_seat_od)`, 2.4));
@@ -964,7 +964,7 @@ function flangedBearing(c: Ctx) {
   x.mint(j.id, shaft, d.summary, [
     { side: "requires", port: { name: "end", type: "FLAT_FACE", pose: pose([0, 0, w], [0, 0, -1]), params: { ring_diameter: d.dims.d! / 2 } }, decl: "FLAT_FACE" },
     { side: "provides", port: { name: "hub", type: "FLAT_FACE", pose: pose([0, 0, round(w + t)]), params: { ring_diameter: d.dims.d! / 2 } }, decl: "HUB_BORE" },
-  ], sum(round(w + t), j.wallB));
+  ], sum(round(w + t), hubDepth(c)));
   x.addEdge(bid, "bore", sid, "end");
   hubOn(c, shaft, sid, "hub");
   ringFace(c, A, j.a.port, sum(`param(${A.id}.${v}_seat_od)`, 2.4));
@@ -972,6 +972,14 @@ function flangedBearing(c: Ctx) {
 
 /** b's hub on a joint's shaft, Ø (and D-flat) bound to the shaft's sku, at
  *  the joint's hubFit: a slip bore turned by the flat, or b pressed on. */
+/** How deep a joint's shaft runs into b: wallB, or, when b is held at both
+ *  faces (pairedB), no further than its middle, so the two shafts never meet
+ *  (the winch drum's two M1 stubs shared 1678mm³ at its centre). */
+function hubDepth(c: Ctx): D {
+  const half = c.i.pairSpan === undefined ? Infinity : round(c.i.pairSpan / 2 - 0.5);
+  return c.d.dims.engage ?? (c.i.wallB > half ? half : c.j.wallB);
+}
+
 function hubOn(c: Ctx, shaft: HardwarePick, sid: string, from: string) {
   const { x, j, vb, B, fb } = c;
   x.addParam(B, `${vb}_shaft_d`, `shaft Ø for ${j.id}`, `hw:shaftD:param:${sid}.sku`);
@@ -980,7 +988,7 @@ function hubOn(c: Ctx, shaft: HardwarePick, sid: string, from: string) {
     x.addParam(B, `${vb}_flat`, `D-flat distance from the axis for ${j.id}`, `hw:hubFlat:param:${sid}.sku`);
     hub.flat = `param(${B.id}.${vb}_flat)`;
   }
-  if (j.hubFit === "press") Object.assign(hub, { fit: "press", depth: c.d.dims.engage ?? j.wallB });
+  if (j.hubFit === "press") Object.assign(hub, { fit: "press", depth: hubDepth(c) });
   x.addPort(B, "requires", { name: `${vb}_hub`, type: "HUB_BORE", pose: at(fb, 0, 0, 0), params: hub });
   x.addEdge(sid, from, B.id, `${vb}_hub`);
   ringFace(c, B, j.b.port, sum(`param(${B.id}.${vb}_shaft_d)`, 2.4));
@@ -1595,6 +1603,8 @@ export function expandJoints(input: ArchitectOutput, live?: Live): ArchitectOutp
         x, j, i: inp, v: jointVar(j.id), vb: firstOnB.get(`${j.b.node}|${j.b.port}`)!, d: decision, A, B, fa, fb: frameOf(x.port(B, j.b.port).pose), shares,
         far: far && { j: far, fa: frameOf(x.port(A, far.a.port).pose), span: spanOf(fa, frameOf(x.port(A, far.a.port).pose)) },
       });
+      const first = planned.find((q) => q && q.j.b.node === j.b.node && q.j.b.port === j.b.port);
+      if (first && first.j !== j && decisionKey(first.decision) === decisionKey(decision)) dropCopySide(x, j, B, jointVar(first.j.id));
       kept.push({ ...j, expanded: decisionKey(decision), minted: [...new Set(x.minted)], ...(shares ? { shared: shares } : {}) } as JointDecl);
       done.add(i);
     } catch (err) {
@@ -1811,6 +1821,53 @@ function phaseGears(out: ArchitectOutput, base: GraphDoc) {
   }
 }
 
+/** The joint whose b-side hardware `jointId`'s rides (dropCopySide): the
+ *  first on the same b.port with the same expansion, else itself. */
+export function copyOwner(graph: Pick<GraphDoc, "joints">, jointId: string | undefined): string | undefined {
+  const j = graph.joints?.find((x) => x.id === jointId) as (CadJoint & { expanded?: string }) | undefined;
+  if (!j) return jointId;
+  return (graph.joints as (CadJoint & { expanded?: string })[]).find((o) => o.b.node === j.b.node && o.b.port === j.b.port && o.expanded === j.expanded)?.id ?? jointId;
+}
+
+/**
+ * A later joint on the same b.port of a part placed several times (the round
+ * stool's one leg node in four joints): the hardware it seats IN b (nut,
+ * insert, washer, M1h's bearings and collar) and b's features for them are
+ * the first joint's already, which the solver carries onto every copy of b
+ * (`carried`). Its own set would stack on b's first copy, so it is dropped:
+ * the nodes reachable only from b or from each other, and its ports and
+ * params on b. What it places from a (the screws, the axle) stays.
+ */
+function dropCopySide(x: Expansion, j: CadJoint, B: OutNode, firstVar: string) {
+  const mine = (id: string) => id.startsWith(`${j.id}_`);
+  const edges = x.out.edges;
+  // Start from all of the joint's hardware and keep shedding what touches
+  // anything else (a's ports, the axle a places): what is left touches only
+  // b and each other.
+  const ends = (id: string) => edges.filter((e) => e.from === id || e.to === id).map((e) => (e.from === id ? e.to : e.from));
+  const dropped = new Set(x.out.nodes.filter((n) => mine(n.id) && ends(n.id).length).map((n) => n.id));
+  for (let shrank = true; shrank; ) {
+    shrank = false;
+    for (const id of dropped) if (ends(id).some((o) => o !== B.id && !dropped.has(o))) shrank = dropped.delete(id);
+  }
+  for (const id of [...dropped]) if (!ends(id).includes(B.id) && ![...dropped].some((o) => o !== id && ends(id).includes(o))) dropped.delete(id);
+  const v = `${jointVar(j.id)}_`;
+  const own = new Set(x.minted.filter((m) => m.startsWith(v)));
+  x.out.nodes = x.out.nodes.filter((n) => !dropped.has(n.id));
+  for (const id of dropped) delete x.graph.nodes[id];
+  x.out.edges = edges.filter((e) => !dropped.has(e.from) && !dropped.has(e.to) && !(e.from === B.id && own.has(e.fromPort)) && !(e.to === B.id && own.has(e.toPort)));
+  const p = payloadOf(B);
+  p.ports = p.ports.filter((q) => !own.has(q.name));
+  B.contract.provides = B.contract.provides.filter((q) => !own.has(q.key));
+  B.contract.requires = B.contract.requires.filter((q) => !own.has(q.key));
+  B.contract.params = B.contract.params.filter((q) => !own.has(q.name));
+  p.paramBindings = Object.fromEntries(Object.entries(p.paramBindings ?? {}).filter(([k]) => !own.has(k)));
+  x.bindings = x.bindings.filter((b) => !(b.node === B && own.has(b.name)) && !dropped.has(b.node.id));
+  // b.port's probe ring was last drawn from this joint's params: the first's.
+  const face = p.ports.find((q) => q.name === j.b.port);
+  if (face) face.params = Object.fromEntries(Object.entries(face.params ?? {}).map(([k, val]) => [k, typeof val === "string" ? val.replaceAll(`(${B.id}.${v}`, `(${B.id}.${firstVar}_`) : val]));
+}
+
 /** Joints whose rule now picks different hardware than was expanded (a wall
  *  or an intent moved). A length change alone is not one: T1 follows it. A
  *  joint no rule fits any more is not either; it keeps the hardware it has and
@@ -1994,6 +2051,7 @@ function jointRepair(graph: GraphDoc, joint: CadJoint): string {
   const input = jointInput(graph, joint);
   if ("error" in input) return "Fix the joint's ends and walls.";
   const d = selectJoint(input);
+  if ("error" in d && d.error.includes("heat-set inserts are pressed")) return `Change prefer to {family: wood_insert${joint.prefer?.key ? `, key: "${joint.prefer.key}"` : ""}}: the brief's insert goes into wood.`;
   if ("error" in d && d.error.includes("no joint rule supports")) return "No rule can mint it yet: drop prefer and let the rules pick, or declare that part as its own hardware node mated to both parts.";
   const escapes = jointEscapes(input);
   // A wall longer than a's material is a mis-declared wall, never a stated one.
@@ -2045,6 +2103,19 @@ export const cadJointRuleLint = {
         problems.push(`joint ${decision.error}. ${jointRepair(graph, joint)}`);
         continue;
       }
+      // Hardware these recipes seat IN b is placed from b's port, and the
+      // solver places it once, on b's first copy: the round stool's four
+      // joints on one leg node stacked four nut sets on leg #0 (27 G5
+      // clashes), and M1h's wheel bearings pile up the same way.
+      const onB = (r: string) => ["insert", "nut_trap", "side_nut_trap", "through_bolt", "hub_bearings"].includes(r);
+      const sharers = decisions.filter((o) => !("error" in o.decision) && o.joint.b.node === joint.b.node && o.joint.b.port === joint.b.port);
+      // Same decision: expansion seats one set and the solver carries it to
+      // every copy (dropCopySide). Different ones cannot share a set.
+      const keys = new Set(sharers.map((o) => ("error" in o.decision ? "" : decisionKey(o.decision))));
+      if (onB(decision.recipe) && sharers.length > 1 && keys.size > 1 && sharers[0]!.joint === joint) {
+        const roles = decision.parts.filter((p) => !["screw", "washer_a"].includes(p.role)).map((p) => p.role);
+        problems.push(`joints ${sharers.map((o) => o.joint.id).join(", ")} all seat ${roles.join("/")} in ${joint.b.node}.${joint.b.port}, one node placed ${sharers.length} times, but pick different hardware, so no one set can ride every copy. Give them the same declaration, or each copy its own node (${joint.b.node}-1 … ${joint.b.node}-${sharers.length}), or pick a joint whose b-side hardware is placed from a (a dowel, a stud, a confirmat, bearings in a).`);
+      }
       if (joint.prefer && (joint.prefer.recipe || joint.prefer.family) && !honours(decision, joint.prefer)) {
         problems.push(`joint ${joint.id}: the brief states ${statedName(joint.prefer)}, but rule ${decision.rule} picks ${decision.summary}. Stated hardware is binding.`);
       }
@@ -2092,9 +2163,11 @@ export const cadJointRuleLint = {
         }
       }
       const owner = sharedOf(graph, joint.id) ?? joint.id;
+      // A later joint on a copied b.port rides the first's b-side set (dropCopySide).
+      const lead = sharers.find((o) => !("error" in o.decision) && decisionKey(o.decision) === decisionKey(decision));
       for (const p of decision.parts) {
         const id = hardwareId(owner, p.role);
-        const nd = graph.nodes[id];
+        const nd = graph.nodes[id] ?? (lead && lead.joint !== joint ? graph.nodes[hardwareId(lead.joint.id, p.role)] : undefined);
         if (!nd) problems.push(`joint ${joint.id}: ${id} is missing; the joint's hardware is minted, never declared.`);
         else if (nd.kind !== CATALOG.families[p.family]!.kind) problems.push(`joint ${joint.id}: ${id} is a ${nd.kind}, rule ${decision.rule} mints a ${CATALOG.families[p.family]!.kind}`);
       }

@@ -684,6 +684,37 @@ const W5: JointRule = {
   },
 };
 
+/** W6: a machine screw into a hex-drive threaded insert screwed into wood
+ *  (the brief's "M6 connector screws" in a beech rail), as stated. The
+ *  shortest stocked insert at least 1.5·d long that leaves the skin behind
+ *  it, then the screw by R4's window. Heat-set inserts are for plastics. */
+const W6: JointRule = {
+  id: "W6",
+  when: (i) => fastens(i) && classB(i) === "wood" && i.prefer?.family === "wood_insert",
+  can: (i) => fastens(i) && classB(i) === "wood",
+  uses: [...SCREWS, "wood_insert"],
+  fit: (i) => {
+    const { thread, reason } = pickThread(i);
+    if (!familyDims("wood_insert", thread)) return `no ${thread} wood insert stocked (${Object.keys(CATALOG.families.wood_insert!.dims).join(", ")})`;
+    const skin = skinOf(i);
+    const insL = standardLengths("wood_insert", thread).find((l) => l >= 1.5 * majorDiameter(thread) && l + skin <= i.wallB);
+    if (insL === undefined) return `wallB ${mm(i.wallB)} < a ${thread} wood insert ${mm(1.5 * majorDiameter(thread))}+ long + ${skin} behind it`;
+    const h = pickHead(i, thread, { recessed: true });
+    if (typeof h === "string") return h;
+    // Through most of the insert; past it the pilot runs on, short of the skin.
+    const window = { min: [1, 0, h.offset + 0.75 * insL] as Lin, max: [1, 1, h.offset - skin - 0.5] as Lin };
+    const L = screwLength(i, thread, h, window);
+    if (typeof L === "string") return L;
+    return decision("W6", "insert", `${thread}×${L} ${h.head} into a ${thread}×${insL} wood insert`, [
+      `wood b, ${i.intent}: a hex-drive threaded insert screwed into its pilot, never a tapped or heat-set thread`, reason, h.reason,
+    ], {
+      thread, head: h.head,
+      parts: [screwPart(thread, h, L), { role: "insert", family: "wood_insert", key: thread, length: insL }], window,
+      dims: { recess: h.recess, offset: h.offset, insertLength: insL, pocketDepth: r2(L - h.clamp + 0.5) },
+    });
+  },
+};
+
 /** R8: a threaded-rod stud, half threaded into each part (a leg screwed onto
  *  a top or a frame). Only as stated. The shortest stocked length that
  *  engages each side the material's minimum and leaves the skin behind. */
@@ -1517,7 +1548,7 @@ const PB: JointRule = {
 };
 
 /** First fit wins. Motion rules come first: a revolute joint is never bolted. */
-export const JOINT_RULES: JointRule[] = [D1, DB, DG, M1f, M1, M1h, M1p, M2pin, M2, M2d, PL, PB, P1, P2, W1, W2, W4, W5, W3, R8, R1, R1b, R2, R3, R4, R7, R5, R6, R3f];
+export const JOINT_RULES: JointRule[] = [D1, DB, DG, M1f, M1, M1h, M1p, M2pin, M2, M2d, PL, PB, P1, P2, W1, W2, W4, W5, W6, W3, R8, R1, R1b, R2, R3, R4, R7, R5, R6, R3f];
 
 export function selectJoint(input: JointInput): JointDecision | { error: string } {
   const tag = input.id ? `${input.id}: ` : "";
@@ -1559,6 +1590,10 @@ function selectStated(input: JointInput, p: NonNullable<CadJoint["prefer"]>, tag
   if (p.family && !CATALOG.families[p.family]) return { error: `${say}: the catalog has no family "${p.family}" (${Object.keys(CATALOG.families).join(", ")})` };
   if (p.family && p.key && !canonicalKey(p.family, p.key)) return { error: `${say}: the catalog has no ${p.family} "${p.key}" (${Object.keys(CATALOG.families[p.family]!.dims).join(", ")})` };
   if (p.family && !JOINT_RULES.some((r) => r.uses.some((f) => sameFamily(p.family!, f)))) return { error: `${say}: no joint rule supports ${p.family} yet` };
+  // Heat-set inserts melt into thermoplastics; wood takes a screw-in insert.
+  if (p.family?.startsWith("heatset") && classB(input) === "wood") {
+    return { error: `${say}: heat-set inserts are pressed into molten thermoplastic, and b (${input.materialB}) is wood: state wood_insert ${p.key ?? ""} (a hex-drive threaded insert for wood) instead`.replace(" )", ")") };
+  }
   const byId = JOINT_RULES.some((r) => r.id === p.recipe);
   const shortfalls: string[] = [];
   const tried = new Set<JointRule["fit"]>();

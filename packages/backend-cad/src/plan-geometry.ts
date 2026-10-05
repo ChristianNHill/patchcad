@@ -24,7 +24,8 @@ import { HARDWARE_PORT_TYPES, type CadContractPayload } from "./index.js";
 import { IDENTITY, kinematicJoints, mul, poseToMat, solveAssembly, type JointAxisDef, type Mat4 } from "./assembly.js";
 import { resolveDim, resolvePose } from "./bindings.js";
 import { FASTENING_HARDWARE, REGISTRY_HARDWARE } from "./registry.js";
-import { graphMates, isJointHardware, jointAxes, jointDecisions } from "./expand.js";
+import { graphMates, isJointHardware, jointAxes, jointDecisions, jointInput } from "./expand.js";
+import { dim, familyDims } from "./catalog.js";
 
 /** Envelopes carry slack around the part; touching neighbours may overlap by it. */
 export const PLAN_OVERLAP_TOL_MM = 1.0;
@@ -239,6 +240,8 @@ export function statedTravel(goal: string): number | undefined {
   const spans = new Set<number>();
   for (const m of goal.matchAll(new RegExp(String.raw`(-?\d+(?:\.\d+)?)(?:${deg})?\s*(?:to|-|–|\.\.)\s*(-?\d+(?:\.\d+)?)${deg}`, "gi"))) spans.add(Number(m[2]) - Number(m[1]));
   for (const m of goal.matchAll(new RegExp(String.raw`at least\s+(\d+(?:\.\d+)?)${deg}`, "gi"))) spans.add(Number(m[1]));
+  // "folds flat": the hinge must close fully, a half turn from open flat.
+  if (/\bfolds?\s+(?:up\s+)?flat\b/i.test(goal)) spans.add(180);
   return spans.size === 1 ? [...spans][0] : undefined;
 }
 
@@ -255,7 +258,7 @@ export function solvePlan(graph: GraphDoc) {
     }
     return { id: n.id, ports };
   });
-  return solveAssembly(nodes, graphMates(graph), graph.assembly.entryNodeId);
+  return solveAssembly(nodes, graphMates(graph), graph.assembly.entryNodeId, (id) => isJointHardware(graph, id));
 }
 
 /** One envelope primitive, posed in the world: a unit box or unit cylinder
@@ -383,6 +386,50 @@ function throughBores(graph: GraphDoc, instances: Record<string, Mat4[]>): strin
       }
     }
   }
+  return problems;
+}
+
+/**
+ * b held at both faces by two spindle joints (a winch drum between its side
+ * plates) must fit between the supports with each joint's inner stack (the
+ * collar or washer between a's face and b): the winch's drum spanned the
+ * whole gap, and both 8mm collars sat inside it (G5 301mm³). The second
+ * joint's mate only checks the axis line, so the solver never says so.
+ */
+function pairGaps(graph: GraphDoc, instances: Record<string, Mat4[]>): string[] {
+  const problems: string[] = [];
+  const decisions = jointDecisions(graph);
+  const stack = (d: (typeof decisions)[number]["decision"]): number | undefined => {
+    if ("error" in d) return undefined;
+    if (d.recipe === "flanged_bearing") return d.dims.flange! + d.dims.gap!;
+    if (d.recipe !== "bearings" && d.recipe !== "bushings") return undefined;
+    const keep = d.parts.find((p) => p.role === "collar" || p.role === "eclip");
+    return keep ? dim(familyDims(keep.family, keep.key)!, keep.family === "collar" ? "width" : "thickness") : undefined;
+  };
+  const face = (node: string, port: string) => {
+    const p = ((graph.nodes[node]?.contract.payload as CadContractPayload | undefined)?.ports ?? []).find((x) => x.name === port);
+    if (!p) return undefined;
+    const m = mul(instances[node]?.[0] ?? IDENTITY, poseToMat(resolvePose(graph, p.pose)));
+    return { o: [m[12]!, m[13]!, m[14]!] as Vec3, z: [m[8]!, m[9]!, m[10]!] as Vec3 };
+  };
+  decisions.forEach((p, n) => {
+    const q = decisions.slice(n + 1).find((o) => o.joint.b.node === p.joint.b.node && o.joint.b.port !== p.joint.b.port && o.joint.motion === "revolute");
+    if (!q || p.joint.motion !== "revolute") return;
+    const [sp, sq] = [stack(p.decision), stack(q.decision)];
+    const inp = jointInput(graph, p.joint);
+    if (sp === undefined || sq === undefined || "error" in inp || inp.pairSpan === undefined) return;
+    try {
+      const [fp, fq] = [face(p.joint.a.node, p.joint.a.port), face(q.joint.a.node, q.joint.a.port)];
+      if (!fp || !fq) return;
+      const gap = Math.abs(dot(sub(fq.o, fp.o), fp.z));
+      const need = inp.pairSpan + sp + sq;
+      if (need > gap + PLAN_OVERLAP_TOL_MM) {
+        problems.push(`${p.joint.b.node} is ${inp.pairSpan.toFixed(1)} between its faces, but ${p.joint.a.node}.${p.joint.a.port} and ${q.joint.a.node}.${q.joint.a.port} are ${gap.toFixed(1)} apart and joints ${p.joint.id} and ${q.joint.id} each put ${sp}/${sq} of collar or washer between a's face and ${p.joint.b.node}: make ${p.joint.b.node} ${(need - gap).toFixed(1)} shorter (${(gap - sp - sq).toFixed(1)} between its faces), or the supports that much further apart.`);
+      }
+    } catch {
+      // an unresolvable pose: the expression lint says so
+    }
+  });
   return problems;
 }
 
@@ -574,6 +621,7 @@ export const cadPlanGeometryLint = {
     }
     problems.push(...axisClaims(graph, instances));
     problems.push(...throughBores(graph, instances));
+    problems.push(...pairGaps(graph, instances));
     // Revolute travel the parts' envelopes cannot make: a rotor that cannot
     // spin a full turn, or stated limits past the stops.
     for (const def of jointAxes(graph)) {

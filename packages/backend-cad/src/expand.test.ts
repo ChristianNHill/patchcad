@@ -5,11 +5,11 @@ import { architectOutputToGraph, reexpandGraph, type ArchitectOutput } from "@pa
 import { CadBackend, type CadContractPayload } from "./index.js";
 import { familyDims } from "./catalog.js";
 import { cadJointRuleLint, expandJoints, graphMates, jointAxes, jointErrors, jointInput, staleJoints } from "./expand.js";
-import { reachableTravel } from "./plan-geometry.js";
+import { reachableTravel, statedTravel } from "./plan-geometry.js";
 import { solveAssembly } from "./assembly.js";
 import { boundDependents, resolvePose } from "./bindings.js";
 import { buildBom } from "./bom.js";
-import { hardwareAllowances } from "./g5.js";
+import { hardwareAllowances, threadAllowances } from "./g5.js";
 import { meshSourceLint } from "./mesh-source.js";
 
 /** Expansion turns intent into graph, so its tests read the graph: which
@@ -283,6 +283,7 @@ describe("every recipe expands to a plan the CAD lints accept", () => {
     ["threaded-rod stud as stated", { intent: "serviceable", prefer: { family: "threaded_rod", key: "M6" } }, 40, 40],
     ["wood: dowel screw as stated", { prefer: { family: "dowel_screw", key: "6" } }, 50, 60],
     ["wood: chipboard screw as stated", { prefer: { family: "chipboard", key: "4" } }, 18, 40],
+    ["wood: machine screw into a wood insert as stated", { threadHint: "M6", prefer: { family: "wood_insert", key: "M6" } }, 18, 40],
     ["wood: glued furniture dowels", { intent: "alignment" }, 18, 40],
     ["wood: confirmat", { intent: "permanent" }, 16, 60],
     ["wood: cam lock and dowels", { lateral: 18 }, 18, 60],
@@ -1001,6 +1002,38 @@ describe("a servo's face ring", () => {
   });
 });
 
+describe("one leg node in four joints (real-round-stool)", () => {
+  // Each joint minted its own nut set on leg #0: 27 G5 clashes, copies 1-3 bare.
+  const stool = () => {
+    const at = (name: string, x: number, y: number, z: number, dz: 1 | -1) => ({ name, type: "FLAT_FACE" as const, pose: { origin: [x, y, z], zAxis: [0, 0, dz] as [number, number, number], xAxis: [1, 0, 0] as [number, number, number] }, params: { size: 30 } });
+    const box = (o: number[], dims: number[]) => ({ volumes: [{ kind: "box", pose: { origin: o, zAxis: [0, 0, 1], xAxis: [1, 0, 0] }, dims }], clearance: 0.4 });
+    const spots = [[-60, -60], [60, -60], [-60, 60], [60, 60]];
+    const seat = part("seat", 6, spots.map(([x, y], k) => at(`leg_${k}`, x!, y!, 0, -1)), { envelope: box([0, 0, 3], [200, 200, 6]) as never });
+    const leg = part("leg", 10, [at("top", 0, 0, 0, 1)], { envelope: box([0, 0, -5], [40, 40, 10]) as never });
+    return expandJoints({
+      ...plates({}), nodes: [seat, leg] as never, entryNodeId: "seat",
+      joints: spots.map((_, k) => ({ id: `leg${k}`, a: { node: "seat", port: `leg_${k}` }, b: { node: "leg", port: "top" }, intent: "permanent", load: "medium", access: "both_sides", count: 3, pitch: 16, wallA: 6, wallB: 10 })),
+    } as ArchitectOutput);
+  };
+  it("seats one nut set in the leg and carries it to every copy; each joint keeps its own screws", () => {
+    const out = stool();
+    expect(out.joints!.map((j) => (j as { expanded?: string }).expanded?.split("|")[0])).toEqual(["R5", "R5", "R5", "R5"]);
+    expect(out.nodes.filter((n) => n.kind === "nut").map((n) => n.id)).toEqual(["leg0_nut"]);
+    expect(out.nodes.filter((n) => n.kind === "fastener")).toHaveLength(4);
+    const g = graphOf(out);
+    const nodes = Object.values(g.nodes).map((n) => ({ id: n.id, ports: Object.fromEntries((n.contract.payload as CadContractPayload).ports.map((p) => [p.name, resolvePose(g, p.pose)])) }));
+    const { instances, problems } = solveAssembly(nodes, graphMates(g), "seat", (id) => /^leg\d_/.test(id));
+    expect(problems).toEqual([]);
+    expect(instances["leg"]).toHaveLength(4);
+    expect(instances["leg0_nut"]).toHaveLength(12); // 3 per leg
+    const legsWithNuts = new Set(instances["leg0_nut"]!.map((m) => `${Math.sign(m[12]!)},${Math.sign(m[13]!)}`));
+    expect(legsWithNuts.size).toBe(4);
+    // leg1's screws thread into the carried nut, an allowed overlap
+    expect(threadAllowances(g).some((x) => x.a === "leg1_screw" && x.b === "leg0_nut")).toBe(true);
+    expect(lintAll(out)).toEqual([]);
+  });
+});
+
 describe("a screw pattern on a narrow face", () => {
   // real-round-stool: 3 screws at pitch 35 as a triangle put tap_1 on the edge
   // of a 110×40 leg arm ("needs 10.5mm of depth, measured 0.60").
@@ -1028,6 +1061,17 @@ describe("a shaft whose length is an expression", () => {
     const [vol] = (shaft.contract.payload as CadContractPayload).envelope.volumes as { h?: number }[];
     expect(length).toBeGreaterThan(10);
     expect(vol!.h).toBeGreaterThanOrEqual(length);
+  });
+});
+
+describe("a stand that folds flat (real-folding-phone-stand)", () => {
+  it("must close fully: the derived [-80, 0] that G5 found the parts collide at is a plan problem", () => {
+    expect(statedTravel("a phone stand that folds flat to 12mm thick")).toBe(180);
+    expect(statedTravel("a box whose lid opens 0 to 110 degrees")).toBe(110);
+    const raw = JSON.parse(readFileSync(new URL("./fixtures/real-folding-phone-stand.json", import.meta.url), "utf8"));
+    const g = GraphDoc.parse(raw.graph ?? raw);
+    const problems = new CadBackend().planning.graphLints.flatMap((l) => l.run(g));
+    expect(problems).toEqual(expect.arrayContaining([expect.stringMatching(/^joint hinge: the brief states 180° of travel, but its limits \[-80, 0\]° cover 80°/)]));
   });
 });
 
@@ -1119,14 +1163,14 @@ describe("real-product leftovers", () => {
   });
 
   /** A tilt cradle between a yoke's two arms on x, one stated F623 a side. */
-  const yoke = (prefer: Record<string, string> = { family: "bearing_flanged", key: "F623" }, duty = "occasional", half = 38.5) => {
+  const yoke = (prefer: Record<string, string> = { family: "bearing_flanged", key: "F623" }, duty = "occasional", half = 38.5, wallB: number = 8) => {
     const at = (name: string, x: number, dir: 1 | -1) => ({ name, type: "FLAT_FACE" as const, pose: { origin: [x, 0, 0], zAxis: [dir, 0, 0] as [number, number, number], xAxis: [0, 1, 0] as [number, number, number] }, params: { size: 12 } });
     const box = (o: number[], dims: number[]) => ({ kind: "box" as const, pose: { origin: o, zAxis: [0, 0, 1], xAxis: [1, 0, 0] }, dims });
     const frame = part("yoke", 10, [at("arm_l", -40, 1), at("arm_r", 40, -1)], { envelope: { volumes: [box([-45, 0, 0], [10, 30, 30]), box([45, 0, 0], [10, 30, 30]), box([0, 0, -19], [100, 30, 10])], clearance: 0.4 } as never });
     const cradle = part("cradle", 8, [at("end_l", -half, -1), at("end_r", half, 1)], { envelope: { volumes: [box([0, 0, 0], [2 * half, 16, 16])], clearance: 0.4 } as never });
     const joint = (s: "l" | "r") => ({
       id: `tilt-${s}`, a: { node: "yoke", port: `arm_${s}` }, b: { node: "cradle", port: `end_${s}` },
-      intent: "serviceable", motion: "revolute", duty, load: "light", wallA: 10, wallB: 8, prefer,
+      intent: "serviceable", motion: "revolute", duty, load: "light", wallA: 10, wallB, prefer,
     });
     return expandJoints({ ...plates({}), nodes: [frame, cradle] as never, entryNodeId: "yoke", joints: [joint("l"), joint("r")] } as ArchitectOutput);
   };
@@ -1145,6 +1189,19 @@ describe("real-product leftovers", () => {
     expect(instances["tilt-l_collar"]!.map(at3)).toEqual(expect.arrayContaining([[-50, 0, 0]]));
     expect(instances["cradle"]!.map(at3)).toEqual([[0, 0, 0]]);
     expect(lintAll(out)).toEqual([]);
+  });
+
+  it("asm-hand-winch: each face's shaft stops at b's middle, and a b too long for the gap is a plan problem", () => {
+    // wallB the drum's whole length from each end: the two stubs met at its centre (1678mm³)
+    const out = yoke({ family: "bearing", key: "608" }, "continuous", 32, 64);
+    const len = (id: string) => out.nodes.find((n) => n.id === id)!.contract.params.find((p) => p.name === "length")!.default as number;
+    expect(len("tilt-l_shaft")).toBeLessThanOrEqual(16 + 10 + 31.5 + 0.01);
+    // the 18:43 cook: the drum spans the plates' whole gap, two 8mm collars inside it
+    const g = GraphDoc.parse(JSON.parse(readFileSync(new URL("./fixtures/asm-hand-winch-graph-3.json", import.meta.url), "utf8")));
+    const problems = new CadBackend().planning.graphLints.flatMap((l) => l.run(g)).filter((p) => p.includes("between its faces"));
+    expect(problems).toEqual([expect.stringMatching(/^drum is [\d.]+ between its faces, but .* each put 8\/8 of collar/)]);
+    // the yokes that fit stay quiet
+    expect(lintAll(yoke({ family: "bearing", key: "608" }, "continuous", 32)).filter((p) => p.includes("between its faces"))).toEqual([]);
   });
 
   it("a b held on two faces turns the other face's shaft with it, never its bearings", () => {
@@ -1318,6 +1375,20 @@ describe("a wheel on its own bearings, on an axle fixed in a thin plate", () => 
     const [axis] = new CadBackend().solveScene(graphOf(out)).joints;
     expect(axis!.moving).toEqual(expect.arrayContaining(["v-wheel", "wheel-0_hub_bearing_a", "wheel-0_hub_bearing_b"]));
     expect(axis!.moving.some((m) => m.includes("axle"))).toBe(false);
+    expect(lintAll(out)).toEqual([]);
+  });
+
+  it("seats one bearing set in the wheel and carries it to every copy (real-round-stool, real-linear-actuator)", () => {
+    // Was: each joint's bearings, all four sets on wheel #0.
+    const out = gantry(4);
+    expect(out.nodes.filter((n) => n.kind === "bearing").map((n) => n.id)).toEqual(["wheel-0_hub_bearing_a", "wheel-0_hub_bearing_b"]);
+    const g = graphOf(out);
+    const nodes = Object.values(g.nodes).map((n) => ({ id: n.id, ports: Object.fromEntries((n.contract.payload as CadContractPayload).ports.map((p) => [p.name, resolvePose(g, p.pose)])) }));
+    const { instances, problems } = solveAssembly(nodes, graphMates(g), "plate", (id) => id.startsWith("wheel-"));
+    expect(problems).toEqual([]);
+    expect(instances["wheel-0_hub_bearing_a"]!.map(at3).map(([x, y]) => [x, y])).toEqual(expect.arrayContaining([[-40, -30], [40, -30], [-40, 30], [40, 30]]));
+    // every axle still its own, from the plate
+    expect(out.nodes.filter((n) => n.id.endsWith("_axle_shaft"))).toHaveLength(4);
     expect(lintAll(out)).toEqual([]);
   });
 

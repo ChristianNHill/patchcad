@@ -2041,7 +2041,7 @@ export class CadBackend implements DomainBackend<CadContractPayload> {
       }
       return { id: n.id, ports };
     });
-    const { world, instances, problems, mateOrigins } = solveAssembly(nodes, graphMates(graph), graph.assembly.entryNodeId);
+    const { world, instances, problems, mateOrigins } = solveAssembly(nodes, graphMates(graph), graph.assembly.entryNodeId, (id) => isJointHardware(graph, id));
     // Motion joints are kinematic, not rigid: the poses above are each joint
     // at 0, and this says which axis it turns or slides along, how far, and
     // which parts go with it (G5 sweeps them).

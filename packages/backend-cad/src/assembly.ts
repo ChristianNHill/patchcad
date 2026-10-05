@@ -196,6 +196,9 @@ export function solveAssembly(
   nodes: AssemblyNode[],
   mates: AssemblyMate[],
   rootId: string,
+  /** Nodes that ride whatever placed them (a joint's nut in its leg): one
+   *  more copy for each further copy of that part. */
+  carried: (id: string) => boolean = () => false,
 ): {
   world: Record<string, Mat4>;
   instances: Record<string, Mat4[]>;
@@ -204,6 +207,8 @@ export function solveAssembly(
 } {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const world: Record<string, Mat4> = {};
+  /** Nodes in the order the BFS placed them. */
+  const order: string[] = [];
   /** Every pose a node is placed at. world[id] is always the first of these. */
   const instances: Record<string, Mat4[]> = {};
   /** Which of a node's OWN ports the mate that placed it seated on. */
@@ -246,6 +251,7 @@ export function solveAssembly(
       origins.set(mate, transformPoint(world[placedId]!, portA.origin));
       placedByPort[placingId] = placingPortKey;
       placedBy[placingId] = mate;
+      order.push(placingId);
       queue.push(placingId);
     }
   }
@@ -332,6 +338,21 @@ export function solveAssembly(
     } else {
       origins.set(mate, transformPoint(best.from, portA.origin));
     }
+  }
+
+  // COPIES CARRY THEIR HARDWARE. A nut seated in a leg is placed from that
+  // leg's first copy only; the leg's other copies got none, and the round
+  // stool's four joints stacked four nut sets on leg #0 (27 G5 clashes).
+  // In placement order, so a carried node's own carried nodes follow it.
+  for (const id of order) {
+    const by = placedBy[id];
+    if (!by || !carried(id)) continue;
+    const parent = by.fromNode === id ? by.toNode : by.fromNode;
+    const extra = instances[parent] ?? [];
+    if (!extra.length) continue;
+    const local = invertRigid(world[parent]!);
+    const own = [world[id]!, ...(instances[id] ?? []).filter((_, k) => copyBy[id]?.[k] === parent)];
+    for (const copy of extra) for (const m of own) (instances[id] ??= []).push(mul(copy, mul(local, m)));
   }
 
   // A NODE NOTHING PLACED IS NOT AT THE ORIGIN, IT IS UNPLACED. Falling back to

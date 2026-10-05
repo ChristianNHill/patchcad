@@ -51,7 +51,7 @@ const ANY_SHCS_LENGTH = [
  * the thread table instead.
  */
 const HW_FIELDS: Record<string, { families: string[]; value: (r: DimsRow) => number }> = {
-  insertHoleD: { families: ["heatset_std", "heatset_short"], value: (r) => dim(r, "holeD") },
+  insertHoleD: { families: ["heatset_std", "heatset_short", "wood_insert"], value: (r) => dim(r, "holeD") },
   insertDepth: { families: ["heatset_std", "heatset_short"], value: (r) => dim(r, "length") },
   bossOd: { families: ["heatset_std", "heatset_short"], value: (r) => dim(r, "minBossOd") },
   nutTrapAf: { families: ["hex_nut"], value: (r) => dim(r, "af") },

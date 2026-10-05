@@ -158,7 +158,8 @@ describe("golden values", () => {
     // DIN 1151 A, NEMA 14 faceplate, and the Feetech STS3215 drawing.
     expect(familyDims("wire_nail", "2.2")).toMatchObject({ d: 2.2, headD: 4.4 });
     expect(familyDims("nema14", "NEMA14")).toMatchObject({ face: 35, holePitch: 26, pilotD: 22, shaftD: 5 });
-    expect(familyDims("sts3215", "STS3215")).toMatchObject({ bodyL: 45.23, bodyW: 24.73, splineD: 19.95, hornPcd: 14 });
+    // Waveshare ST3215 DXF: case 32 (35 with the Ø19.2 × 3 horn), M2 pilots 20.7 × 20.5 off-centre.
+    expect(familyDims("sts3215", "STS3215")).toMatchObject({ bodyL: 45.23, bodyW: 24.73, bodyH: 32, splineD: 19.2, splineH: 3, hornPcd: 14, holePitch: 20.7, holeRowPitch: 20.5, holeD: 1.6 });
     expect(familyDims("button", "M4")).toMatchObject({ headD: 7.6, headH: 2.2 });
     expect(familyDims("csk", "M5")).toMatchObject({ headD: 11.2, headH: 3.1, angle: 90 });
     expect(familyDims("hex_nut", "M6")).toMatchObject({ af: 10, height: 5.2 });

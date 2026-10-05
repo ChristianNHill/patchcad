@@ -1,7 +1,7 @@
 import type { GraphDoc, NodeRecord } from "@patchcad/shared";
 import type { CadContractPayload } from "./index.js";
 import { solveAssembly, type AssemblyNode } from "./assembly.js";
-import { graphMates } from "./expand.js";
+import { graphMates, isJointHardware } from "./expand.js";
 import { resolvePose } from "./bindings.js";
 import { CATALOG, skuFor, type Sku } from "./catalog.js";
 import { skuOf } from "./registry.js";
@@ -107,7 +107,7 @@ function instanceCounts(graph: GraphDoc): Record<string, number> {
     }
     return { id: n.id, ports };
   });
-  const { instances } = solveAssembly(nodes, graphMates(graph), graph.assembly.entryNodeId);
+  const { instances } = solveAssembly(nodes, graphMates(graph), graph.assembly.entryNodeId, (id) => isJointHardware(graph, id));
   return Object.fromEntries(Object.values(graph.nodes).map((n) => [n.id, Math.max(1, instances[n.id]?.length ?? 1)]));
 }
 

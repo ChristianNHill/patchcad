@@ -109,6 +109,18 @@
         "M8": { "holeD": 9.7, "od": 10.5, "length": 12.7, "minBossOd": 12.9, "pocketDepth": 13.7 }
       }
     },
+    "wood_insert": {
+      "category": "fasteners", "kind": "insert", "keyedBy": "thread", "skuPrefix": "WOODINSERT",
+      "note": "unheaded hex-drive threaded insert for wood (E-Z Hex / type E): screwed into a pilot hole, a machine thread inside. od is the outer thread, hex the drive, holeD the middle of the maker's pilot range (pilotMin..pilotMax); modelled at holeD, so it shares nothing with its pilot. Source: The Insert Company steel unheaded hex-drive table (theinsertcompany.com), lengths as stocked there; M8 is their D14 row",
+      "dimsSource": "family-typical",
+      "dims": {
+        "M4": { "od": 8, "hex": 4, "pilotMin": 6.6, "pilotMax": 7.2, "holeD": 6.9 },
+        "M5": { "od": 10, "hex": 5, "pilotMin": 8.4, "pilotMax": 9.2, "holeD": 8.8 },
+        "M6": { "od": 12, "hex": 6, "pilotMin": 10, "pilotMax": 10.8, "holeD": 10.4 },
+        "M8": { "od": 14, "hex": 8, "pilotMin": 12, "pilotMax": 12.8, "holeD": 12.4 }
+      },
+      "lengths": { "M4": [8, 10, 12], "M5": [8, 10, 12, 14], "M6": [10, 12, 15, 18, 20, 23, 25], "M8": [12, 15, 18, 30] }
+    },
     "heatset_short": {
       "category": "fasteners", "kind": "insert", "keyedBy": "thread", "skuPrefix": "HEATSET-S",
       "note": "no standard exists; short inserts for thin walls", "dimsSource": "family-typical",
@@ -484,13 +496,7 @@
         "MG996R": { "bodyL": 40.3, "bodyW": 20, "bodyH": 36.6, "tabL": 53.6, "tabT": 2.5, "tabZ": 24.1, "holePitch": 49.5, "holeRowPitch": 10, "holeD": 4.5, "bossD": 20, "bossH": 2.3, "splineD": 5.8, "splineH": 4, "torqueKgCm": 11 }
       }
     },
-    "sts3215": {
-      "category": "motors", "kind": "motor", "keyedBy": "size", "skuPrefix": "SERVO",
-      "note": "Feetech serial-bus servo, 19.5 kg·cm at 7.4 V, no tabs: the case bottom is the seat (tabZ 0) with four PA2.0 self-tapping holes at holePitch × holeRowPitch (scaled from the drawing, not dimensioned there); the output is the Ø19.95 aluminium horn (splineD/splineH) with 4×M3 on Ø14, its axis bossD/2 from one end", "dimsSource": "family-typical",
-      "dims": {
-        "STS3215": { "bodyL": 45.23, "bodyW": 24.73, "bodyH": 35, "tabZ": 0, "holePitch": 38.5, "holeRowPitch": 18, "holeD": 2, "bossD": 25, "bossH": 0, "splineD": 19.95, "splineH": 4.5, "hornPcd": 14, "hornThread": "M3", "torqueKgCm": 19.5 }
-      }
-    },
+    "sts3215": {"category": "motors", "kind": "motor", "keyedBy": "size", "skuPrefix": "SERVO", "note": "Feetech serial-bus servo, 19.5 kg·cm at 7.4 V, no tabs: the case bottom is the seat (tabZ 0). Dims from the Waveshare ST3215 DXF (files.waveshare.com/upload/0/08/ST3215-2D.zip): case 45.22 × 24.72 × 32, 35 with the horn; the output axis 10.11 from one end (bossD/2); the horn a Ø19.2 × 3 disc (splineD/splineH) with 4×M3 on Ø14; four Ø1.6 M2 pilots in the bottom face, 20.5 across the width and 8.3 / 29.0 from the axis toward the body (holePitch 20.7 centred holeX from the case centre)", "dimsSource": "family-typical", "dims": {"STS3215": {"bodyL": 45.23, "bodyW": 24.73, "bodyH": 32, "tabZ": 0, "holePitch": 20.7, "holeRowPitch": 20.5, "holeD": 1.6, "bossD": 25, "bossH": 0, "splineD": 19.2, "splineH": 3, "hornPcd": 14, "hornThread": "M3", "torqueKgCm": 19.5, "holeX": -8.535}}},
     "disc_magnet": {
       "category": "misc", "kind": "magnet", "keyedBy": "size", "skuPrefix": "MAG",
       "note": "neodymium disc, key is Ø x thickness", "dimsSource": "nominal",

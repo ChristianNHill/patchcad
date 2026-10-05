@@ -31,6 +31,7 @@ describe("selectJoint: one row per rule", () => {
     ["R1 dowel", { intent: "alignment", wallA: 8, wallB: 8 }, "R1", ["dowel:dowel:3x10"]],
     ["W4 dowel screw, leg into a top, as stated", { ...WOOD, wallA: 50, wallB: 400, prefer: { family: "dowel_screw", key: "6" } }, "W4", ["stud:dowel_screw:6x60"]],
     ["W5 chipboard screw, as stated", { ...WOOD, wallA: 18, wallB: 40, prefer: { family: "chipboard", key: "4" } }, "W5", ["screw:chipboard:4x35"]],
+    ["W6 machine screw into a wood insert, as stated", { ...WOOD, wallA: 18, wallB: 40, threadHint: "M6", prefer: { family: "wood_insert", key: "M6" } }, "W6", ["screw:shcs:M6x20", "insert:wood_insert:M6x10"]],
     ["R8 threaded-rod stud, as stated", { intent: "serviceable", wallA: 50, wallB: 400, prefer: { family: "threaded_rod", key: "M6" } }, "R8", ["stud:threaded_rod:M6x30"]],
     ["R1b printed peg when the walls are too thin", { intent: "alignment", wallA: 2, wallB: 3 }, "R1b", []],
     ["R2 tapped into machined b", { processB: "CNC", wallB: 8 }, "R2", ["screw:button:M3x10"]],
@@ -422,6 +423,13 @@ describe("stated hardware every family can be", () => {
     // pockets by the plan; a wire nail is not stocked as a joint yet.
     // v_wheel is a kit the architect places as a node (the wheel joints seat it).
     expect(Object.keys(CATALOG.families).filter((f) => !used.has(f))).toEqual(["wire_nail", "v_wheel", "disc_magnet", "oring", "standoff"]);
+  });
+
+  it("a heat-set insert stated for wood is refused, naming the wood insert (real-step-stool)", () => {
+    const r = selectJoint({ ...base, id: "j-seat", ...WOOD, materialB: "beech hardwood", wallA: 18, wallB: 40, prefer: { family: "heatset_std", key: "M6" } });
+    expect((r as { error: string }).error).toBe("j-seat: stated heatset_std M6: heat-set inserts are pressed into molten thermoplastic, and b (beech hardwood) is wood: state wood_insert M6 (a hex-drive threaded insert for wood) instead");
+    // in plastic it is still the heat-set insert
+    expect(ok({ wallB: 12, prefer: { family: "heatset_std", key: "M3" } }).rule).toBe("R4");
   });
 
   it("a family no rule uses says so plainly instead of asking for room", () => {

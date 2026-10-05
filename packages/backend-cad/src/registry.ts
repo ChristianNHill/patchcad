@@ -157,6 +157,17 @@ export function insertCode(thread: string, family = "heatset_std"): string {
 `);
 }
 
+/** Hex-drive wood insert, framed like a heat-set one: its face on z = 0,
+ *  body +z, modelled at the pilot's Ø (its knife thread cuts the wood). */
+export function woodInsertCode(thread: string, defaultLength: number): string {
+  const r = familyDims("wood_insert", thread)!;
+  return module(`    L = p.get("length", ${defaultLength})
+    body = Pos(0, 0, L / 2) * Cylinder(${dim(r, "holeD")} / 2, L)
+    bore = Pos(0, 0, L / 2) * Cylinder(${tap(thread)} / 2, L * 2)
+    return body - bore
+`);
+}
+
 /** ISO 7089 plain washer, face on z = 0, body +z. */
 export function washerCode(thread: string): string {
   const r = familyDims("washer", thread)!;
@@ -568,10 +579,12 @@ export function motorCode(family: string, size: string, defaultLength = 40): str
   const rows = typeof r.holeRowPitch === "number" ? [-r.holeRowPitch / 2, r.holeRowPitch / 2] : [0];
   if (family === "sts3215") {
     const [hd, hh, pcd] = [n("splineD"), n("splineH"), n("hornPcd")];
+    // The case pilots sit off-centre, toward the body from the axis (holeX).
+    const hx = typeof r.holeX === "number" ? r.holeX : 0;
     return module(`    body = Pos(0, 0, ${bh / 2}) * Box(${bl}, ${bw}, ${bh})
-    for x in (${-n("holePitch") / 2}, ${n("holePitch") / 2}):
+    for x in (${hx - n("holePitch") / 2}, ${hx + n("holePitch") / 2}):
         for y in (${rows.join(", ")},):
-            body = body - Pos(x, y, 2.5) * Cylinder(0.8, 5.01)
+            body = body - Pos(x, y, 2.5) * Cylinder(${n("holeD") / 2}, 5.01)
     horn = Pos(${sx}, 0, ${bh + hh / 2 - 0.01}) * Cylinder(${hd / 2}, ${hh})
     for i in range(4):
         a = i * math.pi / 2
@@ -677,6 +690,7 @@ const CODEGEN: Record<string, (key: string, sku: Sku, fit: number) => string> = 
   hex_nut: (k) => nutCode(k),
   heatset_std: (k) => insertCode(k, "heatset_std"),
   heatset_short: (k) => insertCode(k, "heatset_short"),
+  wood_insert: (k, s) => woodInsertCode(k, lengthOf("wood_insert", k, s)),
   washer: (k) => washerCode(k),
   dowel: (k, s) => dowelCode(k, lengthOf("dowel", k, s)),
   threaded_rod: (k, s) => threadedRodCode(k, lengthOf("threaded_rod", k, s)),

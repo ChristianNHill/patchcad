@@ -19,7 +19,7 @@ import { METRIC, REGISTRY_HARDWARE, skuOf } from "./registry.js";
 import { familyDims } from "./catalog.js";
 import { isMachined, sourcingOf } from "./sourcing.js";
 import { resolveDim } from "./bindings.js";
-import { jointOwner, mintedNames } from "./expand.js";
+import { copyOwner, jointOwner, mintedNames } from "./expand.js";
 import { invertRigid, transformPoint, type Mat4 } from "./assembly.js";
 import { contains, posedEnvelope } from "./plan-geometry.js";
 import {
@@ -114,7 +114,10 @@ export function threadAllowances(graph: GraphDoc): { a: string; b: string; volum
     // another joint's nut is still clash-checked.
     for (const m of Object.values(graph.nodes)) {
       const mOwner = jointOwner(graph, m.id);
-      if ((owner || mOwner) && owner !== mOwner) continue;
+      // A joint on a copied b.port threads into the first one's nut, having
+      // none of its own (dropCopySide).
+      const rides = !!owner && !!mOwner && copyOwner(graph, owner) === mOwner && !graph.nodes[`${owner}${m.id.slice(mOwner.length)}`];
+      if ((owner || mOwner) && owner !== mOwner && !rides) continue;
       // A joint's screw into its own motor (a servo's case pilots) engages
       // over the screw's length: the case is catalog, so no port says how deep.
       const len = m.kind === "motor" ? (owner && owner === mOwner ? num(graph, param(screw, "length")) : null) : engagementLength(m.kind, thread, skuOf(m)?.family);
