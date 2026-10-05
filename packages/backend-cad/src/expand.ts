@@ -195,6 +195,7 @@ export function jointInput(graph: GraphDoc, j: CadJoint, joints: readonly unknow
     ...pairOf(graph, j, b, joints as CadJoint[]),
     trappedB: aheadA !== undefined && aheadA > wallB + 1, printInPlace: j.printInPlace, toolFree: j.toolFree,
     ...onRodOf(graph, a, j.a.port, b, j.b.port),
+    ...(b.kind === "v_wheel" ? { bBuiltIn: Number(familyDims("v_wheel", String(((b.params?.sku ?? b.contract.params.find((p) => p.name === "sku")?.default) as string | undefined)?.replace(/^VWHEEL-/, "") ?? "SOLID"))?.bore ?? 5) } : {}),
     guided: j.motion === "prismatic" && guidedElsewhere(graph, j, joints as CadJoint[]),
   };
 }
@@ -368,7 +369,20 @@ class Expansion {
   addPort(node: OutNode, side: "provides" | "requires", port: CadPortT, declType: string = port.type, description = "") {
     this.minted.push(port.name);
     // Several joints may seat the same port of an instanced part: one feature.
-    if (payloadOf(node).ports.some((p) => p.name === port.name)) return;
+    // The port may also be an echo, a repair writing back what an earlier
+    // expansion minted (real-robot-arm-5dof: six servo hubs echoed with no
+    // requires entry, refused for all three repairs): the minted definition
+    // wins, and the port sits on the side the joint declares.
+    const ports = payloadOf(node).ports;
+    const k = ports.findIndex((p) => p.name === port.name);
+    if (k >= 0) {
+      if (this.minted.indexOf(port.name) < this.minted.length - 1) return; // minted earlier in this expansion
+      ports[k] = port;
+      const other = side === "provides" ? "requires" : "provides";
+      node.contract[other] = node.contract[other].filter((d) => d.key !== port.name);
+      if (!node.contract[side].some((d) => d.key === port.name)) node.contract[side].push({ key: port.name, type: declType, description });
+      return;
+    }
     this.putPort(node, side, port, declType, description);
   }
 
@@ -524,6 +538,23 @@ function dropEchoes(out: ArchitectOutput) {
   }));
   out.nodes = out.nodes.filter((n) => !echoed.has(n.id));
   out.edges = out.edges.filter((e) => !echoed.has(e.from) && !echoed.has(e.to) && !ghost(e.from, e.fromPort) && !ghost(e.to, e.toPort));
+}
+
+/** An echoed host param bound to a joint's hardware that is no longer there
+ *  (after unmint): expansion binds it afresh if the joint still mints that part. */
+function dropStaleBindings(out: ArchitectOutput) {
+  const ids = (out.joints ?? []).map((j) => j.id);
+  const live = new Set(out.nodes.map((n) => n.id));
+  for (const n of out.nodes) {
+    const p = payloadOf(n);
+    const stale = Object.entries(p.paramBindings ?? {}).filter(([, b]) => {
+      const ref = /param:([^.\s,]+)\.sku/.exec(String(b))?.[1];
+      return ref !== undefined && ids.some((id) => ref.startsWith(`${id}_`)) && !live.has(ref);
+    }).map(([k]) => k);
+    if (!stale.length) continue;
+    n.contract.params = n.contract.params.filter((q) => !stale.includes(q.name));
+    p.paramBindings = Object.fromEntries(Object.entries(p.paramBindings ?? {}).filter(([k]) => !stale.includes(k)));
+  }
 }
 
 function unmint(out: ArchitectOutput, joint: JointDecl) {
@@ -986,6 +1017,13 @@ function hubBearings(c: Ctx) {
   const kw = keep.family === "collar" ? n(keep, "width") : n(keep, "thickness");
   const [ida, idb, aid, kid] = [hardwareId(j.id, "hub_bearing_a"), hardwareId(j.id, "hub_bearing_b"), hardwareId(j.id, axle.role), hardwareId(j.id, keep.role)];
   unmate(c);
+  if (d.dims.builtIn) {
+    // b's bearings are its own (a catalog V-wheel): a seat on its far face
+    // for the keeper, nothing cut in it.
+    x.addPort(B, "provides", { name: `${vb}_far`, type: "FLAT_FACE", pose: at(fb, 0, 0, times(-1, j.wallB), true), params: { ring_diameter: d.dims.d! + 1 } }, "FLAT_FACE");
+    x.mint(j.id, keep, d.summary, [{ side: "requires", port: { name: "seat", type: "FLAT_FACE", pose: SEAT_POSE as unknown as Pose, params: { ring_diameter: d.dims.d! + 1 } }, decl: "FLAT_FACE" }]);
+    x.addEdge(B.id, `${vb}_far`, kid, "seat");
+  } else {
   // One bearing (a thin wheel, a light load) sits at b's far face, the axle
   // through a clearance bore in the rest of b.
   const two = !!part(d, "hub_bearing_a");
@@ -1009,6 +1047,7 @@ function hubBearings(c: Ctx) {
   x.addEdge(B.id, `${vb}_seat_b`, idb, "seat");
   x.mint(j.id, keep, d.summary, [{ side: "requires", port: { name: "seat", type: "FLAT_FACE", pose: SEAT_POSE as unknown as Pose, params: { ring_diameter: d.dims.d! + 1 } }, decl: "FLAT_FACE" }]);
   x.addEdge(idb, "bore", kid, "seat");
+  }
   // The axle: socketed wallA deep in a, b's face 1mm past a's.
   x.addParam(A, `${v}_axle_d`, `axle Ø for ${j.id}`, `hw:shaftD:param:${aid}.sku`);
   x.addPort(A, "provides", { name: `${v}_axle`, type: "HUB_BORE", pose: at(fa, 0, 0, 0), params: { diameter: `param(${A.id}.${v}_axle_d)`, fit: "press", depth: j.wallA } });
@@ -1021,7 +1060,7 @@ function hubBearings(c: Ctx) {
   if (!B.contract.requires.some((p) => p.key === j.b.port)) B.contract.requires.push({ key: j.b.port, type: x.port(B, j.b.port).type, description: `joint ${j.id}` });
   x.addEdge(aid, "hub", B.id, j.b.port);
   ringFace(c, A, j.a.port, sum(`param(${A.id}.${v}_axle_d)`, 2.4));
-  ringFace(c, B, j.b.port, sum(`param(${B.id}.${vb}_seat_od)`, 2.4));
+  ringFace(c, B, j.b.port, d.dims.builtIn ? round(d.dims.d! + 2.4) : sum(`param(${B.id}.${vb}_seat_od)`, 2.4));
 }
 
 /** M1f: one flanged bearing in a's face, its flange on the face; a washer on
@@ -1132,7 +1171,7 @@ function pin(c: Ctx) {
     side: "requires", port: { name: "center", type: "FLAT_FACE", pose: seat, params: { ring_diameter: d.dims.d! / 2 } }, decl: "DOWEL_HOLE",
   }]);
   // b between a's knuckles: the pin goes in through a once b is there.
-  x.addPort(A, "provides", { name: `${v}_pin_a`, type: "DOWEL_HOLE", pose: at(fa, 0, 0, 0), params: { diameter: `param(${A.id}.${v}_pin_d)`, depth: i.trappedB ? i.wallA : deep(d.dims.press!, i.wallA, i.minWallA ?? i.minWall), fit: d.dims.slipA ? "slip" : "press" } });
+  x.addPort(A, "provides", { name: `${v}_pin_a`, type: "DOWEL_HOLE", pose: at(fa, 0, 0, 0), params: { diameter: `param(${A.id}.${v}_pin_d)`, depth: i.trappedB ? round(Math.min(i.wallA, i.depthA ?? i.wallA)) : deep(d.dims.press!, i.wallA, i.minWallA ?? i.minWall), fit: d.dims.slipA ? "slip" : "press" } });
   x.addPort(B, "provides", { name: `${v}_pin_b`, type: "DOWEL_HOLE", pose: at(fb, 0, 0, 0), params: { diameter: `param(${B.id}.${v}_pin_d)`, depth: deep(d.dims.run!, i.wallB, i.minWall), fit: "slip" } });
   x.addEdge(A.id, `${v}_pin_a`, id, "center");
   faceMate(c);
@@ -1688,6 +1727,7 @@ export function expandJoints(input: ArchitectOutput, live?: Live): ArchitectOutp
   }
   dropEchoes(out);
   joints.forEach((j, i) => j.success && unmint(out, out.joints![i]!));
+  dropStaleBindings(out);
   const x = new Expansion(out, live);
   const kept: JointDecl[] = [];
   const planned = joints.map((parsed) => {
@@ -2282,7 +2322,16 @@ export const cadJointRuleLint = {
         !("error" in o.decision) && !("error" in decision) && ["bushings", "bearings"].includes(decision.recipe) && decisionKey(o.decision) === decisionKey(decision) && coaxial(graph, o.joint, joint) === "apart";
       // One bearing per support (M1p, M1f): two joints on one b by design.
       const pairOnB = (o: (typeof decisions)[number]) => o.joint.b.node === joint.b.node && !("error" in decision) && ["M1p", "M1f"].includes(decision.rule);
-      const other = !first && joint.motion !== "fixed" ? decisions.find((o) => o.joint !== joint && o.joint.motion !== "fixed" && coaxial(graph, o.joint, joint) && !axle(o) && !pairOnB(o) && spansMeet(graph, o.joint, joint)) : undefined;
+      // Two pins pressed in from opposite faces (a pinewood car's axle nails)
+      // are two short stubs, not one axis: they clash only if they meet.
+      const stubs = (o: (typeof decisions)[number]) => {
+        if ("error" in o.decision || "error" in decision || o.decision.recipe !== "pin" || decision.recipe !== "pin") return false;
+        if (o.joint.a.node !== joint.a.node || coaxial(graph, o.joint, joint) !== "apart") return false;
+        const node = graph.nodes[joint.a.node];
+        const span = node ? facingApart(graph, node, joint.a.port, o.joint.a.port) : undefined;
+        return span !== undefined && (o.decision.dims.press ?? Infinity) + (decision.dims.press ?? Infinity) < span - 1;
+      };
+      const other = !first && joint.motion !== "fixed" ? decisions.find((o) => o.joint !== joint && o.joint.motion !== "fixed" && coaxial(graph, o.joint, joint) && !axle(o) && !pairOnB(o) && !stubs(o) && spansMeet(graph, o.joint, joint)) : undefined;
       const repeatedA = other && other.joint.a.port === joint.a.port && other.joint.b.node === joint.b.node;
       if (repeatedA && decisions.indexOf(other) < decisions.findIndex((o) => o.joint === joint)) {
         // real-linear-actuator: four V-wheel joints with the wheel as a.

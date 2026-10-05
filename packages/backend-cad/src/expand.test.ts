@@ -328,6 +328,30 @@ describe("every recipe expands to a plan the CAD lints accept", () => {
   });
 });
 
+describe("pinewood car: four wheels on axle nails", () => {
+  const side = (name: string, x: number, y: number) => ({ name, type: "FLAT_FACE" as const, pose: { origin: [x, y, 0], zAxis: [0, Math.sign(y), 0] as [number, number, number], xAxis: [1, 0, 0] }, params: { size: 8 } });
+  const car = () => {
+    const body = part("body", 20, [side("axle_fl", 55, 22.25), side("axle_fr", 55, -22.25), side("axle_rl", -55, 22.25), side("axle_rr", -55, -22.25)], {
+      envelope: { volumes: [{ kind: "box", pose: { origin: [0, 0, 0], zAxis: [0, 0, 1], xAxis: [1, 0, 0] }, dims: [178, 44.5, 20] }], clearance: 0.4 } as never,
+    });
+    const wheel = part("wheel", 9.5, [face("hub_face", 0, 12, [0, 0, 1])], {
+      envelope: { volumes: [{ kind: "cylinder", pose: { origin: [0, 0, -4.75], zAxis: [0, 0, 1], xAxis: [1, 0, 0] }, d: 30, h: 9.5 }], clearance: 0.4 } as never,
+    });
+    return expandJoints({
+      ...plates({}), nodes: [body, wheel] as never, entryNodeId: "body",
+      joints: ["fl", "fr", "rl", "rr"].map((k) => ({ id: `wheel-${k}`, a: { node: "body", port: `axle_${k}` }, b: { node: "wheel", port: "hub_face" }, intent: "serviceable", motion: "revolute", duty: "occasional", load: "light", wallA: 22.25, wallB: 9.5, prefer: { family: "shaft", key: "2.2" } })),
+    } as ArchitectOutput);
+  };
+
+  it("a stated 2.2mm shaft is the 2.2 axle nail, one pressed into each side, wheels turning on them", () => {
+    const out = car();
+    expect((out.joints as { expanded?: string }[]).map((j) => j.expanded)).toEqual(Array(4).fill("M2d|pin=wire_nail:2.2"));
+    expect(lintAll(out).filter((m) => /both turn about one axis|stated|wheel-/.test(m))).toEqual([]);
+    const { instances } = solved(out);
+    expect(instances.wheel).toHaveLength(4);
+  });
+});
+
 describe("planetary stage", () => {
   const g = GraphDoc.parse(JSON.parse(readFileSync(new URL("./fixtures/real-planetary-gearbox-graph.json", import.meta.url), "utf8")));
   const joints = new CadBackend().solveScene(g).joints;
@@ -1436,6 +1460,40 @@ describe("a wheel on its own bearings, on an axle fixed in a thin plate", () => 
     expect(ports(out, "gear")).not.toContain("gear_0_seat_a:BEARING_SEAT");
     expect(solved(out).problems).toEqual([]);
     expect(lintAll(out)).toEqual([]);
+  });
+
+  it("a repair that echoes a minted host port back, on the wrong side, re-expands clean (real-robot-arm-5dof)", () => {
+    const plan = plates({ motion: "revolute", driven: true, speedClass: "low", torqueClass: "medium" }, 6, 4);
+    Object.assign((plan.nodes[0]!.contract.payload as CadContractPayload).envelope.volumes[0]!, { d: 80 });
+    const first = expandJoints(plan);
+    const echo = structuredClone(first);
+    // The model wrote the servo's hub port into b as one it provides, and the
+    // joints back as it first declared them.
+    const lid = echo.nodes.find((n) => n.id === "lid")!;
+    const hub = (lid.contract.payload as CadContractPayload).ports.find((p) => p.name.startsWith("j1_") && p.name.endsWith("hub"))!;
+    expect(hub).toBeDefined();
+    lid.contract.requires = lid.contract.requires.filter((r) => r.key !== hub.name);
+    lid.contract.provides.push({ key: hub.name, type: hub.type, description: "" });
+    echo.joints = (echo.joints as { expanded?: string; minted?: string[] }[]).map(({ expanded: _e, minted: _m, ...j }) => j) as never;
+    expect(lintAll(expandJoints(echo)).filter((m) => m.includes(hub.name))).toEqual([]);
+  });
+
+  it("a catalog V-wheel keeps its own bearings: only the axle and its keeper are minted (real-linear-actuator)", () => {
+    const out = gantry(4);
+    const wheel = out.nodes.find((n) => n.id === "v-wheel")!;
+    // Re-plan with the wheel as the catalog kit.
+    const plan = structuredClone(gantry(4));
+    const w = plan.nodes.find((n) => n.id === "v-wheel")!;
+    Object.assign(w, { kind: "v_wheel" });
+    w.contract.params = [{ type: "string", name: "sku", description: "", default: "VWHEEL-SOLID" }] as never;
+    (w.contract.payload as CadContractPayload).ports = (w.contract.payload as CadContractPayload).ports.filter((p) => p.name === "hub_face");
+    w.contract.provides = w.contract.provides.filter((p) => p.key === "hub_face");
+    plan.joints = (plan.joints as { expanded?: string; minted?: string[] }[]).map(({ expanded: _e, minted: _m, ...j }) => ({ ...j, wallB: 10.23, prefer: undefined })) as never;
+    const again = expandJoints(plan);
+    expect(wheel).toBeDefined();
+    expect((again.joints as { expanded?: string }[]).map((j) => j.expanded)).toEqual(Array(4).fill("M1h|axle_shaft=d_shaft:5|axle_collar=collar:5"));
+    expect(again.nodes.some((n) => n.kind === "bearing")).toBe(false);
+    expect(lintAll(again).filter((m) => /BEARING_SEAT|v-wheel/.test(m))).toEqual([]);
   });
 
   it("a repair that echoes the minted hardware back, slugged, re-expands clean (real-linear-actuator)", () => {

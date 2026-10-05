@@ -155,6 +155,9 @@ export interface JointInput {
   trappedB?: boolean;
   printInPlace?: boolean;
   toolFree?: boolean;
+  /** b is a catalog wheel with its bearings built in (an OpenBuilds V-wheel
+   *  kit): its bore Ø. Only the axle and its keeper are minted. */
+  bBuiltIn?: number;
   /** a.port is a SHAFT station and b.port a BORE: the rod's Ø (expand.ts). */
   onRod?: number;
 }
@@ -926,6 +929,20 @@ const M1h: JointRule = {
   can: (i) => revolute(i) && !i.driven && i.wallA < shaftFor(i),
   uses: SPINDLE,
   fit: (i) => {
+    if (i.bBuiltIn !== undefined) {
+      // A catalog V-wheel carries its own two 625s: the axle through them
+      // into a and a keeper past b are all it needs (real-linear-actuator cut
+      // bearing pockets into the catalog wheel, which takes no features).
+      const d = i.bBuiltIn;
+      const shaft = shaftPart(d);
+      if (typeof shaft === "string") return shaft;
+      if (i.wallA < d / 2) return `wallA ${mm(i.wallA)} < axle socket ${mm(d / 2)} (half its Ø)`;
+      const keep = retention(d);
+      if (!keep.key) return `no collar or e-clip for a Ø${d} axle`;
+      return decision("M1h", "hub_bearings", `Ø${d} axle through b's own bearings, fixed in a`, [
+        "revolute: b is a catalog wheel with its bearings built in", shaft.note, keep.note,
+      ], { parts: [{ role: "axle_shaft", family: shaft.family, key: shaft.key }, { role: "axle_collar", family: keep.family, key: keep.key }].map((p) => (keep.role === "eclip" && p.role === "axle_collar" ? { ...p, role: "axle_eclip" } : p)), dims: { d, od: 0, width: 0, builtIn: 1 } });
+    }
     const inB = { ...i, wallA: i.wallB, wallB: Infinity, minWallA: minWallOf(i), roomA: undefined, depthA: undefined };
     const two = spindleFor(inB);
     // A wheel too thin for two takes one, at its far face, when the load is
@@ -1664,7 +1681,27 @@ export function selectJoint(input: JointInput): JointDecision | { error: string 
 export const statedName = (p: NonNullable<CadJoint["prefer"]>) => [p.recipe, p.family, p.key].filter(Boolean).join(" ");
 
 /** Whether a decision is the hardware the brief named. */
-export function honours(d: JointDecision, p: NonNullable<CadJoint["prefer"]>): boolean {
+/** Families that are all "a plain pin of this Ø": a brief's "2.2mm axle"
+ *  or "1.75mm pin" is whichever of them stocks that Ø. */
+const PIN_LIKE = ["shaft", "d_shaft", "dowel", "filament_pin", "wire_nail"];
+
+/** The stated part as the catalog knows it. A size written with its length
+ *  ("confirmat 7x70", "M4x12") is the size; a pin-like Ø the stated family
+ *  does not stock is the pin-like family that does (real-pinewood-car's
+ *  "shaft 2.2" is a 2.2 axle nail; real-cube-shelf's "7x70" a 7mm confirmat). */
+export function statedPrefer(p: NonNullable<CadJoint["prefer"]>): NonNullable<CadJoint["prefer"]> {
+  if (!p.family || !p.key || !CATALOG.families[p.family] || canonicalKey(p.family, p.key)) return p;
+  const size = /^(.+?)\s*[x×]\s*\d+(\.\d+)?$/i.exec(p.key)?.[1];
+  if (size && canonicalKey(p.family, size)) return { ...p, key: size };
+  if (PIN_LIKE.includes(p.family)) {
+    const alt = PIN_LIKE.find((f) => f !== p.family && CATALOG.families[f] && canonicalKey(f, size ?? p.key!));
+    if (alt) return { ...p, family: alt, key: size ?? p.key };
+  }
+  return p;
+}
+
+export function honours(d: JointDecision, raw: NonNullable<CadJoint["prefer"]>): boolean {
+  const p = statedPrefer(raw);
   if (p.recipe && p.recipe !== d.rule && p.recipe !== d.recipe) return false;
   if (!p.family) return true;
   return d.parts.some((x) => sameFamily(p.family!, x.family) && (!p.key || x.key === canonicalKey(x.family, p.key)));
@@ -1673,7 +1710,10 @@ export function honours(d: JointDecision, p: NonNullable<CadJoint["prefer"]>): b
 /** The brief named the hardware: only the rules that can use it are tried,
  *  and when none fits, the error says what the stated part needs. Never a
  *  substitute. */
-function selectStated(input: JointInput, p: NonNullable<CadJoint["prefer"]>, tag: string): JointDecision | { error: string } {
+function selectStated(input: JointInput, raw: NonNullable<CadJoint["prefer"]>, tag: string): JointDecision | { error: string } {
+  const p = statedPrefer(raw);
+  // The rules read the stated part from the input: give them the catalog's.
+  if (p !== raw) input = { ...input, prefer: p };
   const say = `${tag}stated ${statedName(p)}`;
   if (p.family && !CATALOG.families[p.family]) return { error: `${say}: the catalog has no family "${p.family}" (${Object.keys(CATALOG.families).join(", ")})` };
   if (p.family && p.key && !canonicalKey(p.family, p.key)) return { error: `${say}: the catalog has no ${p.family} "${p.key}" (${Object.keys(CATALOG.families[p.family]!.dims).join(", ")})` };
